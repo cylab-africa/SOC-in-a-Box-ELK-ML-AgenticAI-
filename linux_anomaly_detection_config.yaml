@@ -1,0 +1,316 @@
+# linux_anomaly_detection_config.yaml
+# Comprehensive configuration for Linux Anomaly Detection System
+
+# DAGsHub MLflow tracking configuration
+dagshub:
+  repo_name: "Anomaly-Detection-ML--SOC"
+  username: "masterlion-hash"
+  token: "***REMOVED_DAGSHUB_TOKEN***"
+
+# Elasticsearch configuration for data sources
+elasticsearch:
+  host: "https://***REMOVED_INTERNAL_IP***:9200"
+  username: "***REMOVED_EMAIL***"
+  password: "***REMOVED_PASSWORD***"
+  verify_certs: false
+  ssl_show_warn: false
+  timeout: 60
+  scroll_size: 5000
+  scroll_timeout: "2m"
+  
+  # Index patterns for different data types
+  indices:
+    process: "logs-endpoint.events.process-*"
+    network: "logs-endpoint.events.network-*,logs-suricata.eve-*"
+    user: "logs-endpoint.events.process-*,logs-system.auth-*"
+    discovery: "logs-endpoint.events.process-*"
+    metadata: "logs-endpoint.events.process-*,logs-endpoint.events.network-*"
+    alerts: ".internal.alerts-security.alerts-default-*"
+
+# Detection configuration
+detection:
+  # Global detection parameters
+  time_window: 24
+  threshold_multiplier: 3.0
+  min_baseline_period_days: 30
+  aggregation_interval: "15min"
+  bucket_span: "15m"
+  sensitivity: 0.7
+  
+  # Anomaly detection methods to use
+  anomaly_methods:
+    - "statistical"
+    - "isolation_forest"
+    - "lof"
+    - "ocsvm"
+    - "pca"
+  
+  # Data group specific configurations
+  data_groups:
+    process:
+      enabled: true
+      description: "Process execution anomaly detection"
+      bucket_span: "15m"
+      threshold_multiplier: 3.0
+      rare_process_threshold: 0.1  # 0.1% of total process activity
+      rare_process_host_threshold: 0.05  # 0.05% per host
+      jobs:
+        - "v3_linux_anomalous_process_all_hosts"
+        - "v3_rare_process_by_host_linux"
+    
+    network:
+      enabled: true
+      description: "Network activity anomaly detection"
+      bucket_span: "15m"
+      threshold_multiplier: 2.5
+      rare_country_threshold: 0.1
+      spike_threshold: 3.0
+      jobs:
+        - "v3_linux_anomalous_network_activity"
+        - "v3_linux_anomalous_network_port_activity"
+    
+    user:
+      enabled: true
+      description: "User behavior anomaly detection"
+      bucket_span: "30m"
+      threshold_multiplier: 2.0
+      rare_user_threshold: 0.5  # 0.5% of total user activity
+      rare_sudo_threshold: 1.0  # 1% of sudo activity
+      rare_compiler_threshold: 2.0  # 2% of compiler activity
+      jobs:
+        - "v3_linux_anomalous_user_name"
+        - "v3_linux_rare_sudo_user"
+        - "v3_linux_rare_user_compiler"
+    
+    discovery:
+      enabled: true
+      description: "System discovery command anomaly detection"
+      bucket_span: "60m"
+      threshold_multiplier: 2.0
+      discovery_threshold: 5.0  # 5% of discovery activity
+      jobs:
+        - "v3_linux_network_configuration_discovery"
+        - "v3_linux_network_connection_discovery"
+        - "v3_linux_system_information_discovery"
+        - "v3_linux_system_process_discovery"
+        - "v3_linux_system_user_discovery"
+    
+    metadata:
+      enabled: true
+      description: "Metadata service access anomaly detection"
+      bucket_span: "15m"
+      threshold_multiplier: 1.5
+      rare_metadata_process_threshold: 1.0  # 1% of metadata access
+      rare_metadata_user_threshold: 2.0  # 2% of user metadata access
+      jobs:
+        - "v3_linux_rare_metadata_process"
+        - "v3_linux_rare_metadata_user"
+
+# Machine Learning configuration
+ml:
+  feature_selection: "enhanced"  # Options: basic, enhanced, time_series, all
+  contamination: 0.05
+  n_estimators: 100
+  lof_neighbors: 20
+  svm_kernel: "rbf"
+  pca_components: 0.95
+  
+  # Individual ML algorithm configurations
+  isolation_forest:
+    n_estimators: 100
+    contamination: 0.05
+    random_state: 42
+    n_jobs: -1
+    max_samples: "auto"
+    max_features: 1.0
+  
+  lof:
+    n_neighbors: 20
+    contamination: 0.05
+    novelty: true
+    algorithm: "auto"
+    leaf_size: 30
+    metric: "minkowski"
+    p: 2
+  
+  ocsvm:
+    nu: 0.05
+    kernel: "rbf"
+    gamma: "scale"
+    degree: 3
+    coef0: 0.0
+    tol: 0.001
+    shrinking: true
+    cache_size: 200
+  
+  dbscan:
+    eps: 0.5
+    min_samples: 5
+    metric: "euclidean"
+    algorithm: "auto"
+    leaf_size: 30
+    p: 2
+  
+  pca:
+    n_components: 0.95
+    copy: true
+    whiten: false
+    svd_solver: "auto"
+    tol: 0.0
+    iterated_power: "auto"
+    random_state: 42
+
+# Output and storage configuration
+output:
+  save_results: true
+  visualization: true
+  generate_reports: true
+  save_models: true
+  
+  # Directory structure
+  results_dir: "./results"
+  models_dir: "./results/models"
+  reports_dir: "./results/reports"
+  visualizations_dir: "./results/visualizations"
+  logs_dir: "./logs"
+  
+  # File formats
+  anomaly_data_format: "csv"
+  report_format: "markdown"
+  visualization_format: "png"
+  model_format: "joblib"
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/linux_anomaly_detection.log"
+  max_file_size: "10MB"
+  backup_count: 5
+  console_output: true
+
+# Performance and resource configuration
+performance:
+  max_workers: 4
+  chunk_size: 1000
+  memory_limit: "4GB"
+  enable_parallel_processing: true
+  cache_enabled: true
+  cache_size: 1000
+
+# Alert and notification configuration (optional)
+alerts:
+  enabled: false
+  
+  # Severity thresholds
+  thresholds:
+    critical: 0.9
+    high: 0.7
+    medium: 0.5
+    low: 0.2
+  
+  # Notification channels (configure as needed)
+  notifications:
+    email:
+      enabled: false
+      smtp_server: "smtp.example.com"
+      smtp_port: 587
+      username: ""
+      password: ""
+      recipients: []
+    
+    slack:
+      enabled: false
+      webhook_url: ""
+      channel: "#security-alerts"
+    
+    webhook:
+      enabled: false
+      url: ""
+      headers: {}
+
+# Job scheduling configuration (for automated runs)
+scheduler:
+  enabled: false
+  timezone: "UTC"
+  
+  # Scheduled job definitions
+  jobs:
+    comprehensive_detection:
+      enabled: true
+      schedule: "0 */6 * * *"  # Every 6 hours
+      description: "Run comprehensive Linux anomaly detection"
+      groups: ["process", "network", "user", "discovery", "metadata"]
+    
+    process_monitoring:
+      enabled: true
+      schedule: "*/15 * * * *"  # Every 15 minutes
+      description: "Monitor process anomalies"
+      groups: ["process"]
+    
+    user_behavior_analysis:
+      enabled: true
+      schedule: "0 */2 * * *"  # Every 2 hours
+      description: "Analyze user behavior anomalies"
+      groups: ["user"]
+    
+    metadata_monitoring:
+      enabled: true
+      schedule: "*/10 * * * *"  # Every 10 minutes
+      description: "Monitor metadata access"
+      groups: ["metadata"]
+
+# Feature engineering configuration
+features:
+  time_features:
+    enabled: true
+    include_cyclical: true  # sine/cosine transformations
+    business_hours_start: 8
+    business_hours_end: 18
+    weekends_as_anomalous: false
+  
+  rolling_features:
+    enabled: true
+    windows: [3, 6, 12, 24]  # hours
+    statistics: ["mean", "std", "max", "min"]
+  
+  lag_features:
+    enabled: true
+    periods: [1, 3, 6, 12, 24]  # hours
+  
+  pattern_features:
+    enabled: true
+    include_frequency_analysis: true
+    include_sequence_analysis: true
+
+# Baseline and model training configuration
+training:
+  auto_retrain: true
+  retrain_interval_days: 7
+  min_training_samples: 1000
+  validation_split: 0.2
+  cross_validation_folds: 5
+  
+  # Model selection criteria
+  model_selection:
+    metric: "f1_score"
+    optimization: "maximize"
+    early_stopping: true
+    patience: 10
+
+# Data quality and filtering
+data_quality:
+  min_event_threshold: 10  # Minimum events for analysis
+  max_anomaly_rate: 0.4  # Flag if >40% of data is anomalous
+  outlier_removal: true
+  null_value_handling: "fill_zero"
+  
+  # Data validation rules
+  validation:
+    timestamp_format: "ISO8601"
+    required_fields:
+      process: ["process.name", "host.hostname", "@timestamp"]
+      network: ["destination.ip", "destination.port", "@timestamp"]
+      user: ["user.name", "@timestamp"]
+      discovery: ["process.name", "user.name", "@timestamp"]
+      metadata: ["process.name", "user.name", "@timestamp"]
