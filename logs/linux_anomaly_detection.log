@@ -1,0 +1,2 @@
+2025-09-01 14:18:08,475 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.038s]
+2025-09-01 14:18:08,476 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200

@@ -1,0 +1,116 @@
+2025-09-01 12:24:09,831 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 12:24:09,832 - linux_anomaly_detection - INFO - Detection mode: group
+2025-09-01 12:24:09,832 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 12:24:10,142 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.043s]
+2025-09-01 12:24:10,143 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 12:24:10,144 - linux_anomaly_detection - INFO - Running group detection for: network
+2025-09-01 12:24:10,146 - linux_anomaly_detection - INFO - Running network group detection
+2025-09-01 12:24:13,226 - linux_anomaly_detection - INFO -  Loaded 179 models for network
+2025-09-01 12:24:13,227 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_anomalous_network_port_activity, v3_linux_anomalous_network_activity
+2025-09-01 12:24:13,227 - linux_anomaly_detection - INFO - Loaded existing models for network
+2025-09-01 12:24:13,228 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_network_activity: 72 models
+2025-09-01 12:24:13,228 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_network_port_activity: 107 models
+2025-09-01 12:24:13,228 - linux_anomaly_detection - INFO - Using detection period: 0.083 days for network
+2025-09-01 12:24:13,228 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.network-default-* using hourly stratified sampling
+2025-09-01 12:24:13,229 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:24:13,237 - linux_anomaly_detection - INFO - Calculated hourly distribution: 2 hours, strategy=recent_weighted, avg_per_hour=5000
+2025-09-01 12:24:17,309 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:4.071s]
+2025-09-01 12:24:19,680 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:2.316s]
+2025-09-01 12:24:19,706 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 9185 records from 2/2 hours
+2025-09-01 12:24:19,707 - linux_anomaly_detection - INFO - Retrieved 9185 process records from Elasticsearch
+2025-09-01 12:24:19,849 - linux_anomaly_detection - INFO - Processed 9,185/9,185 valid timestamps
+2025-09-01 12:24:19,867 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 3 hours covered, avg=3062 records/hour, balance_score=0.17
+2025-09-01 12:24:19,869 - linux_anomaly_detection - INFO - Successfully processed 9185 Linux process records with 25 fields
+2025-09-01 12:24:19,885 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_network_activity
+2025-09-01 12:24:19,893 - linux_anomaly_detection - INFO - Using 72 job-specific models for v3_linux_anomalous_network_activity
+2025-09-01 12:24:19,894 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:24:19,894 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_network_activity
+2025-09-01 12:24:19,894 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:24:19,894 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:24:19,895 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_network_activity
+2025-09-01 12:24:19,895 - linux_anomaly_detection - INFO -   Type: network
+2025-09-01 12:24:19,895 - linux_anomaly_detection - INFO -   Description: Detect anomalous network connections by IP
+2025-09-01 12:24:19,895 - linux_anomaly_detection - INFO -   Input records: 9185
+2025-09-01 12:24:19,896 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:24:19,896 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:24:19,897 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_network_activity, using fallback models
+2025-09-01 12:24:19,897 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:24:19,911 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_network_activity (network)
+2025-09-01 12:24:19,977 - linux_anomaly_detection - INFO - Entity 172.29.108.57: 180/3432 anomalies (threshold=0.600)
+2025-09-01 12:24:20,010 - linux_anomaly_detection - INFO - Entity ***REMOVED_INTERNAL_IP***: 267/4372 anomalies (threshold=0.600)
+2025-09-01 12:24:20,022 - linux_anomaly_detection - INFO - Entity 172.29.108.113: 12/176 anomalies (threshold=0.600)
+2025-09-01 12:24:20,032 - linux_anomaly_detection - INFO - Entity 172.29.108.120: 21/254 anomalies (threshold=0.600)
+2025-09-01 12:24:20,042 - linux_anomaly_detection - INFO - Entity 172.29.108.95: 2/28 anomalies (threshold=0.884)
+2025-09-01 12:24:20,052 - linux_anomaly_detection - INFO - Entity 127.0.0.1: 2/15 anomalies (threshold=0.841)
+2025-09-01 12:24:20,063 - linux_anomaly_detection - INFO - Entity 172.29.108.35: 20/284 anomalies (threshold=0.600)
+2025-09-01 12:24:20,074 - linux_anomaly_detection - INFO - Entity 172.29.108.112: 9/132 anomalies (threshold=0.600)
+2025-09-01 12:24:20,087 - linux_anomaly_detection - INFO - Entity 172.29.108.200: 14/175 anomalies (threshold=0.600)
+2025-09-01 12:24:20,099 - linux_anomaly_detection - INFO - Entity 172.18.0.3: 9/83 anomalies (threshold=0.832)
+2025-09-01 12:24:20,108 - linux_anomaly_detection - INFO - Entity 172.29.108.116: 4/72 anomalies (threshold=0.933)
+2025-09-01 12:24:20,118 - linux_anomaly_detection - INFO - Entity 3.175.179.41: 1/12 anomalies (threshold=0.993)
+2025-09-01 12:24:20,128 - linux_anomaly_detection - INFO - Entity 172.29.108.49: 2/21 anomalies (threshold=0.922)
+2025-09-01 12:24:20,140 - linux_anomaly_detection - INFO - Entity 172.29.108.64: 7/65 anomalies (threshold=0.645)
+2025-09-01 12:24:20,150 - linux_anomaly_detection - INFO - Entity 172.29.108.50: 3/26 anomalies (threshold=0.845)
+2025-09-01 12:24:20,158 - linux_anomaly_detection - INFO - Entity 3.175.179.56: 1/6 anomalies (threshold=0.966)
+2025-09-01 12:24:20,168 - linux_anomaly_detection - INFO - Entity 3.175.179.28: 1/8 anomalies (threshold=0.963)
+2025-09-01 12:24:20,177 - linux_anomaly_detection - INFO - Entity 3.175.179.15: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:24:20,185 - linux_anomaly_detection - INFO - Applied safety limits: 6.1% -> 0.4%
+2025-09-01 12:24:20,192 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:24:20,192 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:24:20,192 - linux_anomaly_detection - INFO -   Total records: 9,169
+2025-09-01 12:24:20,192 - linux_anomaly_detection - INFO -   Anomalies detected: 36
+2025-09-01 12:24:20,193 - linux_anomaly_detection - INFO -   Anomaly rate: 0.39%
+2025-09-01 12:24:20,193 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:24:20,193 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_network_activity complete
+2025-09-01 12:24:20,194 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_network_port_activity
+2025-09-01 12:24:20,199 - linux_anomaly_detection - INFO - Using 107 job-specific models for v3_linux_anomalous_network_port_activity
+2025-09-01 12:24:20,200 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:24:20,200 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_network_port_activity
+2025-09-01 12:24:20,200 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:24:20,200 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:24:20,201 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_network_port_activity
+2025-09-01 12:24:20,201 - linux_anomaly_detection - INFO -   Type: network
+2025-09-01 12:24:20,201 - linux_anomaly_detection - INFO -   Description: Detect anomalous port usage patterns
+2025-09-01 12:24:20,201 - linux_anomaly_detection - INFO -   Input records: 9185
+2025-09-01 12:24:20,202 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:24:20,202 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:24:20,203 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_network_port_activity, using fallback models
+2025-09-01 12:24:20,203 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:24:20,213 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_network_port_activity (network)
+2025-09-01 12:24:20,252 - linux_anomaly_detection - WARNING - No data for entity 27017
+2025-09-01 12:24:20,253 - linux_anomaly_detection - WARNING - No data for entity 21
+2025-09-01 12:24:20,255 - linux_anomaly_detection - WARNING - No data for entity 22
+2025-09-01 12:24:20,256 - linux_anomaly_detection - WARNING - No data for entity 23
+2025-09-01 12:24:20,257 - linux_anomaly_detection - WARNING - No data for entity 25
+2025-09-01 12:24:20,258 - linux_anomaly_detection - WARNING - No data for entity 8220
+2025-09-01 12:24:20,259 - linux_anomaly_detection - WARNING - No data for entity 53
+2025-09-01 12:24:20,260 - linux_anomaly_detection - WARNING - No data for entity 443
+2025-09-01 12:24:20,261 - linux_anomaly_detection - WARNING - No data for entity 5055
+2025-09-01 12:24:20,262 - linux_anomaly_detection - WARNING - No data for entity 80
+2025-09-01 12:24:20,263 - linux_anomaly_detection - WARNING - No data for entity 3306
+2025-09-01 12:24:20,265 - linux_anomaly_detection - WARNING - No data for entity 6379
+2025-09-01 12:24:20,266 - linux_anomaly_detection - WARNING - No data for entity 110
+2025-09-01 12:24:20,267 - linux_anomaly_detection - WARNING - No data for entity 9200
+2025-09-01 12:24:20,268 - linux_anomaly_detection - WARNING - No data for entity 61695
+2025-09-01 12:24:20,268 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_anomalous_network_port_activity
+2025-09-01 12:24:20,279 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:24:20,283 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:24:20,284 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:24:20,284 - linux_anomaly_detection - INFO -   Total records: 9,185
+2025-09-01 12:24:20,284 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:24:20,285 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:24:20,285 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:24:20,285 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_network_port_activity complete
+2025-09-01 12:24:20,469 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_network_activity: 9169 rows
+2025-09-01 12:24:20,555 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_network_port_activity: 9185 rows
+2025-09-01 12:24:20,564 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 12:24:20,573 - linux_anomaly_detection - INFO - Total anomalies detected in group network: 0
+2025-09-01 12:24:20,574 - linux_anomaly_detection - INFO - Extracting ONLY ML anomalies from detection results
+2025-09-01 12:24:20,578 - linux_anomaly_detection - WARNING - No ML anomalies found in any data type - check ML detection thresholds
+2025-09-01 12:24:20,581 - linux_anomaly_detection - INFO - Saved anomalies to: ./results\ml_only_anomalies_20250901_102420.json
+2025-09-01 12:24:20,582 - linux_anomaly_detection - INFO - Generating report for group: network
+2025-09-01 12:24:20,595 - linux_anomaly_detection - INFO - Generating ML-only comprehensive report for network anomalies
+2025-09-01 12:24:20,596 - linux_anomaly_detection - WARNING - No ML anomalies found for network - generating empty report
+2025-09-01 12:24:20,605 - linux_anomaly_detection - INFO - Generated no-anomalies report: ./results\network_anomaly_report_20250901_122420.md
+2025-09-01 12:24:20,605 - linux_anomaly_detection - INFO - Generated 1 reports
+2025-09-01 12:24:20,605 - linux_anomaly_detection - INFO - Linux anomaly detection completed successfully

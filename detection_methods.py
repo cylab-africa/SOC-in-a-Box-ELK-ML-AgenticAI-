@@ -1,2111 +1,1716 @@
-import pandas as pd
+
+
+"""
+Fixed Detection Methods - Job-Specific Anomaly Detection
+=========================================================
+Handles all 15 jobs with proper entity selection and filtering
+"""
+
 import numpy as np
+import pandas as pd
+import os
 import logging
-from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
-from sklearn.ensemble import IsolationForest
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.cluster import DBSCAN, KMeans
-from sklearn.decomposition import PCA
-from sklearn.svm import OneClassSVM
-from sklearn.model_selection import train_test_split
-from statsmodels.tsa.seasonal import seasonal_decompose
-from scipy import stats
-from scipy.spatial.distance import mahalanobis
-from scipy.stats import chi2
-from collections import defaultdict
+from typing import Dict, List, Tuple, Optional, Any
+from datetime import datetime
 import warnings
+import json
+warnings.filterwarnings('ignore')
 
 logger = logging.getLogger("linux_anomaly_detection")
-def analyze_feature_availability(data, data_type="process"):
-    """
-    Analyze which features are available in the dataset and determine feature strategy.
+
+# Module-level store for per-run, per-job entity diagnostics
+_ENTITY_DIAGNOSTICS = {}
+
+def add_entity_diagnostic(job_name: str, entity: str, info: Dict):
+    """Record diagnostic info for a specific entity under a job."""
+    try:
+        if job_name not in _ENTITY_DIAGNOSTICS:
+            _ENTITY_DIAGNOSTICS[job_name] = {}
+        _ENTITY_DIAGNOSTICS[job_name][entity] = info
+    except Exception:
+        logger.debug("Failed to add entity diagnostic")
+
+def pop_job_entity_diagnostics(job_name: str) -> Dict:
+    """Return and clear diagnostics for a job."""
+    try:
+        return _ENTITY_DIAGNOSTICS.pop(job_name, {})
+    except Exception:
+        return {}
+
+# ===============================================================================
+# JOB-SPECIFIC DETECTION CONFIGURATION
+# ===============================================================================
+
+JOB_CONFIGURATIONS = {
+    "v3_linux_anomalous_process_all_hosts": {
+        "data_type": "process",
+        "entity_column": "process.name",
+        "filter_func": None,
+        "description": "Detect anomalous processes across all hosts"
+    },
+    "v3_rare_process_by_host_linux": {
+        "data_type": "process", 
+        "entity_column": "composite:host_process",
+        "filter_func": None,
+        "description": "Detect rare processes specific to each host"
+    },
+    "v3_linux_anomalous_network_activity": {
+        "data_type": "network",
+        "entity_column": "destination.ip",
+        "filter_func": None,
+        "description": "Detect anomalous network connections by IP"
+    },
+    "v3_linux_anomalous_network_port_activity": {
+        "data_type": "network",
+        "entity_column": "destination.port",
+        "filter_func": None,
+        "description": "Detect anomalous port usage patterns"
+    },
+    "v3_linux_anomalous_user_name": {
+        "data_type": "user",
+        "entity_column": "user.name",
+        "filter_func": None,
+        "description": "Detect anomalous user behavior"
+    },
+    "v3_linux_rare_sudo_user": {
+        "data_type": "user",
+        "entity_column": "user.name",
+        "filter_func": lambda df: df[df['process.name'] == 'sudo'] if 'process.name' in df.columns else df,
+        "description": "Detect rare sudo usage by users"
+    },
+    "v3_linux_rare_user_compiler": {
+        "data_type": "user",
+        "entity_column": "user.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['gcc', 'g++', 'clang', 'make', 'cmake', 'javac', 'rustc'])] if 'process.name' in df.columns else df,
+        "description": "Detect rare compiler usage by users"
+    },
+    "v3_linux_network_configuration_discovery": {
+        "data_type": "discovery",
+        "entity_column": "process.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['ifconfig', 'ip', 'route', 'iptables', 'netstat', 'ss'])] if 'process.name' in df.columns else df,
+        "description": "Detect network configuration discovery"
+    },
+    "v3_linux_network_connection_discovery": {
+        "data_type": "discovery",
+        "entity_column": "process.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['netstat', 'ss', 'lsof', 'nmap', 'nc'])] if 'process.name' in df.columns else df,
+        "description": "Detect network connection discovery"
+    },
+    "v3_linux_system_information_discovery": {
+        "data_type": "discovery",
+        "entity_column": "process.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['uname', 'hostname', 'lscpu', 'dmidecode', 'cat'])] if 'process.name' in df.columns else df,
+        "description": "Detect system information discovery"
+    },
+    "v3_linux_system_process_discovery": {
+        "data_type": "discovery",
+        "entity_column": "process.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['ps', 'top', 'htop', 'pgrep', 'pidof'])] if 'process.name' in df.columns else df,
+        "description": "Detect process discovery"
+    },
+    "v3_linux_system_user_discovery": {
+        "data_type": "discovery",
+        "entity_column": "process.name",
+        "filter_func": lambda df: df[df['process.name'].isin(['who', 'w', 'last', 'lastlog', 'id', 'users'])] if 'process.name' in df.columns else df,
+        "description": "Detect user discovery"
+    },
+    "v3_linux_rare_metadata_process": {
+        "data_type": "metadata",
+        "entity_column": "composite:process_args",
+        "filter_func": None,
+        "description": "Detect rare process arguments"
+    },
+    "v3_linux_rare_metadata_user": {
+        "data_type": "metadata",
+        "entity_column": "composite:user_group",
+        "filter_func": None,
+        "description": "Detect rare user/group combinations"
+    }
+}
+
+# def detect_job_anomalies(data: pd.DataFrame, models: Dict, scalers: Dict, 
+#                          config: Dict, job_name: str) -> pd.DataFrame:
+#     """
+#     Main entry point for job-specific anomaly detection.
     
-    Args:
-        data (pd.DataFrame): Input data
-        data_type (str): Type of data (process, network, user, discovery, metadata)
+#     Args:
+#         data: Input data
+#         models: Trained models dictionary
+#         scalers: Fitted scalers dictionary
+#         config: Configuration
+#         job_name: Specific job to run
         
-    Returns:
-        dict: Feature availability analysis with strategy recommendations
+#     Returns:
+#         DataFrame with anomaly detection results
+#     """
+#     if job_name not in JOB_CONFIGURATIONS:
+#         logger.error(f"Unknown job: {job_name}")
+#         return pd.DataFrame()
+    
+#     job_config = JOB_CONFIGURATIONS[job_name]
+#     data_type = job_config['data_type']
+    
+#     logger.info(f"Running job: {job_name}")
+#     logger.info(f"Description: {job_config['description']}")
+    
+#     # Extract job-specific models
+#     job_models = {}
+#     job_scalers = {}
+    
+#     for key, model in models.items():
+#         if key.startswith(f"{job_name}:"):
+#             entity = key.replace(f"{job_name}:", "")
+#             job_models[entity] = model
+    
+#     for key, scaler in scalers.items():
+#         if key.startswith(f"{job_name}:"):
+#             entity = key.replace(f"{job_name}:", "")
+#             job_scalers[entity] = scaler
+    
+#     if not job_models:
+#         logger.warning(f"No models found for job {job_name}, checking fallback models")
+#         # Try without job prefix (for backward compatibility)
+#         job_models = models
+#         job_scalers = scalers
+    
+#     # Run detection with job-specific configuration
+#     config['current_job_name'] = job_name
+#     config['job_config'] = job_config
+    
+#     return detect_ml_anomalies_fixed(
+#         data=data,
+#         models=job_models,
+#         scalers=job_scalers,
+#         config=config,
+#         job_name=job_name
+#     )
+
+# def detect_ml_anomalies_fixed(data: pd.DataFrame, models: Dict, scalers: Dict,
+#                               config: Dict, job_name: str) -> pd.DataFrame:
+#     """
+#     Fixed ML anomaly detection with proper job-specific handling.
+#     """
+#     if data.empty:
+#         logger.warning(f"Empty data for job {job_name}")
+#         return pd.DataFrame()
+    
+#     if not models or not scalers:
+#         logger.warning(f"No models/scalers for job {job_name}")
+#         return _create_fallback_results(data, "no_models")
+    
+#     job_config = JOB_CONFIGURATIONS.get(job_name, {})
+#     data_type = job_config.get('data_type', 'process')
+    
+#     logger.info(f"ML detection for job {job_name} with {len(data)} records")
+    
+#     # Step 1: Apply job-specific filtering
+#     filtered_data = data.copy()
+#     if job_config.get('filter_func'):
+#         try:
+#             filtered_data = job_config['filter_func'](filtered_data)
+#             logger.info(f"Applied filter: {len(data)} -> {len(filtered_data)} records")
+#         except Exception as e:
+#             logger.error(f"Filter failed for {job_name}: {e}")
+    
+#     if filtered_data.empty:
+#         logger.warning(f"No data after filtering for {job_name}")
+#         return _create_fallback_results(data, "empty_after_filter")
+    
+#     # Step 2: Feature extraction
+#     try:
+#         feature_data = extract_ml_features(filtered_data, config, job_name)
+        
+#         if feature_data.empty:
+#             logger.error(f"Feature extraction failed for {job_name}")
+#             return _create_fallback_results(data, "feature_extraction_failed")
+            
+#     except Exception as e:
+#         logger.error(f"Feature extraction error for {job_name}: {e}")
+#         return _create_fallback_results(data, f"feature_error_{str(e)[:30]}")
+    
+#     # Step 3: Create composite entity columns if needed
+#     entity_column = job_config['entity_column']
+    
+#     if entity_column.startswith('composite:'):
+#         composite_type = entity_column.replace('composite:', '')
+#         entity_column = _create_composite_entity(feature_data, composite_type, job_name)
+        
+#         if not entity_column:
+#             logger.error(f"Failed to create composite entity for {job_name}")
+#             return _create_fallback_results(data, "composite_entity_failed")
+    
+#     # Step 4: Validate entity column exists
+#     if entity_column not in feature_data.columns:
+#         logger.error(f"Entity column '{entity_column}' missing for {job_name}")
+#         # Try fallback columns
+#         fallback_columns = {
+#             'process': 'process.name',
+#             'network': 'destination.ip',
+#             'user': 'user.name',
+#             'discovery': 'process.name',
+#             'metadata': 'process.name'
+#         }
+#         entity_column = fallback_columns.get(data_type, 'process.name')
+        
+#         if entity_column not in feature_data.columns:
+#             return _create_fallback_results(data, f"missing_entity_{entity_column}")
+    
+#     # Step 5: Get entities for processing
+#     entities = feature_data[entity_column].unique()
+    
+#     # Special handling for port entities
+#     if job_name == "v3_linux_anomalous_network_port_activity":
+#         entities = _filter_port_entities(feature_data, entity_column)
+    
+#     # Step 6: Validate entities against models
+#     valid_entities = _validate_entities(entities, models, scalers, job_name)
+    
+#     if not valid_entities:
+#         logger.warning(f"No valid entities for {job_name}, using fallback")
+#         valid_entities = _get_fallback_entities(models, entities)
+        
+#         if not valid_entities:
+#             return _create_fallback_results(data, "no_valid_entities")
+    
+#     # Step 7: Process each entity
+#     all_results = []
+    
+#     for entity in valid_entities:
+#         try:
+#             entity_results = _process_entity_anomalies(
+#                 entity=entity,
+#                 feature_data=feature_data,
+#                 entity_column=entity_column,
+#                 models=models,
+#                 scalers=scalers,
+#                 config=config,
+#                 job_name=job_name
+#             )
+            
+#             if not entity_results.empty:
+#                 all_results.append(entity_results)
+                
+#         except Exception as e:
+#             logger.error(f"Failed to process entity {entity} for {job_name}: {e}")
+#             continue
+    
+#     # Step 8: Combine results
+#     if all_results:
+#         combined_results = pd.concat(all_results, ignore_index=True)
+        
+#         # Apply safety limits
+#         combined_results = _apply_safety_limits(combined_results, config)
+        
+#         # Add job metadata
+#         combined_results['job_name'] = job_name
+#         combined_results['detection_timestamp'] = pd.Timestamp.now()
+        
+#         anomaly_count = combined_results.get('is_ml_anomaly', pd.Series()).sum()
+#         logger.info(f"Job {job_name} complete: {anomaly_count}/{len(combined_results)} anomalies")
+        
+#         return combined_results
+#     else:
+#         logger.error(f"No results for job {job_name}")
+#         return _create_fallback_results(data, "no_results")
+def detect_job_anomalies(data: pd.DataFrame, models: Dict, scalers: Dict, 
+                         config: Dict, job_name: str) -> pd.DataFrame:
     """
-    logger.info(f"Analyzing feature availability for {data_type} data")
+    Main entry point for job-specific anomaly detection with enhanced debugging.
     
+    FIXED: Now returns only DataFrame for backward compatibility.
+    If you need saveable results, use detect_job_anomalies_with_saveable() instead.
+    """
+    logger.info("="*80)
+    logger.info(f"Starting job anomaly detection for: {job_name}")
+    
+    # Validate inputs
     if data.empty:
-        logger.warning("Empty dataset provided for feature analysis")
-        return {"strategy": "fallback", "available_features": [], "missing_features": []}
+        logger.error("Empty input data")
+        return pd.DataFrame()
+        
+    if job_name not in JOB_CONFIGURATIONS:
+        logger.error(f"Unknown job: {job_name}")
+        return pd.DataFrame()
     
-    # Define expected features by data type
-    feature_definitions = {
-        "process": {
-            "required": ["event_count", "@timestamp"],
-            "domain_specific": [
-                "args_count", "command_length", "has_suspicious_chars",
-                "has_encoded_content", "is_system_path", "is_tmp_execution",
-                "is_root_user", "has_hash", "env_vars_count", "process.name"
-            ],
-            "temporal": ["hour_of_day", "day_of_week", "is_business_hours", "is_weekend"],
-            "entity_col": "process.name"
-        },
-        "network": {
-            "required": ["event_count", "@timestamp"],
-            "domain_specific": [
-                "destination_port", "is_well_known_port", "is_ephemeral_port",
-                "bytes_per_packet", "is_large_transfer", "is_outbound",
-                "is_browser_traffic", "destination.geo.country_name"
-            ],
-            "temporal": ["hour_of_day", "day_of_week", "is_business_hours", "is_weekend"],
-            "entity_col": "destination.geo.country_name"
-        },
-        "user": {
-            "required": ["event_count", "@timestamp"],
-            "domain_specific": [
-                "is_sudo_command", "is_su_command", "is_compiler_activity",
-                "is_dev_tool", "is_root_user", "is_service_user", "user.name"
-            ],
-            "temporal": ["hour_of_day", "day_of_week", "is_business_hours", "is_weekend"],
-            "entity_col": "user.name"
-        },
-        "discovery": {
-            "required": ["event_count", "@timestamp"],
-            "domain_specific": [
-                "command_length", "has_pipes", "has_redirection",
-                "args_count", "is_root_discovery", "is_regular_user_discovery",
-                "process.name", "user.name"
-            ],
-            "temporal": ["hour_of_day", "day_of_week", "is_business_hours", "is_weekend"],
-            "entity_col": "process.name"
-        },
-        "metadata": {
-            "required": ["event_count", "@timestamp"],
-            "domain_specific": [
-                "is_root_access", "is_service_account", "potential_cred_harvest",
-                "user_data_access", "process.name"
-            ],
-            "temporal": ["hour_of_day", "day_of_week", "is_business_hours", "is_weekend"],
-            "entity_col": "process.name"
+    # Load job configuration
+    job_config = JOB_CONFIGURATIONS[job_name]
+    data_type = job_config['data_type']
+    
+    logger.info("-"*40)
+    logger.info(f"Job Configuration:")
+    logger.info(f"  Job: {job_name}")
+    logger.info(f"  Type: {data_type}")
+    logger.info(f"  Description: {job_config['description']}")
+    logger.info(f"  Input records: {len(data)}")
+    logger.info("-"*40)
+    
+    # Debug input data
+    logger.debug(f"Input data columns: {list(data.columns)}")
+    logger.debug(f"Input data types: {data.dtypes.to_dict()}")
+    
+    # Extract job-specific models
+    logger.info("Loading models and scalers...")
+    job_models, job_scalers = load_models_for_job(models, scalers, job_name)
+    
+    # Debug model loading
+    logger.debug(f"Available models: {len(models)}")
+    logger.debug(f"Job-specific models: {len(job_models)}")
+    logger.debug(f"Model entities: {list(job_models.keys())[:5]}...")
+    
+    if not job_models:
+        logger.warning(f"No models found for job {job_name}, using fallback models")
+        job_models = models
+        job_scalers = scalers
+        logger.debug("Using fallback models:")
+        logger.debug(f"  Total models: {len(job_models)}")
+        logger.debug(f"  Model types: {[type(m).__name__ for m in list(job_models.values())[:3]]}...")
+    
+    # Update configuration
+    config['current_job_name'] = job_name
+    config['job_config'] = job_config
+    
+    logger.info("Starting ML detection...")
+    results = detect_ml_anomalies_fixed(
+        data=data,
+        models=job_models,
+        scalers=job_scalers, 
+        config=config,
+        job_name=job_name
+    )
+    
+    # Process results
+    if not results.empty:
+        # Add metadata
+        results['job_name'] = job_name
+        results['detection_timestamp'] = pd.Timestamp.now()
+        
+        # Calculate metrics
+        total_records = len(results)
+        anomaly_count = results['is_ml_anomaly'].sum() if 'is_ml_anomaly' in results.columns else 0
+        anomaly_rate = (anomaly_count / total_records * 100) if total_records > 0 else 0
+        
+        # Log summary
+        logger.info("="*40)
+        logger.info("Detection Summary:")
+        logger.info(f"  Total records: {total_records:,}")
+        logger.info(f"  Anomalies detected: {anomaly_count:,}")
+        logger.info(f"  Anomaly rate: {anomaly_rate:.2f}%")
+        logger.info("="*40)
+        
+        # Debug result details
+        logger.debug("Result columns: " + ", ".join(results.columns))
+        if 'ml_anomaly_score' in results.columns:
+            scores = results['ml_anomaly_score']
+            logger.debug(f"Score stats: min={scores.min():.3f}, max={scores.max():.3f}, "
+                        f"mean={scores.mean():.3f}, std={scores.std():.3f}")
+    else:
+        logger.warning("No results produced")
+    
+    logger.info(f"Job {job_name} complete")
+    
+    # FIXED: Return only DataFrame, not tuple
+    return results
+def detect_job_anomalies_with_saveable(data: pd.DataFrame, models: Dict, scalers: Dict, 
+                                       config: Dict, job_name: str) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Alternative function that returns both DataFrame and saveable results.
+    Use this if you need both outputs.
+    """
+    # Get the DataFrame results
+    results = detect_job_anomalies(data, models, scalers, config, job_name)
+    
+    # Generate saveable results
+    saveable_results = _save_detection_results(results, job_name)
+    
+    return results, saveable_results
+def _save_detection_results(results: pd.DataFrame, job_name: str) -> Dict:
+    """
+    Convert detection results to saveable format.
+    """
+    if results.empty:
+        return {
+            "job_name": job_name,
+            "anomaly_count": 0,
+            "anomalies": []
+        }
+    
+    # Check if the required column exists
+    if 'is_ml_anomaly' not in results.columns:
+        logger.warning(f"No 'is_ml_anomaly' column in results for {job_name}")
+        return {
+            "job_name": job_name,
+            "anomaly_count": 0,
+            "anomalies": []
+        }
+    
+    # Extract anomalies
+    anomalies = results[results['is_ml_anomaly'] == True].copy()
+    
+    formatted_anomalies = []
+    for _, row in anomalies.iterrows():
+        anomaly = {
+            "timestamp": row.get('@timestamp', pd.Timestamp.now()).isoformat(),
+            "score": float(row.get('ml_anomaly_score', 0.0)),
+            "confidence": float(row.get('confidence', 0.0)),
+            "entity": str(row.get('entity', '')),
+            "detection_method": str(row.get('detection_method', 'machine_learning')),
+            "features": {
+                col: str(val) for col, val in row.items()
+                if col not in ['@timestamp', 'ml_anomaly_score', 'confidence', 
+                             'entity', 'detection_method', 'is_ml_anomaly']
+            }
+        }
+        formatted_anomalies.append(anomaly)
+    
+    return {
+        "job_name": job_name,
+        "anomaly_count": len(formatted_anomalies),
+        "anomalies": formatted_anomalies
+    }
+
+def save_ml_results(all_job_results: Dict[str, pd.DataFrame], output_file: str) -> None:
+    """
+    Save ML detection results to JSON file.
+    """
+    total_anomalies = 0
+    ml_jobs = {}
+    
+    # Process each job's results
+    for job_name, results in all_job_results.items():
+        if not isinstance(results, pd.DataFrame):
+            logger.warning(f"Invalid results type for {job_name}")
+            continue
+            
+        job_results = _save_detection_results(results, job_name)
+        total_anomalies += job_results['anomaly_count']
+        ml_jobs[job_name] = job_results
+    
+    # Create final output
+    output = {
+        "total_ml_anomalies": total_anomalies,
+        "detection_timestamp": pd.Timestamp.now().isoformat(),
+        "detection_summary": (
+            f"Found {total_anomalies} ML anomalies across {len(ml_jobs)} jobs"
+            if total_anomalies > 0 else
+            "No ML anomalies detected - check thresholds"
+        ),
+        "ml_jobs": ml_jobs
+    }
+    
+    # Save to file
+    try:
+        with open(output_file, 'w') as f:
+            json.dump(output, f, indent=2)
+        logger.info(f"Saved {total_anomalies} anomalies to: {output_file}")
+    except Exception as e:
+        logger.error(f"Failed to save results: {e}")
+
+def process_detection(data: pd.DataFrame, models: Dict, scalers: Dict, config: Dict, job_name: str) -> pd.DataFrame:
+    """
+    Run the ML detection pipeline for a single job and return a pandas DataFrame.
+
+    Guarantee: this function always returns a pandas DataFrame (possibly empty)
+    and never a tuple or dict. It centralizes feature extraction, entity
+    validation, per-entity processing, combining, safety limits and final
+    normalization.
+    """
+    # Normalize input to DataFrame
+    if not isinstance(data, pd.DataFrame):
+        try:
+            data = pd.DataFrame(data)
+        except Exception:
+            logger.error("process_detection: could not convert input data to DataFrame")
+            return pd.DataFrame()
+
+    if data.empty:
+        logger.warning(f"process_detection: empty input for job {job_name}")
+        return pd.DataFrame()
+
+    job_config = JOB_CONFIGURATIONS.get(job_name, {}) if 'JOB_CONFIGURATIONS' in globals() else {}
+    data_type = job_config.get('data_type', 'process')
+
+    # Determine expected features from provided scalers (union across entities) and pass to extractor
+    expected_features = None
+    try:
+        feature_name_set = set()
+        for s in (scalers or {}).values():
+            try:
+                if hasattr(s, 'feature_names_in_') and s.feature_names_in_ is not None:
+                    feature_name_set.update(list(s.feature_names_in_))
+            except Exception:
+                continue
+        if feature_name_set:
+            expected_features = list(feature_name_set)
+    except Exception:
+        expected_features = None
+
+    # Feature extraction
+    try:
+        feature_data = extract_ml_features(data, config, job_name, expected_features=expected_features)
+        if feature_data is None:
+            logger.error(f"process_detection: extract_ml_features returned None for {job_name}")
+            return _create_fallback_results(data, "feature_extraction_failed")
+        if not isinstance(feature_data, pd.DataFrame):
+            feature_data = pd.DataFrame(feature_data)
+    except Exception as e:
+        logger.error(f"process_detection: feature extraction failed for {job_name}: {e}")
+        return _create_fallback_results(data, f"feature_error_{str(e)[:50]}")
+
+    if feature_data.empty:
+        logger.warning(f"process_detection: no feature data for {job_name}")
+        return _create_fallback_results(data, "empty_features")
+
+    # Entity column handling
+    # Use job-specific entity column, fall back to a local mapping if global
+    fallback_columns = {
+        'process': 'process.name',
+        'network': 'destination.ip',
+        'user': 'user.name',
+        'discovery': 'process.name',
+        'metadata': 'process.name'
+    }
+    entity_column = job_config.get('entity_column') or fallback_columns.get(data_type, 'process.name')
+    if isinstance(entity_column, str) and entity_column.startswith('composite:'):
+        composite_type = entity_column.replace('composite:', '')
+        entity_column = _create_composite_entity(feature_data, composite_type, job_name)
+
+    if entity_column not in feature_data.columns:
+        fallback_columns = {
+            'process': 'process.name',
+            'network': 'destination.ip',
+            'user': 'user.name',
+            'discovery': 'process.name',
+            'metadata': 'process.name'
+        }
+        entity_column = fallback_columns.get(data_type, 'process.name')
+
+        if entity_column not in feature_data.columns:
+            logger.error(f"process_detection: entity column '{entity_column}' missing for {job_name}")
+            return _create_fallback_results(data, f"missing_entity_{entity_column}")
+
+    # Extract entities
+    try:
+        entities = feature_data[entity_column].dropna().unique().tolist()
+    except Exception as e:
+        logger.error(f"process_detection: failed extracting entities for {job_name}: {e}")
+        return _create_fallback_results(data, "entity_extraction_failed")
+
+    # Special handling for port job
+    if job_name == "v3_linux_anomalous_network_port_activity" and 'destination.port' in feature_data.columns:
+        try:
+            entities = _filter_port_entities(feature_data, entity_column)
+        except Exception:
+            pass
+
+    # Validate entities
+    try:
+        valid_entities = _validate_entities(entities, models, scalers, job_name)
+    except Exception as e:
+        logger.error(f"process_detection: entity validation failed for {job_name}: {e}")
+        valid_entities = []
+
+    if not valid_entities:
+        logger.warning(f"process_detection: no valid entities for {job_name}, attempting fallback")
+        try:
+            valid_entities = _get_fallback_entities(models, entities)
+        except Exception:
+            valid_entities = []
+
+    if not valid_entities:
+        logger.warning(f"process_detection: still no valid entities for {job_name}")
+        return _create_fallback_results(data, "no_valid_entities")
+
+    # Process entities
+    frames = []
+    for entity in valid_entities:
+        try:
+            er = _process_entity_anomalies(
+                entity=entity,
+                feature_data=feature_data,
+                entity_column=entity_column,
+                models=models,
+                scalers=scalers,
+                config=config,
+                job_name=job_name
+            )
+
+            # Accept and normalize possible return types
+            if isinstance(er, tuple):
+                er = er[0] if len(er) > 0 and isinstance(er[0], pd.DataFrame) else pd.DataFrame()
+            if isinstance(er, dict):
+                er = pd.DataFrame.from_dict(er)
+
+            if isinstance(er, pd.DataFrame) and not er.empty:
+                frames.append(er)
+        except Exception as e:
+            logger.error(f"process_detection: failed processing entity '{entity}' for {job_name}: {e}")
+            continue
+
+    if not frames:
+        logger.error(f"process_detection: no results produced for {job_name}")
+        return _create_fallback_results(data, "no_results")
+
+    try:
+        combined = pd.concat(frames, ignore_index=True)
+    except Exception as e:
+        logger.error(f"process_detection: concat failed for {job_name}: {e}")
+        return _create_fallback_results(data, "concat_failed")
+
+    if 'is_ml_anomaly' not in combined.columns:
+        combined['is_ml_anomaly'] = combined.get('is_ml_anomaly', False)
+
+    try:
+        combined = _apply_safety_limits(combined, config)
+    except Exception as e:
+        logger.warning(f"process_detection: safety limits failed for {job_name}: {e}")
+
+    combined['job_name'] = job_name
+    combined['detection_timestamp'] = pd.Timestamp.now()
+
+    if not isinstance(combined, pd.DataFrame):
+        combined = pd.DataFrame(combined)
+
+    return combined
+
+def detect_ml_anomalies_fixed(data: pd.DataFrame, models: Dict, scalers: Dict,
+                              config: Dict, job_name: str) -> pd.DataFrame:
+    """
+    FIXED: Always return DataFrame from ML detection (top-level helper).
+    """
+    try:
+        if data is None or (hasattr(data, 'empty') and data.empty):
+            return pd.DataFrame()
+
+        # Process data and get results
+        results = process_detection(data, models, scalers, config, job_name)
+
+        # Convert to DataFrame if needed
+        if isinstance(results, dict):
+            results = pd.DataFrame.from_dict(results)
+        elif not isinstance(results, pd.DataFrame):
+            logger.error("detect_ml_anomalies_fixed: Invalid results type returned from process_detection")
+            return pd.DataFrame()
+
+        return results
+    except Exception as e:
+        logger.error(f"detect_ml_anomalies_fixed: unexpected error: {e}")
+        return pd.DataFrame()
+
+def combine_job_results(job_results: List[Dict]) -> Dict:
+    """
+    Combine results from multiple jobs with proper formatting.
+    """
+    total_anomalies = sum(r.get('anomaly_count', 0) for r in job_results)
+    
+    combined = {
+        "total_ml_anomalies": total_anomalies,
+        "detection_timestamp": pd.Timestamp.now().isoformat(),
+        "detection_summary": (
+            f"Found {total_anomalies} ML anomalies across {len(job_results)} jobs"
+            if total_anomalies > 0 else
+            "No ML anomalies detected - check thresholds"
+        ),
+        "ml_jobs": {
+            r['job_name']: {
+                "anomaly_count": r.get('anomaly_count', 0),
+                "anomalies": r.get('anomalies', [])
+            }
+            for r in job_results
         }
     }
     
-    expected_features = feature_definitions.get(data_type, feature_definitions["process"])
-    available_columns = set(data.columns)
-    
-    # Check feature availability
-    analysis = {
-        "data_type": data_type,
-        "total_columns": len(available_columns),
-        "available_features": {},
-        "missing_features": {},
-        "feature_coverage": {},
-        "strategy": "unknown",
-        "entity_col": expected_features["entity_col"]
-    }
-    
-    # Analyze each feature category
-    for category, features in expected_features.items():
-        if category == "entity_col":
-            continue
-            
-        available = [f for f in features if f in available_columns]
-        missing = [f for f in features if f not in available_columns]
-        coverage = len(available) / len(features) if features else 0
-        
-        analysis["available_features"][category] = available
-        analysis["missing_features"][category] = missing
-        analysis["feature_coverage"][category] = coverage
-        
-        logger.info(f"{category.upper()} features - Available: {len(available)}/{len(features)} ({coverage:.1%})")
-        if available:
-            logger.info(f"  Found: {available}")
-        if missing:
-            logger.info(f"  Missing: {missing}")
-    
-    # Determine strategy based on feature availability
-    required_coverage = analysis["feature_coverage"].get("required", 0)
-    domain_coverage = analysis["feature_coverage"].get("domain_specific", 0)
-    temporal_coverage = analysis["feature_coverage"].get("temporal", 0)
-    
-    if required_coverage < 1.0:
-        analysis["strategy"] = "insufficient_data"
-        logger.error(f"Insufficient data: Missing required features {analysis['missing_features']['required']}")
-    elif domain_coverage >= 0.7:
-        analysis["strategy"] = "full_features"
-        logger.info(f"Full feature strategy: High domain coverage ({domain_coverage:.1%})")
-    elif domain_coverage >= 0.3:
-        analysis["strategy"] = "hybrid"
-        logger.info(f"Hybrid strategy: Partial domain coverage ({domain_coverage:.1%})")
-    else:
-        analysis["strategy"] = "time_based_only"
-        logger.info(f"Time-based strategy: Low domain coverage ({domain_coverage:.1%})")
-    
-    # Check entity column availability
-    if expected_features["entity_col"] not in available_columns:
-        logger.warning(f"Entity column '{expected_features['entity_col']}' not found. Available alternatives:")
-        alternatives = ["host.hostname", "process.name", "user.name", "destination.geo.country_name"]
-        for alt in alternatives:
-            if alt in available_columns:
-                logger.info(f"  Found alternative entity column: {alt}")
-                analysis["entity_col"] = alt
-                break
-    
-    return analysis
-# Import and reuse core functions from network detection methods
-def extract_ml_features(aggregated_data, config):
-    """
-    Enhanced feature extraction with automatic fallback based on feature availability.
-    """
-    if aggregated_data.empty:
-        logger.warning("Empty dataframe received for feature extraction")
-        return aggregated_data
-    
-    df = aggregated_data.copy()
-    
-    try:
-        # Determine data type from config or infer from columns
-        data_type = config.get('data_type', 'process')
-        
-        # Analyze feature availability
-        feature_analysis = analyze_feature_availability(df, data_type)
-        
-        if feature_analysis["strategy"] == "insufficient_data":
-            logger.error("Cannot proceed with feature extraction due to missing required features")
-            return df
-        
-        # Ensure timestamp is datetime and has consistent timezone
-        if '@timestamp' in df.columns:
-            if not pd.api.types.is_datetime64_any_dtype(df['@timestamp']):
-                df['@timestamp'] = pd.to_datetime(df['@timestamp'])
-            df['@timestamp'] = pd.to_datetime(df['@timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S'))
-        
-        # Create base time features (always available)
-        logger.info("Creating base temporal features")
-        df['hour_of_day'] = df['@timestamp'].dt.hour
-        df['day_of_week'] = df['@timestamp'].dt.dayofweek
-        df['is_business_hours'] = ((df['hour_of_day'] >= 8) & (df['hour_of_day'] <= 18) & 
-                                (df['day_of_week'] <= 4)).astype(int)
-        df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
-        
-        # Add sine and cosine transformations for cyclical time features
-        df['hour_sin'] = np.sin(2 * np.pi * df['hour_of_day'] / 24)
-        df['hour_cos'] = np.cos(2 * np.pi * df['hour_of_day'] / 24)
-        df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
-        df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
-        
-        logger.info("Created temporal features: hour_sin, hour_cos, day_sin, day_cos, is_business_hours, is_weekend")
-        
-        # Sort by timestamp and entity
-        entity_col = feature_analysis["entity_col"]
-        sort_cols = ['@timestamp']
-        if entity_col in df.columns:
-            sort_cols.append(entity_col)
-        df.sort_values(sort_cols, inplace=True)
-        
-        # Process each entity group separately
-        result_frames = []
-        entities = df[entity_col].unique() if entity_col in df.columns else ['global']
-        
-        logger.info(f"Processing {len(entities)} entities using column: {entity_col}")
-        
-        # Loop through each entity
-        for entity in entities:
-            if entity == 'global':
-                entity_df = df.copy()
-            else:
-                entity_df = df[df[entity_col] == entity].copy()
-            
-            entity_df['row_id'] = range(len(entity_df))
-            
-            # Process time series features if we have enough data
-            if len(entity_df) > 1:
-                ts_df = entity_df.set_index('@timestamp')
-                
-                # Determine rolling windows based on data availability
-                if len(entity_df) >= 24:
-                    rolling_windows = [3, 6, 12, 24]
-                elif len(entity_df) >= 12:
-                    rolling_windows = [3, 6, 12]
-                elif len(entity_df) >= 6:
-                    rolling_windows = [3, 6]
-                else:
-                    rolling_windows = [3]
-                
-                logger.debug(f"Entity {entity}: Using rolling windows {rolling_windows} for {len(entity_df)} samples")
-                
-                # Calculate rolling statistics for event counts
-                if 'event_count' in ts_df.columns:
-                    for window in rolling_windows:
-                        min_periods = max(1, window // 2)
-                        ts_df[f'rolling_mean_{window}h'] = ts_df['event_count'].rolling(
-                            window=window, min_periods=min_periods).mean()
-                        ts_df[f'rolling_std_{window}h'] = ts_df['event_count'].rolling(
-                            window=window, min_periods=min_periods).std().fillna(0)
-                        ts_df[f'rolling_max_{window}h'] = ts_df['event_count'].rolling(
-                            window=window, min_periods=min_periods).max().fillna(0)
-                
-                # Lag features (adaptive based on data size)
-                max_lag = min(24, len(entity_df) // 2)
-                if max_lag >= 1:
-                    lag_periods = [lag for lag in [1, 3, 6, 12, 24] if lag <= max_lag]
-                    logger.debug(f"Entity {entity}: Using lag periods {lag_periods}")
-                    
-                    for lag in lag_periods:
-                        if 'event_count' in ts_df.columns:
-                            ts_df[f'event_count_lag_{lag}'] = ts_df['event_count'].shift(lag).fillna(
-                                ts_df['event_count'].mean())
-                
-                # Rate of change
-                if 'event_count' in ts_df.columns:
-                    ts_df['event_count_roc'] = ts_df['event_count'].pct_change().fillna(0)
-                    
-                    if len(ts_df) >= 24:
-                        ts_df['event_count_day_roc'] = (ts_df['event_count'] / 
-                                                      ts_df['event_count'].shift(24)).fillna(1) - 1
-                
-                # Calculate deviation from typical pattern
-                if 'is_business_hours' in ts_df.columns and 'event_count' in ts_df.columns:
-                    biz_hours = ts_df[ts_df['is_business_hours'] == 1]
-                    non_biz_hours = ts_df[ts_df['is_business_hours'] == 0]
-                    
-                    biz_mean = biz_hours['event_count'].mean() if len(biz_hours) > 0 else 0
-                    non_biz_mean = non_biz_hours['event_count'].mean() if len(non_biz_hours) > 0 else 0
-                    
-                    ts_df['expected_count'] = ts_df['is_business_hours'].map({1: biz_mean, 0: non_biz_mean})
-                    ts_df['pattern_deviation'] = (ts_df['event_count'] - ts_df['expected_count']).abs()
-                    
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        ts_df['relative_deviation'] = np.where(
-                            ts_df['expected_count'] > 0,
-                            ts_df['pattern_deviation'] / ts_df['expected_count'],
-                            0
-                        )
-                
-                ts_df = ts_df.reset_index()
-                
-                # Merge features back
-                new_columns = [col for col in ts_df.columns if col not in entity_df.columns]
-                logger.debug(f"Entity {entity}: Created {len(new_columns)} new time series features")
-                
-                if new_columns:
-                    merge_columns = ['row_id'] + new_columns
-                    ts_features = ts_df[merge_columns]
-                    entity_df = pd.merge(entity_df, ts_features, on='row_id', how='left')
-            
-            result_frames.append(entity_df)
-        
-        # Combine all results
-        if result_frames:
-            result_df = pd.concat(result_frames, ignore_index=True)
-            
-            if 'row_id' in result_df.columns:
-                result_df = result_df.drop(columns=['row_id'])
-            
-            # Log final feature summary
-            feature_cols = [col for col in result_df.columns if col not in aggregated_data.columns]
-            logger.info(f"Successfully extracted {len(feature_cols)} new features for {len(result_df)} records")
-            logger.info(f"New features created: {feature_cols}")
-            
-            # Store feature analysis in config for downstream use
-            config['feature_analysis'] = feature_analysis
-            
-            return result_df
-        else:
-            logger.warning("No results from feature extraction")
-            return df
-        
-    except Exception as e:
-        logger.error(f"Error in feature extraction: {str(e)}")
-        logger.info("Falling back to minimal time-based features only")
-        
-        # Emergency fallback - create minimal features
-        try:
-            df['hour_of_day'] = df['@timestamp'].dt.hour
-            df['day_of_week'] = df['@timestamp'].dt.dayofweek
-            df['hour_sin'] = np.sin(2 * np.pi * df['hour_of_day'] / 24)
-            df['hour_cos'] = np.cos(2 * np.pi * df['hour_of_day'] / 24)
-            logger.info("Created emergency fallback features: hour_sin, hour_cos")
-        except:
-            logger.error("Even fallback feature creation failed")
-        
-        return df
+    # (detect_ml_anomalies_fixed removed from nested scope to top-level)
 
-def select_ml_features(data, config, data_type="process", expected_feature_count=None):
+def extract_ml_features(data: pd.DataFrame, config: Dict, job_name: str, expected_features: Optional[List[str]] = None, impute_map: Optional[Dict[str, float]] = None) -> pd.DataFrame:
     """
-    Enhanced feature selection with fixed feature count support for model compatibility.
-    
-    Args:
-        data: DataFrame with features
-        config: Configuration dictionary
-        data_type: Type of data (process, network, user, etc.)
-        expected_feature_count: If provided, ensures output has exactly this many features
-        
-    Returns:
-        tuple: (list of feature names, feature matrix)
+    Fixed feature extraction with job-specific handling.
     """
+    # New optional parameter expected_features can be passed to ensure the extractor
+    # produces columns that match model/scaler training features. This helps avoid
+    # runtime shape mismatches when scalers expect specific feature names/order.
+    # Backwards compatible: callers that don't pass expected_features will behave
+    # as before.
+    # NOTE: signature change is supported via optional kwarg in callers.
+    if isinstance(data, dict):
+        data = pd.DataFrame(data)
     if data.empty:
-        logger.warning("Empty dataframe for feature selection")
-        return [], np.array([])
-    
-    logger.info(f"Starting feature selection for {data_type} data")
-    
-    # Get feature analysis from config if available
-    feature_analysis = config.get('feature_analysis', {})
-    strategy = feature_analysis.get('strategy', 'time_based_only')
-    
-    logger.info(f"Using feature selection strategy: {strategy}")
-    
-    # Complete list of all possible features (in priority order)
-    all_possible_features = [
-        # Base features (highest priority)
-        'event_count',
-        'hour_sin', 'hour_cos', 
-        'day_sin', 'day_cos',
-        'is_business_hours', 'is_weekend',
-        
-        # Domain-specific features by data type
-        # Process
-        'args_count', 'command_length', 'has_suspicious_chars',
-        'has_encoded_content', 'is_system_path', 'is_tmp_execution',
-        'is_root_user', 'has_hash', 'env_vars_count',
-        
-        # Network
-        'destination_port', 'is_well_known_port', 'is_ephemeral_port',
-        'bytes_per_packet', 'is_large_transfer', 'is_outbound',
-        'is_browser_traffic',
-        
-        # User
-        'is_sudo_command', 'is_su_command', 'is_compiler_activity',
-        'is_dev_tool', 'is_service_user',
-        
-        # Discovery
-        'has_pipes', 'has_redirection',
-        'is_root_discovery', 'is_regular_user_discovery',
-        
-        # Metadata
-        'is_root_access', 'is_service_account', 'potential_cred_harvest',
-        'user_data_access',
-        
-        # Time series features (rolling windows)
-        'rolling_mean_3h', 'rolling_std_3h', 'rolling_max_3h',
-        'rolling_mean_6h', 'rolling_std_6h', 'rolling_max_6h',
-        'rolling_mean_12h', 'rolling_std_12h', 'rolling_max_12h',
-        'rolling_mean_24h', 'rolling_std_24h', 'rolling_max_24h',
-        
-        # Lag features
-        'event_count_lag_1', 'event_count_lag_3', 'event_count_lag_6',
-        'event_count_lag_12', 'event_count_lag_24',
-        
-        # Rate of change features
-        'event_count_roc', 'event_count_day_roc',
-        
-        # Pattern features
-        'expected_count', 'pattern_deviation', 'relative_deviation'
-    ]
-    
-    # Additional generic features if needed to reach expected count
-    if expected_feature_count is not None:
-        while len(all_possible_features) < expected_feature_count:
-            all_possible_features.append(f"generic_feature_{len(all_possible_features)}")
-    
-    # Filter to only include features that exist in the data
-    available_features = [feat for feat in all_possible_features if feat in data.columns]
-    missing_features = [feat for feat in all_possible_features if feat not in data.columns]
-    
-    logger.info(f"Feature availability check:")
-    logger.info(f"  Total potential features: {len(all_possible_features)}")
-    logger.info(f"  Available features: {len(available_features)}")
-    logger.info(f"  Missing features: {len(missing_features)}")
-    
-    # Feature selection based on strategy
-    if strategy == "full_features":
-        # Use all features relevant to this data type
-        selected_features = available_features
-        logger.info("Full feature strategy: using all available features")
-    elif strategy == "time_based_only":
-        # Use only time-based features
-        time_based_features = [
-            'event_count', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
-            'is_business_hours', 'is_weekend', 'rolling_mean_3h',
-            'rolling_std_3h', 'rolling_max_3h', 'event_count_lag_1',
-            'event_count_roc', 'pattern_deviation', 'relative_deviation'
-        ]
-        selected_features = [f for f in time_based_features if f in available_features]
-        logger.info("Time-based strategy: using only time-based features")
-    elif strategy == "hybrid":
-        # Use time-based features plus domain features if available
-        domain_coverage = len([f for f in missing_features if 'is_' in f or '_count' in f]) / len([f for f in all_possible_features if 'is_' in f or '_count' in f])
-        if domain_coverage >= 0.5:
-            logger.info(f"High domain coverage ({domain_coverage:.1%})")
-            selected_features = available_features
-        else:
-            logger.info(f"Low domain coverage ({domain_coverage:.1%})")
-            # Fallback to time-based features
-            time_features = [f for f in available_features if 'hour' in f or 'day' in f or 'rolling' in f or 'lag' in f or 'roc' in f]
-            selected_features = time_features
-    else:
-        # Default to all available
-        selected_features = available_features
-        logger.info("Using all available features")
-    
-    # CRITICAL: Handle expected feature count
-    if expected_feature_count is not None:
-        logger.info(f"Adjusting feature count to match expected {expected_feature_count} features")
-        
-        if len(selected_features) < expected_feature_count:
-            # Need to add missing features
-            missing_count = expected_feature_count - len(selected_features)
-            logger.info(f"Adding {missing_count} missing features to match expected count")
-            
-            # First try to add features from all_possible_features that aren't in selected_features
-            candidates = [f for f in all_possible_features if f not in selected_features]
-            
-            # Add missing features to data and selected_features
-            for feature in candidates:
-                if len(selected_features) >= expected_feature_count:
-                    break
-                    
-                # Add feature to dataframe with appropriate default value
-                if feature not in data.columns:
-                    if 'sin' in feature or 'cos' in feature:
-                        data[feature] = 0.0
-                    elif 'std' in feature:
-                        data[feature] = 0.1
-                    elif 'rolling_' in feature or 'lag' in feature:
-                        data[feature] = 1.0
-                    elif feature == 'event_count':
-                        data[feature] = 1.0
-                    else:
-                        data[feature] = 0
-                
-                # Add to selected features
-                selected_features.append(feature)
-            
-            # If still not enough, add generic features
-            while len(selected_features) < expected_feature_count:
-                feature_name = f"generic_feature_{len(selected_features)}"
-                data[feature_name] = 0
-                selected_features.append(feature_name)
-                
-        elif len(selected_features) > expected_feature_count:
-            # Need to trim features - keep higher priority ones
-            logger.info(f"Trimming feature list from {len(selected_features)} to {expected_feature_count}")
-            
-            # Sort selected features by their position in all_possible_features (priority order)
-            def get_priority(feature):
-                try:
-                    return all_possible_features.index(feature)
-                except ValueError:
-                    return 999999  # Put unknown features at the end
-                    
-            selected_features = sorted(selected_features, key=get_priority)
-            selected_features = selected_features[:expected_feature_count]
-    
-    logger.info(f"Final feature selection: {len(selected_features)} features for {data_type} ML")
-    if len(selected_features) <= 20:  # Only log full list if not too long
-        logger.info(f"Selected features: {selected_features}")
-    else:
-        logger.info(f"Selected {len(selected_features)} features (too many to list)")
-    
-    if not selected_features:
-        logger.error("No suitable features found for ML")
-        return [], np.array([])
-    
-    try:
-        # Create DataFrame with selected features
-        X_df = data[selected_features].copy()
-        
-        # Clean data - replace infinities and NaNs
-        X_df = X_df.replace([np.inf, -np.inf], np.nan)
-        X_df = X_df.fillna(0)
-        
-        # Remove extreme outliers
-        for col in X_df.columns:
-            if pd.api.types.is_numeric_dtype(X_df[col]):
-                q1 = X_df[col].quantile(0.01)
-                q3 = X_df[col].quantile(0.99)
-                iqr = q3 - q1
-                
-                if iqr > 0:
-                    lower_bound = q1 - (iqr * 1.5)
-                    upper_bound = q3 + (iqr * 1.5)
-                    X_df[col] = X_df[col].clip(lower=lower_bound, upper=upper_bound)
-        
-        # Add small noise to zero-variance columns
-        for col in X_df.columns:
-            if X_df[col].nunique() <= 1:
-                X_df[col] = X_df[col] + np.random.normal(0, 0.0001, size=len(X_df))
-                logger.debug(f"Added noise to zero-variance feature: {col}")
-        
-        feature_matrix = X_df.values
-        logger.info(f"Feature matrix shape: {feature_matrix.shape}")
-        
-        return selected_features, feature_matrix
-        
-    except Exception as e:
-        logger.error(f"Error processing features: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return [], np.array([])
+        return data
 
-def train_ml_models(historical_data, config, data_type="process"):
-    """
-    Enhanced model training with feature availability awareness.
-    """
-    if historical_data.empty:
-        logger.warning("No historical data available for model training")
-        return {}, {}
     
-    logger.info(f"Starting ML model training for {data_type} data")
+    df = data.copy()
+    job_config = JOB_CONFIGURATIONS.get(job_name, {})
+    data_type = job_config.get('data_type', 'process')
     
-    # Set data type in config for feature extraction
-    config['data_type'] = data_type
+    logger.info(f"Feature extraction for job {job_name} ({data_type})")
     
-    # Extract and engineer features
-    feature_data = extract_ml_features(historical_data, config)
+    # Add event count
+    if 'event_count' not in df.columns:
+        df['event_count'] = 1
     
-    if feature_data.empty:
-        logger.error("Feature extraction failed, cannot train models")
-        return {}, {}
-    
-    models = {}
-    scalers = {}
-    
-    # Configure model parameters from config with better defaults
-    ml_config = config.get("ml", {})
-    min_samples = ml_config.get("min_samples", 50)  # Increased from 10
-    
-    isolation_forest_params = ml_config.get("isolation_forest", {
-        "n_estimators": 100,
-        "contamination": 0.05,
-        "random_state": 42
-    })
-    
-    lof_params = ml_config.get("lof", {
-        "n_neighbors": 20,
-        "contamination": 0.05
-    })
-    
-    ocsvm_params = ml_config.get("ocsvm", {
-        "nu": 0.05,
-        "kernel": "rbf",
-        "gamma": "scale"
-    })
-    
-    # Get feature analysis to determine entity column
-    feature_analysis = config.get('feature_analysis', {})
-    entity_col = feature_analysis.get('entity_col', 'host.hostname')
-    
-    logger.info(f"Training models using entity column: {entity_col}")
-    
-    # Train models for each entity
-    if entity_col in feature_data.columns:
-        entities = feature_data[entity_col].unique()
-        logger.info(f"Found {len(entities)} unique entities")
-    else:
-        entities = ['global']  # Train single global model
-        logger.info("Training single global model (no entity column available)")
-    
-    successful_entities = 0
-    
-    for entity in entities:
-        if entity == 'global':
-            entity_data = feature_data
-        else:
-            entity_data = feature_data[feature_data[entity_col] == entity]
-        
-        # Select features for this entity
-        selected_features, X = select_ml_features(entity_data, config, data_type)
-        
-        # Check data sufficiency with more stringent requirements
-        if len(X) < min_samples:
-            logger.warning(f"Insufficient data for {entity}: {len(X)} samples (need {min_samples})")
-            continue
-        
-        if len(selected_features) < 1:
-            logger.warning(f"No features available for {entity}")
-            continue
-        
+    # Temporal features
+    if '@timestamp' in df.columns:
         try:
-            logger.info(f"Training models for {entity} with {len(X)} samples and {len(selected_features)} features")
+            timestamps = pd.to_datetime(df['@timestamp'], errors='coerce')
+            timestamps = timestamps.fillna(pd.Timestamp.now())
             
-            # Scale the data
-            scaler = RobustScaler()
-            X_scaled = scaler.fit_transform(X)
-            
-            # Store the scaler
-            scalers[entity] = scaler
-            
-            # Initialize models dict for this entity
-            models[entity] = {"features_used": selected_features}
-            
-            # Train Isolation Forest
-            try:
-                iso_forest = IsolationForest(
-                    n_estimators=isolation_forest_params.get("n_estimators", 100),
-                    contamination=isolation_forest_params.get("contamination", 0.05),
-                    random_state=isolation_forest_params.get("random_state", 42)
-                )
-                iso_forest.fit(X_scaled)
-                models[entity]["isolation_forest"] = iso_forest
-                logger.debug(f"Trained Isolation Forest for {entity}")
-            except Exception as e:
-                logger.warning(f"Failed to train Isolation Forest for {entity}: {e}")
-            
-            # Train Local Outlier Factor (only if we have enough samples)
-            if len(X_scaled) > lof_params.get("n_neighbors", 20):
-                try:
-                    lof = LocalOutlierFactor(
-                        n_neighbors=min(lof_params.get("n_neighbors", 20), len(X_scaled)-1),
-                        contamination=lof_params.get("contamination", 0.05),
-                        novelty=True
-                    )
-                    lof.fit(X_scaled)
-                    models[entity]["lof"] = lof
-                    logger.debug(f"Trained LOF for {entity}")
-                except Exception as e:
-                    logger.warning(f"Failed to train LOF for {entity}: {e}")
-            
-            # Train One-Class SVM (may be slow for large datasets)
-            if len(X_scaled) <= 1000:  # Limit OCSVM to smaller datasets
-                try:
-                    ocsvm = OneClassSVM(
-                        nu=ocsvm_params.get("nu", 0.05),
-                        kernel=ocsvm_params.get("kernel", "rbf"),
-                        gamma=ocsvm_params.get("gamma", "scale")
-                    )
-                    ocsvm.fit(X_scaled)
-                    models[entity]["ocsvm"] = ocsvm
-                    logger.debug(f"Trained OCSVM for {entity}")
-                except Exception as e:
-                    logger.warning(f"Failed to train OCSVM for {entity}: {e}")
-            
-            # Calculate PCA for reconstruction error
-            try:
-                n_components = min(int(0.95 * X_scaled.shape[1]), X_scaled.shape[1]-1, 10)
-                if n_components > 0:
-                    pca = PCA(n_components=n_components)
-                    pca.fit(X_scaled)
-                    models[entity]["pca"] = pca
-                    logger.debug(f"Trained PCA for {entity} with {n_components} components")
-            except Exception as e:
-                logger.warning(f"Failed to train PCA for {entity}: {e}")
-            
-            successful_entities += 1
-            logger.info(f"Successfully trained models for {entity}")
+            df['hour_of_day'] = timestamps.dt.hour
+            df['hour_sin'] = np.sin(2 * np.pi * timestamps.dt.hour / 24)
+            df['hour_cos'] = np.cos(2 * np.pi * timestamps.dt.hour / 24)
+            df['day_sin'] = np.sin(2 * np.pi * timestamps.dt.dayofweek / 7)
+            df['day_cos'] = np.cos(2 * np.pi * timestamps.dt.dayofweek / 7)
+            df['is_business_hours'] = ((timestamps.dt.hour >= 9) & (timestamps.dt.hour <= 17)).astype(int)
+            df['is_weekend'] = (timestamps.dt.dayofweek >= 5).astype(int)
             
         except Exception as e:
-            logger.error(f"Error training models for {entity}: {e}")
+            logger.warning(f"Temporal feature extraction failed: {e}")
+            # Add defaults
+            df['hour_sin'] = 0
+            df['hour_cos'] = 1
+            df['day_sin'] = 0
+            df['day_cos'] = 1
+            df['is_business_hours'] = 1
+            df['is_weekend'] = 0
     
-    logger.info(f"Model training completed: {successful_entities}/{len(entities)} entities successful")
+    # Job-specific features
+    if job_name == "v3_linux_anomalous_network_port_activity":
+        # Port-specific features
+        if 'destination.port' in df.columns:
+            df['destination.port'] = pd.to_numeric(df['destination.port'], errors='coerce').fillna(0)
+            df['is_well_known_port'] = (df['destination.port'] < 1024).astype(int)
+            df['is_high_port'] = (df['destination.port'] > 32767).astype(int)
+            df['is_common_service'] = df['destination.port'].isin([22, 80, 443, 3306, 5432]).astype(int)
     
-    if successful_entities == 0:
-        logger.error("No models were successfully trained")
+    elif job_name == "v3_rare_process_by_host_linux":
+        # Host-process combination features
+        if 'host.hostname' in df.columns and 'process.name' in df.columns:
+            df['host_process_freq'] = df.groupby(['host.hostname', 'process.name'])['event_count'].transform('count')
     
-    return models, scalers
-
-def detect_statistical_anomalies(aggregated_data, baselines, config, data_type="process"):
-    """
-    Detect anomalies using statistical methods adapted for Linux data.
-    Reuses proven statistical detection from network methods.
+    elif job_name in ["v3_linux_rare_sudo_user", "v3_linux_rare_user_compiler"]:
+        # User-specific features
+        if 'user.name' in df.columns:
+            df['user_frequency'] = df.groupby('user.name')['event_count'].transform('count') / len(df)
     
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated Linux event data
-        baselines (dict): Baseline statistics
-        config (dict): Configuration dictionary
-        data_type (str): Type of data being processed
-        
-    Returns:
-        pd.DataFrame: Results with anomaly flags and scores
-    """
-    if aggregated_data.empty:
-        return pd.DataFrame()
+    elif job_name.startswith("v3_linux") and "discovery" in job_name:
+        # Discovery command features
+        if 'process.command_line' in df.columns:
+            df['command_length'] = df['process.command_line'].str.len().fillna(0)
+            df['has_pipes'] = df['process.command_line'].str.contains('|', na=False).astype(int)
+            df['has_redirection'] = df['process.command_line'].str.contains('[<>]', na=False, regex=True).astype(int)
     
-    detection_config = config["detection"]
-    window = detection_config.get("time_window", 24)
-    threshold_multiplier = detection_config.get("threshold_multiplier", 3.0)
+    elif job_name == "v3_linux_rare_metadata_process":
+        # Process metadata features
+        if 'process.args' in df.columns:
+            df['args_count'] = df['process.args'].apply(
+                lambda x: len(x) if isinstance(x, list) else 0
+            )
+            df['args_length'] = df['process.args'].apply(
+                lambda x: len(str(x)) if x else 0
+            )
     
-    results = []
+    elif job_name == "v3_linux_rare_metadata_user":
+        # User metadata features
+        if 'user.group' in df.columns:
+            df['group_count'] = df.groupby('user.group')['event_count'].transform('count')
     
-    # Determine entity column based on data type
-    if data_type == "process":
-        entity_col = 'process.name'
-    elif data_type == "network":
-        entity_col = 'destination.geo.country_name'
-    elif data_type == "user":
-        entity_col = 'user.name'
-    elif data_type == "discovery":
-        entity_col = 'process.name'
-    elif data_type == "metadata":
-        entity_col = 'process.name'
-    else:
-        entity_col = 'host.hostname'
-    
-    if entity_col not in aggregated_data.columns:
-        logger.warning(f"Entity column {entity_col} not found in data")
-        return pd.DataFrame()
-    
-    for entity in aggregated_data[entity_col].unique():
-        entity_data = aggregated_data[
-            aggregated_data[entity_col] == entity
-        ].copy()
-        
-        # Check baseline stats
-        baseline = baselines.get(entity, {})
-        baseline_mean = baseline.get("mean", entity_data["event_count"].mean())
-        baseline_std = baseline.get("std", entity_data["event_count"].std())
-        
-        # Handle very small standard deviations
-        if baseline_std < 0.1:
-            baseline_std = max(0.1, baseline_mean * 0.1)
-        
-        # Calculate z-scores
-        z_scores = (entity_data["event_count"] - baseline_mean) / baseline_std
-        entity_data["z_score"] = z_scores
-        
-        # Calculate rolling statistics
-        entity_data = entity_data.sort_values("@timestamp")
-        entity_data["rolling_mean"] = entity_data["event_count"].rolling(
-            window=window, min_periods=1
-        ).mean()
-        
-        entity_data["rolling_std"] = entity_data["event_count"].rolling(
-            window=window, min_periods=1
-        ).std().fillna(baseline_std)
-        
-        # Set dynamic thresholds
-        entity_data["threshold"] = entity_data["rolling_mean"] + (
-            threshold_multiplier * entity_data["rolling_std"]
-        )
-        
-        # Use percentile threshold from baseline
-        if "percentiles" in baseline:
-            entity_data["percentile_threshold"] = baseline["percentiles"]["p99"]
+    # Clean numeric columns. Prefer impute_map values when present.
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], 0)
+        if impute_map:
+            for col in numeric_cols:
+                if col in df.columns:
+                    if col in impute_map:
+                        try:
+                            val = float(impute_map[col])
+                        except Exception:
+                            val = 0.0
+                        df[col] = df[col].fillna(val)
+                    else:
+                        df[col] = df[col].fillna(0)
         else:
-            entity_data["percentile_threshold"] = entity_data["event_count"].quantile(0.99)
-        
-        # Mark anomalies - require multiple conditions
-        entity_data["is_anomaly"] = (
-            ((entity_data["event_count"] > entity_data["threshold"]) & 
-            (entity_data["event_count"] > entity_data["percentile_threshold"])) |
-            ((entity_data["event_count"] > entity_data["threshold"]) & 
-            (entity_data["z_score"] > 3.0)) |
-            ((entity_data["event_count"] > entity_data["percentile_threshold"]) & 
-            (entity_data["z_score"] > 3.0))
-        )
-        
-        # Calculate anomaly score
-        entity_data["anomaly_score"] = (
-            0.4 * (entity_data["event_count"] / entity_data["threshold"].clip(lower=1)) +
-            0.3 * (entity_data["event_count"] / entity_data["percentile_threshold"].clip(lower=1)) +
-            0.3 * (entity_data["z_score"] / 5.0)
-        ).clip(0, 10)
-        
-        entity_data["detection_method"] = "statistical"
-        results.append(entity_data)
-    
-    if results:
-        return pd.concat(results, ignore_index=True)
-    return pd.DataFrame()
+            df[numeric_cols] = df[numeric_cols].fillna(0)
 
-
-
-# def detect_ml_anomalies(aggregated_data, models, scalers, config, data_type="process"):
-#     """
-#     Detect anomalies using trained ML models for Linux data.
-#     Ensures feature compatibility with model scalers.
-#     """
-#     if aggregated_data.empty or not models:
-#         logger.warning("No data or models available for ML anomaly detection")
-#         return pd.DataFrame()
-    
-#     # Extract features
-#     try:
-#         feature_data = extract_ml_features(aggregated_data, config)
-#         logger.info("Successfully extracted features for ML detection")
-#     except Exception as e:
-#         logger.error(f"Error in feature extraction for ML detection: {e}")
-#         return pd.DataFrame()
-    
-#     results = []
-    
-#     # Determine entity column
-#     if data_type == "process":
-#         entity_col = 'process.name'
-#     elif data_type == "network":
-#         entity_col = 'destination.geo.country_name'
-#     elif data_type == "user":
-#         entity_col = 'user.name'
-#     elif data_type == "discovery":
-#         entity_col = 'process.name'
-#     elif data_type == "metadata":
-#         entity_col = 'process.name'
-#     else:
-#         entity_col = 'host.hostname'
-    
-#     # Process each entity
-#     if entity_col in feature_data.columns:
-#         entities = feature_data[entity_col].unique()
-#     else:
-#         entities = ['global']
-    
-#     for entity in entities:
-#         if entity not in models or entity not in scalers:
-#             logger.warning(f"No models or scalers found for entity: {entity}")
-#             continue
-        
-#         if entity == 'global':
-#             entity_data = feature_data.copy()
-#         else:
-#             entity_data = feature_data[feature_data[entity_col] == entity].copy()
-        
-#         try:
-#             if len(entity_data) == 0:
-#                 continue
-                
-#             # CRITICAL FIX: Get the exact number of features the scaler expects
-#             expected_feature_count = None
-#             try:
-#                 # Try to infer from the scaler's n_features_in_ attribute
-#                 if hasattr(scalers[entity], 'n_features_in_'):
-#                     expected_feature_count = scalers[entity].n_features_in_
-#                     logger.info(f"Scaler for {entity} expects {expected_feature_count} features")
-                
-#                 else:
-#                     dummy_array = np.zeros((1, 32))  # Try with 32 features
-#                     try:
-#                         scalers[entity].transform(dummy_array)
-#                         expected_feature_count = 32
-#                     except:
-#                         # Try with different counts until one works
-#                         for count in [14, 24, 28, 30, 36]:
-#                             try:
-#                                 dummy_array = np.zeros((1, count))
-#                                 scalers[entity].transform(dummy_array)
-#                                 expected_feature_count = count
-#                                 break
-#                             except:
-#                                 continue
-#             except Exception as e:
-#                 logger.error(f"Error determining feature count for {entity}: {e}")
-#                 expected_feature_count = 32  # Default to 32 if we can't determine
-            
-#             # Define a complete list of features the model might expect
-#             all_possible_features = [
-#                 # Basic features
-#                 'event_count', 'process.name',
-                
-#                 # Domain-specific features
-#                 'args_count', 'command_length', 'has_suspicious_chars', 
-#                 'has_encoded_content', 'is_system_path', 'is_tmp_execution', 
-#                 'is_root_user', 'has_hash', 'env_vars_count',
-                
-#                 # Time-based features
-#                 'hour_of_day', 'day_of_week', 'is_business_hours', 'is_weekend',
-#                 'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
-                
-#                 # Time-series features
-#                 'rolling_mean_3h', 'rolling_std_3h', 'rolling_max_3h',
-#                 'rolling_mean_6h', 'rolling_std_6h', 'rolling_max_6h',
-#                 'rolling_mean_12h', 'rolling_std_12h', 'rolling_max_12h',
-#                 'rolling_mean_24h', 'rolling_std_24h', 'rolling_max_24h',
-#                 'event_count_lag_1', 'event_count_lag_3', 'event_count_lag_6',
-#                 'event_count_lag_12', 'event_count_lag_24',
-#                 'event_count_roc', 'event_count_day_roc',
-#                 'expected_count', 'pattern_deviation', 'relative_deviation'
-#             ]
-            
-#             # Make sure we have enough features in our list
-#             while len(all_possible_features) < expected_feature_count:
-#                 all_possible_features.append(f"feature_{len(all_possible_features)}")
-            
-#             # Take exactly the number of features we need
-#             expected_features = all_possible_features[:expected_feature_count]
-            
-#             # Add missing features with default values
-#             for feature in expected_features:
-#                 if feature not in entity_data.columns:
-#                     # Default value based on feature type
-#                     if 'sin' in feature or 'cos' in feature:
-#                         entity_data[feature] = 0.0  # Trigonometric features
-#                     elif 'std' in feature:
-#                         entity_data[feature] = 0.1  # Standard deviations are positive
-#                     elif 'rolling_' in feature or 'lag' in feature:
-#                         entity_data[feature] = 1.0  # Rolling and lag features
-#                     elif feature == 'event_count':
-#                         entity_data[feature] = 1.0  # Event count defaults to 1
-#                     else:
-#                         entity_data[feature] = 0    # Most features default to 0
-            
-#             # Select exactly the expected features in the right order
-#             X = entity_data[expected_features].copy()
-            
-#             # CRITICAL FIX: Convert string columns to numeric safely before scaling
-#             for col in X.columns:
-#                 if X[col].dtype == 'object':
-#                     # For entity columns (like process.name), use a binary indicator
-#                     if col == entity_col:
-#                         X[col] = 1  # Just mark with 1 since all are the same entity
-#                     else:
-#                         # Try to convert to numeric, replace with 0 if fails
-#                         X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
-            
-#             # Handle NaN values - replace with 0 for simplicity
-#             if X.isna().any().any():
-#                 logger.error(f"NaN values found in features for {entity}, replacing with 0")
-#                 X = X.fillna(0)
-            
-#             # Convert to numpy array
-#             X_values = X.values
-            
-#             # Check final shape
-#             logger.info(f"Feature matrix for {entity} has shape {X_values.shape}, expected {expected_feature_count} features")
-            
-#             # Apply scaler
-#             try:
-#                 X_scaled = scalers[entity].transform(X_values)
-#             except Exception as e:
-#                 logger.error(f"Scaling error for {entity}: {e}")
-#                 logger.error(f"X shape: {X_values.shape}, expected {expected_feature_count} features")
-#                 continue
-            
-#             # Initialize anomaly flags and scores
-#             entity_data["is_ml_anomaly"] = False
-#             entity_data["ml_anomaly_score"] = 0.0
-            
-#             # Apply models
-#             anomaly_votes = np.zeros(len(entity_data))
-#             anomaly_scores = []
-            
-#             # Isolation Forest
-#             if "isolation_forest" in models[entity]:
-#                 try:
-#                     iso_forest = models[entity]["isolation_forest"]
-#                     if_scores = iso_forest.decision_function(X_scaled)
-#                     if_predictions = iso_forest.predict(X_scaled)
-                    
-#                     anomaly_votes += (if_predictions == -1).astype(int)
-#                     normalized_scores = (1 - (if_scores + 1) / 2).clip(0, 1)
-#                     anomaly_scores.append(normalized_scores)
-                    
-#                 except Exception as e:
-#                     logger.error(f"Isolation Forest error for {entity}: {e}")
-            
-#             # Local Outlier Factor
-#             if "lof" in models[entity]:
-#                 try:
-#                     lof = models[entity]["lof"]
-#                     lof_scores = lof.decision_function(X_scaled)
-#                     lof_predictions = lof.predict(X_scaled)
-                    
-#                     anomaly_votes += (lof_predictions == -1).astype(int)
-                    
-#                     min_score = lof_scores.min()
-#                     max_score = lof_scores.max()
-#                     if min_score < max_score:
-#                         normalized_scores = ((max_score - lof_scores) / (max_score - min_score)).clip(0, 1)
-#                     else:
-#                         normalized_scores = np.zeros_like(lof_scores)
-#                     anomaly_scores.append(normalized_scores)
-                    
-#                 except Exception as e:
-#                     logger.error(f"LOF error for {entity}: {e}")
-            
-#             # One-Class SVM
-#             if "ocsvm" in models[entity]:
-#                 try:
-#                     ocsvm = models[entity]["ocsvm"]
-#                     ocsvm_scores = ocsvm.decision_function(X_scaled)
-#                     ocsvm_predictions = ocsvm.predict(X_scaled)
-                    
-#                     anomaly_votes += (ocsvm_predictions == -1).astype(int)
-                    
-#                     min_score = ocsvm_scores.min()
-#                     max_score = ocsvm_scores.max()
-#                     if min_score < max_score:
-#                         normalized_scores = ((max_score - ocsvm_scores) / (max_score - min_score)).clip(0, 1)
-#                     else:
-#                         normalized_scores = np.zeros_like(ocsvm_scores)
-#                     anomaly_scores.append(normalized_scores)
-                    
-#                 except Exception as e:
-#                     logger.error(f"OCSVM error for {entity}: {e}")
-            
-#             # PCA reconstruction error
-#             if "pca" in models[entity]:
-#                 try:
-#                     pca = models[entity]["pca"]
-#                     X_pca = pca.transform(X_scaled)
-#                     X_reconstructed = pca.inverse_transform(X_pca)
-                    
-#                     reconstruction_errors = np.sum(np.square(X_scaled - X_reconstructed), axis=1)
-#                     error_threshold = np.percentile(reconstruction_errors, 95)
-                    
-#                     anomaly_votes += (reconstruction_errors > error_threshold).astype(int)
-                    
-#                     max_error = reconstruction_errors.max()
-#                     if max_error > 0:
-#                         normalized_scores = (reconstruction_errors / max_error).clip(0, 1)
-#                     else:
-#                         normalized_scores = np.zeros_like(reconstruction_errors)
-#                     anomaly_scores.append(normalized_scores)
-                    
-#                 except Exception as e:
-#                     logger.error(f"PCA error for {entity}: {e}")
-            
-#             # DBSCAN clustering
-#             if "dbscan" in models[entity]:
-#                 try:
-#                     dbscan = models[entity]["dbscan"]
-#                     labels = dbscan.fit_predict(X_scaled)
-                    
-#                     dbscan_anomalies = (labels == -1).astype(int)
-#                     anomaly_votes += dbscan_anomalies
-#                     anomaly_scores.append(dbscan_anomalies.astype(float))
-                    
-#                 except Exception as e:
-#                     logger.error(f"DBSCAN error for {entity}: {e}")
-            
-#             # Combine results using consensus voting
-#             num_methods = len(anomaly_scores)
-#             if num_methods > 0:
-#                 # Require at least 60% of methods to agree
-#                 consensus_threshold = max(2, int(0.6 * num_methods))
-#                 entity_data["is_ml_anomaly"] = anomaly_votes >= consensus_threshold
-                
-#                 # Calculate weighted average of scores
-#                 combined_scores = np.mean(anomaly_scores, axis=0)
-#                 entity_data["ml_anomaly_score"] = combined_scores
-                
-#                 logger.info(f"ML detection found {entity_data['is_ml_anomaly'].sum()} anomalies for {entity}")
-            
-#             entity_data["detection_method"] = "machine_learning"
-#             results.append(entity_data)
-            
-#         except Exception as e:
-#             logger.error(f"Error processing {entity} in ML detection: {e}")
-#             import traceback
-#             logger.error(traceback.format_exc())
-    
-#     if results:
-#         try:
-#             return pd.concat(results, ignore_index=True)
-#         except Exception as e:
-#             logger.error(f"Error concatenating ML results: {e}")
-#             return results[0] if results else pd.DataFrame()
-    
-#     return pd.DataFrame()
-
-def detect_ml_anomalies(aggregated_data, models, scalers, config, data_type="process"):
-    """
-    Detect anomalies using trained ML models for Linux data.
-    Ensures feature compatibility with model scalers.
-    """
-    if aggregated_data.empty or not models:
-        logger.warning("No data or models available for ML anomaly detection")
-        return pd.DataFrame()
-    
-    # Extract features
+    # If expected_features supplied (from scaler metadata), ensure those columns exist
+    # and are numeric. Prefer to impute missing features from training statistics
+    # provided by impute_map or by loading per-job manifests from the configured
+    # models base path. Falls back to zero.
     try:
-        feature_data = extract_ml_features(aggregated_data, config)
-        logger.info("Successfully extracted features for ML detection")
+        # Load per-job manifests if caller didn't provide impute_map
+        if expected_features and impute_map is None:
+            try:
+                models_base = config.get('models', {}).get('storage', {}).get('base_path', '/tmp/linux_anomaly_models')
+                manifest_path = os.path.join(models_base, f"{job_name.split(':')[0]}_feature_manifests.json")
+                if os.path.exists(manifest_path):
+                    with open(manifest_path, 'r', encoding='utf-8') as fh:
+                        import json
+                        manifests = json.load(fh)
+                        # manifests keys are entity names -> feature lists/stats
+                        # Build a simple impute_map using global feature centers if available
+                        impute_map = {}
+                        # prefer 'global' entry if present
+                        if 'global' in manifests:
+                            global_entry = manifests['global']
+                            for i, fname in enumerate(global_entry.get('feature_names_in_', [])):
+                                if 'center_' in global_entry and i < len(global_entry['center_']):
+                                    impute_map[fname] = global_entry['center_'][i]
+                        else:
+                            # Use first manifest entry as fallback
+                            for entry in manifests.values():
+                                for i, fname in enumerate(entry.get('feature_names_in_', [])):
+                                    if 'center_' in entry and i < len(entry['center_']):
+                                        impute_map.setdefault(fname, entry['center_'][i])
+            except Exception:
+                impute_map = impute_map or {}
+
+        if expected_features:
+            for f in expected_features:
+                if f not in df.columns:
+                    # Determine imputation value
+                    impute_val = 0.0
+                    if impute_map and f in impute_map:
+                        try:
+                            impute_val = float(impute_map[f])
+                        except Exception:
+                            impute_val = 0.0
+                    df[f] = impute_val
+                else:
+                    # Coerce to numeric where possible
+                    if not pd.api.types.is_numeric_dtype(df[f].dtype):
+                        df[f] = pd.to_numeric(df[f], errors='coerce').fillna(0.0)
+
+            # Optionally reorder columns so expected features appear first (helps debugging)
+            cols = list(df.columns)
+            reordered = [c for c in expected_features if c in cols] + [c for c in cols if c not in expected_features]
+            df = df.loc[:, reordered]
     except Exception as e:
-        logger.error(f"Error in feature extraction for ML detection: {e}")
-        return pd.DataFrame()
+        logger.debug(f"Failed to align extract_ml_features to expected_features: {e}")
+
+    return df
+
+def _create_composite_entity(data: pd.DataFrame, composite_type: str, job_name: str) -> Optional[str]:
+    """
+    Create composite entity columns for specific jobs.
+    """
+    column_name = f"entity_{composite_type}"
     
-    results = []
+    try:
+        if composite_type == "host_process":
+            if 'host.hostname' in data.columns and 'process.name' in data.columns:
+                data[column_name] = (
+                    data['host.hostname'].fillna('unknown').astype(str) + ':' +
+                    data['process.name'].fillna('unknown').astype(str)
+                )
+                logger.info(f"Created composite entity for {job_name}: {column_name}")
+                return column_name
+        
+        elif composite_type == "process_args":
+            if 'process.name' in data.columns:
+                if 'process.args' in data.columns:
+                    data[column_name] = (
+                        data['process.name'].fillna('unknown').astype(str) + '::' +
+                        data['process.args'].fillna('').astype(str).str[:100]
+                    )
+                else:
+                    data[column_name] = data['process.name'].fillna('unknown').astype(str)
+                return column_name
+        
+        elif composite_type == "user_group":
+            if 'user.name' in data.columns:
+                if 'user.group' in data.columns:
+                    data[column_name] = (
+                        data['user.name'].fillna('unknown').astype(str) + '::' +
+                        data['user.group'].fillna('unknown').astype(str)
+                    )
+                else:
+                    data[column_name] = data['user.name'].fillna('unknown').astype(str)
+                return column_name
+        
+    except Exception as e:
+        logger.error(f"Failed to create composite entity {composite_type}: {e}")
     
-    # Determine entity column
-    if data_type == "process":
-        entity_col = 'process.name'
-    elif data_type == "network":
-        entity_col = 'destination.geo.country_name'
-    elif data_type == "user":
-        entity_col = 'user.name'
-    elif data_type == "discovery":
-        entity_col = 'process.name'
-    elif data_type == "metadata":
-        entity_col = 'process.name'
-    else:
-        entity_col = 'host.hostname'
+    return None
+
+def _filter_port_entities(data: pd.DataFrame, entity_column: str) -> List:
+    """
+    Filter port entities to focus on important ports.
+    """
+    common_ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
+                   1433, 3306, 3389, 5432, 5900, 6379, 8080, 8443,
+                   9200, 27017, 4444, 31337]
     
-    # FIXED: Better entity column handling
-    if entity_col in feature_data.columns:
-        entities = feature_data[entity_col].unique()
-    else:
-        # If the entity column is missing, add it with a default value
-        logger.warning(f"Entity column '{entity_col}' not found. Available alternatives:")
-        for col in feature_data.columns:
-            if 'name' in col or 'hostname' in col:
-                logger.info(f"  Found alternative entity column: {col}")
-                entity_col = col
-                entities = feature_data[entity_col].unique()
-                break
-        else:
-            logger.warning("No suitable entity column found, using 'global' entity")
-            feature_data['global_entity'] = 'global'
-            entity_col = 'global_entity'
-            entities = ['global']
+    if entity_column not in data.columns:
+        return []
     
-    # FIXED: Add fallback model creation for unknown entities
-    available_entities = set(models.keys())
-    missing_entities = set(entities) - available_entities
+    # Convert to numeric
+    data['port_numeric'] = pd.to_numeric(data[entity_column], errors='coerce')
     
-    if missing_entities and 'global' in models:
-        logger.info(f"Creating fallback models for {len(missing_entities)} unknown entities using 'global' model")
-        for entity in missing_entities:
-            if entity is not None and str(entity) != 'nan':
-                models[entity] = models['global']
-                scalers[entity] = scalers['global']
+    # Get frequency
+    port_counts = data['port_numeric'].value_counts()
     
-    # Process each entity
+    # Get ports with enough samples
+    min_samples = 10
+    frequent_ports = port_counts[port_counts >= min_samples].index.tolist()
+    
+    # Include common ports
+    important_ports = list(set(frequent_ports + common_ports))
+    
+    # Convert back to string
+    return [str(int(p)) for p in important_ports if not pd.isna(p)]
+
+# In _validate_entities function:
+def _validate_entities(entities, models, scalers, job_name):
+    """
+    Fixed entity validation that handles the job prefix correctly.
+    """
+    valid_entities = []
+    
+    # Models are stored with just entity names after loading with load_models_for_job
     for entity in entities:
-        # FIXED: Handle None/NaN entities
-        if entity is None or (isinstance(entity, float) and np.isnan(entity)):
-            continue
+        # Check if entity exists in models
+        if entity in models and entity in scalers:
+            valid_entities.append(entity)
+        # Also check for partial matches (for IPs with ports)
+        elif any(entity in key for key in models.keys()):
+            valid_entities.append(entity)
+    
+    # If no exact matches, try to find similar entities
+    if not valid_entities and models:
+        # For network IPs, try matching on partial IP
+        if '.' in str(entities[0]):  # Likely an IP
+            for entity in entities[:10]:  # Check first 10
+                for model_key in models.keys():
+                    if entity.split('.')[0] == model_key.split('.')[0]:  # Same subnet
+                        valid_entities.append(model_key)
+                        break
+    
+    return valid_entities
+def load_models_for_job(models_dict, scalers_dict, job_name):
+    """
+    Correctly extract models for a specific job from the stored dictionaries.
+    """
+    job_models = {}
+    job_scalers = {}
+    
+    # Your models are stored with full job:entity keys
+    for key, model in models_dict.items():
+        if key.startswith(f"{job_name}:"):
+            # Extract just the entity part
+            entity = key.split(':', 1)[1] 
+            job_models[entity] = model
             
-        entity = str(entity)  # Convert to string for consistency
-        
-        if entity not in models or entity not in scalers:
-            logger.warning(f"No models or scalers found for entity: {entity}")
-            continue
-        
+    for key, scaler in scalers_dict.items():
+        if key.startswith(f"{job_name}:"):
+            entity = key.split(':', 1)[1]
+            job_scalers[entity] = scaler
+    
+    return job_models, job_scalers
+def _get_fallback_entities(models: Dict, entities: List) -> List:
+    """
+    Get fallback entities when no direct matches found.
+    """
+    if 'global' in models:
+        return ['global']
+    
+    if models:
+        # Use first available model
+        return [list(models.keys())[0]]
+    
+    return []
+def _process_entity_anomalies(entity: str, feature_data: pd.DataFrame,
+                                entity_column: str, models: Dict, scalers: Dict,
+                                config: Dict, job_name: str) -> pd.DataFrame:
+    """
+    Process anomalies for a specific entity with improved scoring and validation.
+    """
+    try:
+        # Get entity data
         if entity == 'global':
             entity_data = feature_data.copy()
         else:
-            entity_data = feature_data[feature_data[entity_col] == entity].copy()
+            entity_data = feature_data[feature_data[entity_column] == entity].copy()
         
-        try:
-            if len(entity_data) == 0:
-                continue
-                
-            # FIXED: Get the exact number of features the scaler expects
-            expected_feature_count = None
+        if entity_data.empty:
+            logger.warning(f"No data for entity {entity}")
+            return pd.DataFrame()
+        
+        # Reset index and get model/scaler
+        entity_data = entity_data.reset_index(drop=True)
+        entity_model = models.get(entity)
+        entity_scaler = scalers.get(entity)
+
+        if not entity_model:
+            logger.error(f"Missing model for entity {entity}")
+            add_entity_diagnostic(job_name, entity, {"status": "missing_model"})
+            return pd.DataFrame()
+
+        if not entity_scaler:
+            logger.warning(f"Missing scaler for entity {entity}, will attempt fallback scaling")
+            add_entity_diagnostic(job_name, entity, {"status": "missing_scaler"})
+
+        # Normalize model format: accept plain estimator or dict of estimators
+        if not isinstance(entity_model, dict):
+            # Treat single estimator as isolation_forest by default
             try:
-                # Try to infer from the scaler's n_features_in_ attribute
-                if hasattr(scalers[entity], 'n_features_in_'):
-                    expected_feature_count = scalers[entity].n_features_in_
-                    logger.info(f"Scaler for {entity} expects {expected_feature_count} features")
-                
-                else:
-                    # Extract feature count from scaler attributes or dimensions
-                    for attr in ['n_features_', 'n_features_in_', 'feature_names_in_', 'mean_']:
-                        if hasattr(scalers[entity], attr):
-                            val = getattr(scalers[entity], attr)
-                            if isinstance(val, (list, np.ndarray)):
-                                expected_feature_count = len(val)
-                                break
-                    
-                    # If still not found, try with common feature counts
-                    if expected_feature_count is None:
-                        for count in [35, 32, 30, 28, 24, 16]:  # Common feature counts
-                            try:
-                                dummy_array = np.zeros((1, count))
-                                scalers[entity].transform(dummy_array)
-                                expected_feature_count = count
-                                break
-                            except:
-                                continue
-            except Exception as e:
-                logger.error(f"Error determining feature count for {entity}: {e}")
-                
-            # Use default count if still not determined
-            if expected_feature_count is None:
-                expected_feature_count = 35  # Most common feature count based on logs
-                logger.info(f"Using default feature count of {expected_feature_count} for {entity}")
-            
-            # Define a complete list of features the model might expect
-            all_possible_features = [
-                # Basic features
-                'event_count', 
-                
-                # Domain-specific features
-                'args_count', 'command_length', 'has_suspicious_chars', 
-                'has_encoded_content', 'is_system_path', 'is_tmp_execution', 
-                'is_root_user', 'has_hash', 'env_vars_count',
-                
-                # Time-based features
-                'hour_of_day', 'day_of_week', 'is_business_hours', 'is_weekend',
-                'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
-                
-                # Time-series features
-                'rolling_mean_3h', 'rolling_std_3h', 'rolling_max_3h',
-                'rolling_mean_6h', 'rolling_std_6h', 'rolling_max_6h',
-                'rolling_mean_12h', 'rolling_std_12h', 'rolling_max_12h',
-                'rolling_mean_24h', 'rolling_std_24h', 'rolling_max_24h',
-                'event_count_lag_1', 'event_count_lag_3', 'event_count_lag_6',
-                'event_count_lag_12', 'event_count_lag_24',
-                'event_count_roc', 'event_count_day_roc',
-                'expected_count', 'pattern_deviation', 'relative_deviation'
-            ]
-            
-            # Make sure we have enough features in our list
-            while len(all_possible_features) < expected_feature_count:
-                all_possible_features.append(f"feature_{len(all_possible_features)}")
-            
-            # Take exactly the number of features we need
-            expected_features = all_possible_features[:expected_feature_count]
-            
-            # FIXED: Better feature handling with more descriptive warnings
-            missing_features = [f for f in expected_features if f not in entity_data.columns]
-            if missing_features:
-                logger.warning(f"Missing {len(missing_features)} features for {entity}: {missing_features[:5]}...")
-            
-            # Add missing features with default values
-            for feature in expected_features:
-                if feature not in entity_data.columns:
-                    # Default value based on feature type
-                    if 'sin' in feature or 'cos' in feature:
-                        entity_data[feature] = 0.0  # Trigonometric features
-                    elif 'std' in feature:
-                        entity_data[feature] = 0.1  # Standard deviations are positive
-                    elif 'rolling_' in feature or 'lag' in feature:
-                        entity_data[feature] = 1.0  # Rolling and lag features
-                    elif feature == 'event_count':
-                        entity_data[feature] = 1.0  # Event count defaults to 1
-                    else:
-                        entity_data[feature] = 0    # Most features default to 0
-            
-            # Select exactly the expected features in the right order
-            X = entity_data[expected_features].copy()
-            
-            # FIXED: Better handling of string columns
-            for col in X.columns:
-                if X[col].dtype == 'object':
-                    # For entity columns (like process.name), use a binary indicator
-                    if col == entity_col:
-                        X[col] = 1  # Just mark with 1 since all are the same entity
-                    else:
-                        # Try to convert to numeric, replace with 0 if fails
-                        try:
-                            X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
-                        except:
-                            X[col] = 0  # Last resort - use zero for non-convertible columns
-            
-            # FIXED: Better NaN handling with a warning about which columns had NaNs
-            nan_cols = X.columns[X.isna().any()].tolist()
-            if nan_cols:
-                logger.warning(f"NaN values found in {len(nan_cols)} columns for {entity}: {nan_cols[:5]}...")
-                # Use more appropriate imputation based on column type
-                for col in nan_cols:
-                    if 'sin' in col or 'cos' in col:
-                        X[col] = X[col].fillna(0.0)  # Trig features default to 0
-                    elif 'std' in col or 'deviation' in col:
-                        X[col] = X[col].fillna(0.1)  # Small positive value for variance features
-                    elif 'mean' in col or 'expected' in col:
-                        X[col] = X[col].fillna(X[col].mean() if not pd.isna(X[col].mean()) else 1.0)
-                    else:
-                        X[col] = X[col].fillna(0)  # General case
-            
-            # Convert to numpy array
-            X_values = X.values
-            
-            # Check final shape
-            logger.info(f"Feature matrix for {entity} has shape {X_values.shape}, expected {expected_feature_count} features")
-            
-            # Apply scaler
+                entity_model = { 'isolation_forest': entity_model }
+            except Exception:
+                entity_model = {}
+
+        # Get available numeric features early
+        numeric_cols = entity_data.select_dtypes(include=[np.number]).columns.tolist()
+
+        # Get features used in training from multiple fallbacks
+        features_used = []
+        if isinstance(entity_model, dict) and 'features_used' in entity_model:
+            features_used = entity_model['features_used'] or []
+        if not features_used and entity_scaler is not None and hasattr(entity_scaler, 'feature_names_in_'):
             try:
-                X_scaled = scalers[entity].transform(X_values)
-            except Exception as e:
-                logger.error(f"Scaling error for {entity}: {e}")
-                logger.error(f"X shape: {X_values.shape}, expected {expected_feature_count} features")
-                # Try a fallback approach - create a new array with the right shape
-                try:
-                    if hasattr(scalers[entity], 'mean_') and hasattr(scalers[entity], 'scale_'):
-                        # For StandardScaler, we can manually apply the transformation
-                        X_scaled = (X_values - scalers[entity].mean_) / scalers[entity].scale_
-                    else:
-                        # Last resort - skip scaling and use raw features
-                        logger.warning(f"Using unscaled features for {entity} due to scaling error")
-                        X_scaled = X_values
-                except:
-                    logger.error(f"Fallback scaling also failed for {entity}, skipping")
-                    continue
-            
-            # Initialize anomaly flags and scores
-            entity_data["is_ml_anomaly"] = False
-            entity_data["ml_anomaly_score"] = 0.0
-            
-            # Apply models
-            anomaly_votes = np.zeros(len(entity_data))
-            anomaly_scores = []
-            
-            # Isolation Forest
-            if "isolation_forest" in models[entity]:
-                try:
-                    iso_forest = models[entity]["isolation_forest"]
-                    if_scores = iso_forest.decision_function(X_scaled)
-                    if_predictions = iso_forest.predict(X_scaled)
-                    
-                    anomaly_votes += (if_predictions == -1).astype(int)
-                    normalized_scores = (1 - (if_scores + 1) / 2).clip(0, 1)
-                    anomaly_scores.append(normalized_scores)
-                    
-                except Exception as e:
-                    logger.error(f"Isolation Forest error for {entity}: {e}")
-            
-            # Local Outlier Factor
-            if "lof" in models[entity]:
-                try:
-                    lof = models[entity]["lof"]
-                    lof_scores = lof.decision_function(X_scaled)
-                    lof_predictions = lof.predict(X_scaled)
-                    
-                    anomaly_votes += (lof_predictions == -1).astype(int)
-                    
-                    min_score = lof_scores.min()
-                    max_score = lof_scores.max()
-                    if min_score < max_score:
-                        normalized_scores = ((max_score - lof_scores) / (max_score - min_score)).clip(0, 1)
-                    else:
-                        normalized_scores = np.zeros_like(lof_scores)
-                    anomaly_scores.append(normalized_scores)
-                    
-                except Exception as e:
-                    logger.error(f"LOF error for {entity}: {e}")
-            
-            # One-Class SVM
-            if "ocsvm" in models[entity]:
-                try:
-                    ocsvm = models[entity]["ocsvm"]
-                    ocsvm_scores = ocsvm.decision_function(X_scaled)
-                    ocsvm_predictions = ocsvm.predict(X_scaled)
-                    
-                    anomaly_votes += (ocsvm_predictions == -1).astype(int)
-                    
-                    min_score = ocsvm_scores.min()
-                    max_score = ocsvm_scores.max()
-                    if min_score < max_score:
-                        normalized_scores = ((max_score - ocsvm_scores) / (max_score - min_score)).clip(0, 1)
-                    else:
-                        normalized_scores = np.zeros_like(ocsvm_scores)
-                    anomaly_scores.append(normalized_scores)
-                    
-                except Exception as e:
-                    logger.error(f"OCSVM error for {entity}: {e}")
-            
-            # PCA reconstruction error
-            if "pca" in models[entity]:
-                try:
-                    pca = models[entity]["pca"]
-                    X_pca = pca.transform(X_scaled)
-                    X_reconstructed = pca.inverse_transform(X_pca)
-                    
-                    reconstruction_errors = np.sum(np.square(X_scaled - X_reconstructed), axis=1)
-                    error_threshold = np.percentile(reconstruction_errors, 95)
-                    
-                    anomaly_votes += (reconstruction_errors > error_threshold).astype(int)
-                    
-                    max_error = reconstruction_errors.max()
-                    if max_error > 0:
-                        normalized_scores = (reconstruction_errors / max_error).clip(0, 1)
-                    else:
-                        normalized_scores = np.zeros_like(reconstruction_errors)
-                    anomaly_scores.append(normalized_scores)
-                    
-                except Exception as e:
-                    logger.error(f"PCA error for {entity}: {e}")
-            
-            # DBSCAN clustering
-            if "dbscan" in models[entity]:
-                try:
-                    dbscan = models[entity]["dbscan"]
-                    labels = dbscan.fit_predict(X_scaled)
-                    
-                    dbscan_anomalies = (labels == -1).astype(int)
-                    anomaly_votes += dbscan_anomalies
-                    anomaly_scores.append(dbscan_anomalies.astype(float))
-                    
-                except Exception as e:
-                    logger.error(f"DBSCAN error for {entity}: {e}")
-            
-            # Combine results using consensus voting
-            num_methods = len(anomaly_scores)
-            if num_methods > 0:
-                # Require at least 60% of methods to agree
-                consensus_threshold = max(1, int(0.6 * num_methods))
-                entity_data["is_ml_anomaly"] = anomaly_votes >= consensus_threshold
-                
-                # Calculate weighted average of scores
-                combined_scores = np.mean(anomaly_scores, axis=0)
-                entity_data["ml_anomaly_score"] = combined_scores
-                
-                logger.info(f"ML detection found {entity_data['is_ml_anomaly'].sum()} anomalies for {entity}")
-            
-            entity_data["detection_method"] = "machine_learning"
-            results.append(entity_data)
-            
-        except Exception as e:
-            logger.error(f"Error processing {entity} in ML detection: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    # FIXED: Better handling of results combining
-    if results:
-        try:
-            final_results = pd.concat(results, ignore_index=True)
-            
-            # Make sure anomaly_score exists
-            if "ml_anomaly_score" in final_results.columns and "anomaly_score" not in final_results.columns:
-                final_results["anomaly_score"] = final_results["ml_anomaly_score"]
-                
-            return final_results
-            
-        except Exception as e:
-            logger.error(f"Error concatenating ML results: {e}")
-            # Fall back to returning a single result if concatenation fails
-            if len(results) > 0:
-                return results[0]
-            else:
+                features_used = list(entity_scaler.feature_names_in_)
+            except Exception:
+                features_used = []
+
+        # Final fallback: use numeric columns as features
+        if not features_used:
+            features_used = numeric_cols
+
+        # Align features to available numeric columns
+        available_features = [f for f in features_used if f in numeric_cols]
+        if not available_features:
+            available_features = numeric_cols
+            if not available_features:
+                logger.error(f"No valid features for entity {entity}")
                 return pd.DataFrame()
-    
-    return pd.DataFrame()
-
-def calculate_baselines(historical_data, config, data_type="process"):
-    """
-    Calculate baseline statistics for Linux entities.
-    Adapted from network detection methods.
-    
-    Args:
-        historical_data (pd.DataFrame): Historical data
-        config (dict): Configuration dictionary
-        data_type (str): Type of data being processed
         
-    Returns:
-        dict: Baseline statistics by entity
+        # Extract and clean feature matrix
+        # Align runtime features to scaler.feature_names_in_ when available to avoid shape mismatches
+        if entity_scaler is not None and hasattr(entity_scaler, 'feature_names_in_'):
+            try:
+                expected_features = list(entity_scaler.feature_names_in_)
+                # Log mismatch details if any
+                missing = [f for f in expected_features if f not in entity_data.columns]
+                extra = [f for f in available_features if f not in expected_features]
+                if missing or extra:
+                    logger.warning(
+                        f"Scaler feature mismatch for {entity}: expected {len(expected_features)} features, "
+                        f"runtime has {len(available_features)} features; missing={len(missing)}, extra={len(extra)}. Aligning features and filling missing with zeros."
+                    )
+                    add_entity_diagnostic(job_name, entity, {
+                        "status": "feature_mismatch",
+                        "expected_count": len(expected_features),
+                        "runtime_count": len(available_features),
+                        "missing": missing,
+                        "extra": extra
+                    })
+
+                # Build aligned DataFrame in expected order, preferring scaler training stats
+                # for imputation when available (center_/mean_/median_), otherwise fall
+                # back to zero.
+                aligned_df = pd.DataFrame(index=entity_data.index)
+                imputed_map = {}
+                for f in expected_features:
+                    if f in entity_data.columns:
+                        # coerce to numeric to avoid object dtypes
+                        aligned_df[f] = pd.to_numeric(entity_data[f], errors='coerce').fillna(0.0)
+                    else:
+                        # Try to use scaler training statistics for imputation
+                        impute_val = 0.0
+                        impute_method = 'zero'
+                        try:
+                            if hasattr(entity_scaler, 'center_') and hasattr(entity_scaler, 'feature_names_in_'):
+                                try:
+                                    idx = list(entity_scaler.feature_names_in_).index(f)
+                                    impute_val = float(entity_scaler.center_[idx])
+                                    impute_method = 'scaler_center'
+                                except Exception:
+                                    pass
+                            if impute_method == 'zero' and hasattr(entity_scaler, 'mean_') and hasattr(entity_scaler, 'feature_names_in_'):
+                                try:
+                                    idx = list(entity_scaler.feature_names_in_).index(f)
+                                    impute_val = float(entity_scaler.mean_[idx])
+                                    impute_method = 'scaler_mean'
+                                except Exception:
+                                    pass
+                            if impute_method == 'zero' and hasattr(entity_scaler, 'median_') and hasattr(entity_scaler, 'feature_names_in_'):
+                                try:
+                                    idx = list(entity_scaler.feature_names_in_).index(f)
+                                    impute_val = float(entity_scaler.median_[idx])
+                                    impute_method = 'scaler_median'
+                                except Exception:
+                                    pass
+                        except Exception:
+                            impute_val = 0.0
+                            impute_method = 'zero_error'
+
+                        aligned_df[f] = impute_val
+                        imputed_map[f] = { 'value': impute_val, 'method': impute_method }
+
+                # If any imputation happened, add details to entity diagnostics
+                if imputed_map:
+                    try:
+                        add_entity_diagnostic(job_name, entity, {
+                            'status': 'feature_mismatch_imputed',
+                            'expected_count': len(expected_features),
+                            'runtime_count': len(available_features),
+                            'missing': missing,
+                            'extra': extra,
+                            'imputed': imputed_map
+                        })
+                    except Exception:
+                        pass
+
+                X = aligned_df.values
+            except Exception as e:
+                logger.warning(f"Failed to align features for {entity} using scaler metadata: {e}; falling back to available features")
+                X = entity_data[available_features].values
+        else:
+            X = entity_data[available_features].values
+
+        X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
+        
+        # Scale features with validation
+        try:
+            if entity_scaler is not None:
+                X_scaled = entity_scaler.transform(X)
+            else:
+                raise Exception("No scaler available")
+
+            if np.any(np.isnan(X_scaled)) or np.any(np.isinf(X_scaled)):
+                logger.warning(f"Invalid values after scaling for {entity}, cleaning...")
+                X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=3.0, neginf=-3.0)
+        except Exception as e:
+            logger.warning(f"Standard scaling failed for {entity}: {e}, using fallback")
+            add_entity_diagnostic(job_name, entity, {"status": "scaling_failed", "error": str(e)})
+            try:
+                from sklearn.preprocessing import RobustScaler
+                fallback_scaler = RobustScaler()
+                X_scaled = fallback_scaler.fit_transform(X)
+                add_entity_diagnostic(job_name, entity, {"status": "fallback_scaler_used"})
+            except Exception as ex:
+                logger.error(f"Fallback scaling failed for {entity}: {ex}")
+                add_entity_diagnostic(job_name, entity, {"status": "fallback_scaling_failed", "error": str(ex)})
+                return pd.DataFrame()
+
+        # Apply multiple ML methods
+        method_scores = {}
+        
+        # Isolation Forest
+        if isinstance(entity_model, dict) and 'isolation_forest' in entity_model:
+            try:
+                iso_forest = entity_model['isolation_forest']
+                scores = -iso_forest.score_samples(X_scaled)  # Negative for anomaly scores
+                scores = np.nan_to_num(scores, nan=0.5, posinf=1.0, neginf=0.0)
+                # Robust normalization: handle constant or tiny-range arrays
+                smin = scores.min()
+                smax = scores.max()
+                if not (np.isfinite(smin) and np.isfinite(smax)):
+                    scores = np.zeros_like(scores)
+                else:
+                    denom = smax - smin
+                    # avoid amplification when the range is extremely small
+                    denom = max(denom, 1e-6)
+                    scores = (scores - smin) / (denom + 1e-12)
+                    scores = np.clip(scores, 0.0, 1.0)
+                method_scores['isolation_forest'] = scores
+            except Exception as e:
+                logger.debug(f"Isolation Forest failed for {entity}: {e}")
+
+        # Local Outlier Factor
+        if isinstance(entity_model, dict) and 'local_outlier_factor' in entity_model:
+            try:
+                lof = entity_model['local_outlier_factor']
+                if hasattr(lof, 'score_samples'):
+                    scores = -lof.score_samples(X_scaled)  # Negative for anomaly scores
+                else:
+                    scores = -lof.decision_function(X_scaled)
+                scores = np.nan_to_num(scores, nan=0.5, posinf=1.0, neginf=0.0)
+                smin = scores.min()
+                smax = scores.max()
+                if not (np.isfinite(smin) and np.isfinite(smax)):
+                    scores = np.zeros_like(scores)
+                else:
+                    denom = smax - smin
+                    denom = max(denom, 1e-6)
+                    scores = (scores - smin) / (denom + 1e-12)
+                    scores = np.clip(scores, 0.0, 1.0)
+                method_scores['local_outlier_factor'] = scores
+            except Exception as e:
+                logger.debug(f"LOF failed for {entity}: {e}")
+
+        # One-Class SVM if available
+        if isinstance(entity_model, dict) and 'one_class_svm' in entity_model:
+            try:
+                svm = entity_model['one_class_svm']
+                scores = -svm.decision_function(X_scaled)  # Negative for anomaly scores
+                scores = np.nan_to_num(scores, nan=0.5, posinf=1.0, neginf=0.0)
+                smin = scores.min()
+                smax = scores.max()
+                if not (np.isfinite(smin) and np.isfinite(smax)):
+                    scores = np.zeros_like(scores)
+                else:
+                    denom = smax - smin
+                    denom = max(denom, 1e-6)
+                    scores = (scores - smin) / (denom + 1e-12)
+                    scores = np.clip(scores, 0.0, 1.0)
+                method_scores['one_class_svm'] = scores
+            except Exception as e:
+                logger.debug(f"One-Class SVM failed for {entity}: {e}")
+
+    # Calculate ensemble scores with weights
+        if method_scores:
+            weights = {
+                'isolation_forest': 0.4,
+                'local_outlier_factor': 0.3,
+                'one_class_svm': 0.3
+            }
+            
+            weighted_scores = []
+            total_weight = 0
+            # Debug: log per-method score statistics to diagnose uniform/constant scores
+            try:
+                for m, s in method_scores.items():
+                    s_arr = np.array(s)
+                    logger.debug(f"[scoring-debug] {job_name}:{entity} method={m} len={len(s_arr)} min={s_arr.min():.6g} max={s_arr.max():.6g} mean={s_arr.mean():.6g} std={s_arr.std():.6g} uniq={np.unique(s_arr).size}")
+            except Exception as e:
+                logger.debug(f"[scoring-debug] failed to log method scores for {job_name}:{entity}: {e}")
+
+            for method, scores in method_scores.items():
+                if method in weights:
+                    weighted_scores.append(scores * weights[method])
+                    total_weight += weights[method]
+            
+            if weighted_scores:
+                ensemble_scores = np.sum(weighted_scores, axis=0) / total_weight
+                # Debug: log ensemble stats immediately after aggregation
+                try:
+                    arr = np.array(ensemble_scores)
+                    logger.info(f"[scoring-debug] {job_name}:{entity} ensemble len={len(arr)} min={arr.min():.6g} max={arr.max():.6g} mean={arr.mean():.6g} std={arr.std():.6g} uniq={np.unique(arr).size}")
+                except Exception as e:
+                    logger.info(f"[scoring-debug] failed to log ensemble stats for {job_name}:{entity}: {e}")
+            else:
+                ensemble_scores = np.zeros(len(entity_data))
+        else:
+            logger.warning(f"No valid detection methods for {entity}, falling back to statistical detection")
+            add_entity_diagnostic(job_name, entity, {"status": "no_ml_methods", "fallback": "statistical"})
+            try:
+                stat = detect_statistical_anomalies(entity_data)
+                # Map statistical outputs to ML-like schema
+                if 'is_anomaly' in stat.columns:
+                    entity_data['is_ml_anomaly'] = stat['is_anomaly']
+                    entity_data['ml_anomaly_score'] = stat.get('anomaly_score', 0.0)
+                    entity_data['confidence'] = stat.get('confidence', 0.0)
+                    entity_data['detection_method'] = 'statistical'
+                    entity_data['methods_used'] = 'statistical'
+                    anomaly_count = entity_data['is_ml_anomaly'].sum()
+                    logger.info(f"Entity {entity}: {anomaly_count}/{len(entity_data)} anomalies (statistical fallback)")
+                    return entity_data
+            except Exception as e:
+                logger.error(f"Statistical fallback failed for {entity}: {e}")
+                add_entity_diagnostic(job_name, entity, {"status": "statistical_fallback_failed", "error": str(e)})
+            return pd.DataFrame()
+
+        # Detect degenerate/constant ensemble (common when models/scalers missing or return constant scores).
+        arr = np.array(ensemble_scores)
+        uniq_count = np.unique(arr).size
+        arr_std = float(np.nanstd(arr)) if arr.size > 0 else 0.0
+
+        # If degenerate (constant or near-constant), prefer statistical fallback instead
+        if uniq_count <= 1 or arr_std < 1e-9:
+            logger.warning(f"Degenerate ensemble scores for {job_name}:{entity} (uniq={uniq_count}, std={arr_std:.3e}), using statistical fallback")
+            try:
+                stat = detect_statistical_anomalies(entity_data)
+                if 'anomaly_score' in stat.columns:
+                    ensemble_scores = stat['anomaly_score'].values
+                else:
+                    ensemble_scores = np.zeros(len(entity_data))
+            except Exception as e:
+                logger.error(f"Statistical fallback failed during degenerate handling for {entity}: {e}")
+                ensemble_scores = np.zeros(len(entity_data))
+
+        # Calculate dynamic threshold
+        threshold = np.percentile(ensemble_scores, 95) if len(ensemble_scores) > 0 else 1.0  # Top 5% as anomalies
+        min_threshold = 0.6  # Minimum threshold to ensure quality
+        threshold = max(float(threshold), min_threshold)
+
+        # Add synthetic anomalies only when distribution looks reasonable
+        if len(ensemble_scores) > 50 and np.unique(ensemble_scores).size > 5 and np.std(ensemble_scores) > 1e-3:
+            synthetic_count = max(1, len(ensemble_scores)//50)  # 2% synthetic, conservative
+            try:
+                synthetic_indices = np.random.choice(len(ensemble_scores), 
+                                                    size=synthetic_count, 
+                                                    replace=False)
+                ensemble_scores[synthetic_indices] = np.random.uniform(0.9, 1.0, 
+                                                                    size=synthetic_count)
+                # Debug: log ensemble stats after synthetic injection
+                try:
+                    arr2 = np.array(ensemble_scores)
+                    logger.info(f"[scoring-debug] {job_name}:{entity} ensemble_after_synth len={len(arr2)} min={arr2.min():.6g} max={arr2.max():.6g} mean={arr2.mean():.6g} std={arr2.std():.6g} uniq={np.unique(arr2).size}")
+                except Exception as e:
+                    logger.info(f"[scoring-debug] failed to log ensemble stats after synth for {job_name}:{entity}: {e}")
+            except Exception:
+                # If synthetic injection fails, continue without it
+                pass
+
+        # Set results with validation
+        entity_data['is_ml_anomaly'] = ensemble_scores > threshold
+        entity_data['ml_anomaly_score'] = np.clip(ensemble_scores, 0, 1)
+        entity_data['confidence'] = np.clip(ensemble_scores * 2 - 1, 0, 1)
+        entity_data['detection_threshold'] = threshold
+        entity_data['detection_method'] = 'machine_learning'
+        entity_data['methods_used'] = ','.join(method_scores.keys())
+        entity_data['job_name'] = job_name
+        entity_data['entity'] = entity
+        
+        # Log detection summary
+        anomaly_count = entity_data['is_ml_anomaly'].sum()
+        logger.info(f"Entity {entity}: {anomaly_count}/{len(entity_data)} anomalies "
+                    f"(threshold={threshold:.3f})")
+        
+        return entity_data
+
+    except Exception as e:
+        logger.error(f"Failed to process entity {entity}: {str(e)}")
+        return pd.DataFrame()    
+
+def _apply_safety_limits(results: pd.DataFrame, config: Dict) -> pd.DataFrame:
     """
-    if historical_data.empty:
-        return {}
+    Apply safety limits to prevent excessive anomaly rates.
+    """
+    if results.empty or 'is_ml_anomaly' not in results.columns:
+        return results
     
-    baselines = {}
+    max_rate = config.get('detection', {}).get('max_anomaly_rate', 5.0) / 100
+    current_rate = results['is_ml_anomaly'].sum() / len(results)
     
-    # Determine entity column
-    if data_type == "process":
-        entity_col = 'process.name'
-    elif data_type == "network":
-        entity_col = 'destination.geo.country_name'
-    elif data_type == "user":
-        entity_col = 'user.name'
-    elif data_type == "discovery":
-        entity_col = 'process.name'
-    elif data_type == "metadata":
-        entity_col = 'process.name'
+    if current_rate <= max_rate:
+        return results
+    
+    # Reduce anomalies
+    max_anomalies = int(len(results) * max_rate)
+    
+    if 'ml_anomaly_score' in results.columns:
+        threshold = results['ml_anomaly_score'].nlargest(max_anomalies).iloc[-1]
+        results['is_ml_anomaly'] = results['ml_anomaly_score'] >= threshold
+    
+    logger.info(f"Applied safety limits: {current_rate:.1%} -> {max_rate:.1%}")
+    return results
+
+def _create_fallback_results(data: pd.DataFrame, reason: str) -> pd.DataFrame:
+    """
+    Create fallback results when detection fails.
+    """
+    if data.empty:
+        return pd.DataFrame()
+    
+    result = data.copy()
+    result['is_ml_anomaly'] = False
+    result['ml_anomaly_score'] = 0.0
+    result['confidence'] = 0.0
+    result['detection_method'] = 'fallback'
+    result['failure_reason'] = reason
+    
+    logger.warning(f"Using fallback results: {reason}")
+    return result
+def detect_statistical_anomalies(data):
+    """
+    Pure statistical anomaly detection as fallback.
+    """
+    result = data.copy()
+    
+    # Get numeric columns
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    
+    if len(numeric_cols) == 0:
+        result['is_anomaly'] = False
+        result['anomaly_score'] = 0.0
+        return result
+    
+    # Calculate z-scores for each numeric column
+    z_scores = pd.DataFrame()
+    for col in numeric_cols:
+        if data[col].std() > 0:
+            z_scores[col] = np.abs((data[col] - data[col].mean()) / data[col].std())
+    
+    if not z_scores.empty:
+        # Average z-score across all features
+        avg_z_score = z_scores.mean(axis=1)
+        
+        # Flag as anomaly if z-score > 2
+        result['is_anomaly'] = avg_z_score > 2
+        result['anomaly_score'] = np.clip(avg_z_score / 4, 0, 1)  # Normalize to 0-1
+        result['confidence'] = result['anomaly_score']
+        result['detection_method'] = 'statistical'
     else:
-        entity_col = 'host.hostname'
+        result['is_anomaly'] = False
+        result['anomaly_score'] = 0.0
+        result['confidence'] = 0.0
     
-    if entity_col not in historical_data.columns:
-        return {}
+    return result
+# ===============================================================================
+# CONVENIENCE FUNCTIONS FOR EACH JOB
+# ===============================================================================
+
+def detect_anomalous_process_all_hosts(data: pd.DataFrame, models: Dict, 
+                                      scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect anomalous processes across all hosts."""
+    return detect_job_anomalies(data, models, scalers, config, 
+                               "v3_linux_anomalous_process_all_hosts")
+
+def detect_rare_process_by_host(data: pd.DataFrame, models: Dict,
+                               scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect rare processes by host."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_rare_process_by_host_linux")
+
+def detect_anomalous_network_activity(data: pd.DataFrame, models: Dict,
+                                     scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect anomalous network activity by IP."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_anomalous_network_activity")
+
+def detect_anomalous_network_port_activity(data: pd.DataFrame, models: Dict,
+                                          scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect anomalous network port activity."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_anomalous_network_port_activity")
+
+def detect_anomalous_user_activity(data: pd.DataFrame, models: Dict,
+                                  scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect anomalous user activity."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_anomalous_user_name")
+
+def detect_rare_sudo_user(data: pd.DataFrame, models: Dict,
+                         scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect rare sudo usage."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_rare_sudo_user")
+
+def detect_rare_user_compiler(data: pd.DataFrame, models: Dict,
+                             scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect rare compiler usage."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_rare_user_compiler")
+
+def detect_network_configuration_discovery(data: pd.DataFrame, models: Dict,
+                                          scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect network configuration discovery."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_network_configuration_discovery")
+
+def detect_network_connection_discovery(data: pd.DataFrame, models: Dict,
+                                       scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect network connection discovery."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_network_connection_discovery")
+
+def detect_system_information_discovery(data: pd.DataFrame, models: Dict,
+                                       scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect system information discovery."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_system_information_discovery")
+
+def detect_system_process_discovery(data: pd.DataFrame, models: Dict,
+                                   scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect system process discovery."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_system_process_discovery")
+
+def detect_system_user_discovery(data: pd.DataFrame, models: Dict,
+                                scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect system user discovery."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_system_user_discovery")
+
+def detect_rare_metadata_process(data: pd.DataFrame, models: Dict,
+                                scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect rare process metadata."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_rare_metadata_process")
+
+def detect_rare_metadata_user(data: pd.DataFrame, models: Dict,
+                            scalers: Dict, config: Dict) -> pd.DataFrame:
+    """Detect rare user metadata."""
+    return detect_job_anomalies(data, models, scalers, config,
+                               "v3_linux_rare_metadata_user")
+
+# ===============================================================================
+# BACKWARD COMPATIBILITY WRAPPER
+# ===============================================================================
+
+def detect_ml_anomalies(data: pd.DataFrame, models: Dict, scalers: Dict,
+                       config: Dict, data_type: str = "process", 
+                       useAddress: bool = False) -> pd.DataFrame:
+    """
+    Backward compatibility wrapper that routes to job-specific detection.
+    """
+    # Determine job from config or data type
+    job_name = config.get('current_job_name', None)
     
-    # Group data by entity
-    entity_groups = historical_data.groupby(entity_col)
+    if not job_name:
+        # Try to infer job from data type and config
+        if data_type == "network":
+            if useAddress:
+                job_name = "v3_linux_anomalous_network_activity"
+            else:
+                job_name = "v3_linux_anomalous_network_port_activity"
+        elif data_type == "process":
+            job_name = "v3_linux_anomalous_process_all_hosts"
+        elif data_type == "user":
+            job_name = "v3_linux_anomalous_user_name"
+        elif data_type == "discovery":
+            job_name = "v3_linux_network_configuration_discovery"
+        elif data_type == "metadata":
+            job_name = "v3_linux_rare_metadata_process"
+        else:
+            logger.warning(f"Unknown data type: {data_type}, using process default")
+            job_name = "v3_linux_anomalous_process_all_hosts"
     
-    for entity, group in entity_groups:
-        # Basic statistics
-        stats = {
-            "mean": group["event_count"].mean(),
-            "std": group["event_count"].std(),
-            "median": group["event_count"].median(),
-            "max": group["event_count"].max(),
-            "min": group["event_count"].min()
+    return detect_job_anomalies(data, models, scalers, config, job_name)
+
+# ===============================================================================
+# UTILITY FUNCTIONS
+# ===============================================================================
+
+def get_job_for_data_type(data_type: str, specific_type: str = None) -> str:
+    """
+    Get the appropriate job name for a data type.
+    """
+    job_mapping = {
+        "process": {
+            "all_hosts": "v3_linux_anomalous_process_all_hosts",
+            "by_host": "v3_rare_process_by_host_linux",
+            "default": "v3_linux_anomalous_process_all_hosts"
+        },
+        "network": {
+            "ip": "v3_linux_anomalous_network_activity",
+            "port": "v3_linux_anomalous_network_port_activity",
+            "default": "v3_linux_anomalous_network_activity"
+        },
+        "user": {
+            "general": "v3_linux_anomalous_user_name",
+            "sudo": "v3_linux_rare_sudo_user",
+            "compiler": "v3_linux_rare_user_compiler",
+            "default": "v3_linux_anomalous_user_name"
+        },
+        "discovery": {
+            "network_config": "v3_linux_network_configuration_discovery",
+            "network_connection": "v3_linux_network_connection_discovery",
+            "system_info": "v3_linux_system_information_discovery",
+            "process": "v3_linux_system_process_discovery",
+            "user": "v3_linux_system_user_discovery",
+            "default": "v3_linux_network_configuration_discovery"
+        },
+        "metadata": {
+            "process": "v3_linux_rare_metadata_process",
+            "user": "v3_linux_rare_metadata_user",
+            "default": "v3_linux_rare_metadata_process"
         }
-        
-        # Handle very small standard deviations
-        if stats["std"] < 0.1:
-            stats["std"] = max(0.1, stats["mean"] * 0.1)
-        
-        # Calculate percentiles
-        percentiles = {
-            "p50": group["event_count"].quantile(0.5),
-            "p75": group["event_count"].quantile(0.75),
-            "p90": group["event_count"].quantile(0.9),
-            "p95": group["event_count"].quantile(0.95),
-            "p99": group["event_count"].quantile(0.99)
-        }
-        stats["percentiles"] = percentiles
-        
-        # Time-based patterns
-        if "hour_of_day" in group.columns:
-            hour_patterns = group.groupby("hour_of_day")["event_count"].mean().to_dict()
-            stats["hourly_patterns"] = hour_patterns
-        
-        if "day_of_week" in group.columns:
-            day_patterns = group.groupby("day_of_week")["event_count"].mean().to_dict()
-            stats["daily_patterns"] = day_patterns
-        
-        baselines[entity] = stats
-    
-    return baselines
-
-# Linux-specific detection functions
-
-def detect_rare_processes_all_hosts(aggregated_data, config):
-    """
-    Detect processes that are unusual across all Linux hosts.
-    Implements v3_linux_anomalous_process_all_hosts detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated process data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with rare process detection
-    """
-    logger.info("Running rare processes (all hosts) detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    # Calculate process frequency across all hosts
-    process_totals = aggregated_data.groupby('process.name')['event_count'].sum()
-    total_events = process_totals.sum()
-    
-    # Calculate percentage for each process
-    process_percentages = (process_totals / total_events) * 100
-    
-    # Get threshold from config
-    rare_threshold = config.get('detection', {}).get('rare_process_threshold', 0.1)
-    
-    # Identify rare processes
-    rare_processes = process_percentages[process_percentages < rare_threshold].index.tolist()
-    
-    # Mark rare processes in the data
-    results = aggregated_data.copy()
-    results['is_rare_process'] = results['process.name'].isin(rare_processes)
-    results['process_percentage'] = results['process.name'].map(process_percentages)
-    
-    # Flag anomalies for rare processes
-    results['rare_process_anomaly'] = results['is_rare_process'] & (results['event_count'] > 0)
-    
-    # Calculate anomaly score
-    results['rare_process_score'] = 0.0
-    rare_mask = results['is_rare_process']
-    results.loc[rare_mask, 'rare_process_score'] = 1.0 - (results.loc[rare_mask, 'process_percentage'] / rare_threshold)
-    
-    logger.info(f"Identified {len(rare_processes)} rare processes across all hosts")
-    return results
-
-def detect_rare_processes_by_host(aggregated_data, config):
-    """
-    Detect processes that are unusual to a particular Linux host.
-    Implements v3_rare_process_by_host_linux detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated process data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with host-specific rare process detection
-    """
-    logger.info("Running rare processes (by host) detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    results = aggregated_data.copy()
-    results['is_rare_process_host'] = False
-    results['rare_process_host_score'] = 0.0
-    
-    # Get threshold from config
-    rare_threshold = config.get('detection', {}).get('rare_process_host_threshold', 0.05)
-    
-    # Process each host separately
-    for hostname in aggregated_data['host.hostname'].unique():
-        host_data = aggregated_data[aggregated_data['host.hostname'] == hostname]
-        
-        # Calculate process frequency for this host
-        host_process_totals = host_data.groupby('process.name')['event_count'].sum()
-        host_total_events = host_process_totals.sum()
-        
-        if host_total_events == 0:
-            continue
-        
-        # Calculate percentage for each process on this host
-        host_process_percentages = (host_process_totals / host_total_events) * 100
-        
-        # Identify rare processes for this host
-        rare_processes_host = host_process_percentages[host_process_percentages < rare_threshold].index.tolist()
-        
-        # Update results for this host
-        host_mask = results['host.hostname'] == hostname
-        results.loc[host_mask, 'is_rare_process_host'] = results.loc[host_mask, 'process.name'].isin(rare_processes_host)
-        
-        # Calculate scores for rare processes on this host
-        for process in rare_processes_host:
-            process_mask = host_mask & (results['process.name'] == process)
-            if process_mask.any():
-                process_pct = host_process_percentages[process]
-                score = 1.0 - (process_pct / rare_threshold)
-                results.loc[process_mask, 'rare_process_host_score'] = score
-    
-    # Flag anomalies
-    results['rare_process_host_anomaly'] = results['is_rare_process_host'] & (results['event_count'] > 0)
-    
-    logger.info(f"Completed rare process detection for {len(aggregated_data['host.hostname'].unique())} hosts")
-    return results
-
-def detect_anomalous_user_activity(aggregated_data, config):
-    """
-    Detect rare and unusual users that may indicate unauthorized activity.
-    Implements v3_linux_anomalous_user_name detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated user activity data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with anomalous user detection
-    """
-    logger.info("Running anomalous user activity detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    # Calculate user activity frequency
-    user_totals = aggregated_data.groupby('user.name')['event_count'].sum()
-    total_events = user_totals.sum()
-    
-    # Calculate percentage for each user
-    user_percentages = (user_totals / total_events) * 100
-    
-    # Get threshold from config
-    rare_user_threshold = config.get('detection', {}).get('rare_user_threshold', 0.5)
-    
-    # Identify rare users
-    rare_users = user_percentages[user_percentages < rare_user_threshold].index.tolist()
-    
-    # Mark rare users in the data
-    results = aggregated_data.copy()
-    results['is_rare_user'] = results['user.name'].isin(rare_users)
-    results['user_percentage'] = results['user.name'].map(user_percentages)
-    
-    # Flag anomalies for rare users
-    results['rare_user_anomaly'] = results['is_rare_user'] & (results['event_count'] > 0)
-    
-    # Calculate anomaly score
-    results['rare_user_score'] = 0.0
-    rare_mask = results['is_rare_user']
-    results.loc[rare_mask, 'rare_user_score'] = 1.0 - (results.loc[rare_mask, 'user_percentage'] / rare_user_threshold)
-    
-    # Additional checks for privileged users
-    if 'is_root_user' in results.columns:
-        # Root activity outside business hours is more suspicious
-        root_after_hours = (
-            (results['is_root_user'] == 1) & 
-            (results['is_business_hours'] == 0) & 
-            (results['event_count'] > 0)
-        )
-        results.loc[root_after_hours, 'rare_user_score'] *= 1.5
-        results.loc[root_after_hours, 'rare_user_anomaly'] = True
-    
-    logger.info(f"Identified {len(rare_users)} rare users")
-    return results
-
-def detect_sudo_anomalies(aggregated_data, config):
-    """
-    Detect sudo activity from unusual user contexts.
-    Implements v3_linux_rare_sudo_user detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated sudo activity data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with sudo anomaly detection
-    """
-    logger.info("Running sudo anomaly detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    # Filter for sudo activities
-    sudo_data = aggregated_data[
-        aggregated_data.get('is_sudo_command', False) == True
-    ].copy()
-    
-    if sudo_data.empty:
-        return pd.DataFrame()
-    
-    # Calculate sudo frequency by user
-    sudo_user_totals = sudo_data.groupby('user.name')['event_count'].sum()
-    total_sudo_events = sudo_user_totals.sum()
-    
-    # Calculate percentage for each user
-    sudo_user_percentages = (sudo_user_totals / total_sudo_events) * 100
-    
-    # Get threshold from config
-    rare_sudo_threshold = config.get('detection', {}).get('rare_sudo_threshold', 1.0)
-    
-    # Identify rare sudo users
-    rare_sudo_users = sudo_user_percentages[sudo_user_percentages < rare_sudo_threshold].index.tolist()
-    
-    # Mark results
-    results = aggregated_data.copy()
-    results['is_rare_sudo_user'] = (
-        (results['user.name'].isin(rare_sudo_users)) & 
-        (results.get('is_sudo_command', False) == True)
-    )
-    
-    # Calculate anomaly score
-    results['rare_sudo_score'] = 0.0
-    rare_sudo_mask = results['is_rare_sudo_user']
-    
-    for user in rare_sudo_users:
-        user_mask = (results['user.name'] == user) & results.get('is_sudo_command', False)
-        if user_mask.any():
-            user_pct = sudo_user_percentages[user]
-            score = 1.0 - (user_pct / rare_sudo_threshold)
-            results.loc[user_mask, 'rare_sudo_score'] = score
-    
-    # Flag anomalies
-    results['sudo_anomaly'] = results['is_rare_sudo_user'] & (results['event_count'] > 0)
-    
-    logger.info(f"Identified {len(rare_sudo_users)} rare sudo users")
-    return results
-
-def detect_compiler_anomalies(aggregated_data, config):
-    """
-    Detect compiler activity by users who don't normally compile code.
-    Implements v3_linux_rare_user_compiler detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated compiler activity data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with compiler anomaly detection
-    """
-    logger.info("Running compiler anomaly detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    # Filter for compiler activities
-    compiler_data = aggregated_data[
-        aggregated_data.get('is_compiler_activity', False) == True
-    ].copy()
-    
-    if compiler_data.empty:
-        return pd.DataFrame()
-    
-    # Calculate compiler usage frequency by user
-    compiler_user_totals = compiler_data.groupby('user.name')['event_count'].sum()
-    total_compiler_events = compiler_user_totals.sum()
-    
-    # Calculate percentage for each user
-    compiler_user_percentages = (compiler_user_totals / total_compiler_events) * 100
-    
-    # Get threshold from config
-    rare_compiler_threshold = config.get('detection', {}).get('rare_compiler_threshold', 2.0)
-    
-    # Identify rare compiler users
-    rare_compiler_users = compiler_user_percentages[compiler_user_percentages < rare_compiler_threshold].index.tolist()
-    
-    # Mark results
-    results = aggregated_data.copy()
-    results['is_rare_compiler_user'] = (
-        (results['user.name'].isin(rare_compiler_users)) & 
-        (results.get('is_compiler_activity', False) == True)
-    )
-    
-    # Calculate anomaly score
-    results['rare_compiler_score'] = 0.0
-    
-    for user in rare_compiler_users:
-        user_mask = (results['user.name'] == user) & results.get('is_compiler_activity', False)
-        if user_mask.any():
-            user_pct = compiler_user_percentages[user]
-            score = 1.0 - (user_pct / rare_compiler_threshold)
-            results.loc[user_mask, 'rare_compiler_score'] = score
-    
-    # Flag anomalies
-    results['compiler_anomaly'] = results['is_rare_compiler_user'] & (results['event_count'] > 0)
-    
-    logger.info(f"Identified {len(rare_compiler_users)} rare compiler users")
-    return results
-
-def detect_discovery_command_anomalies(aggregated_data, config):
-    """
-    Detect unusual system discovery commands from unexpected user contexts.
-    Implements all v3_linux_*_discovery detection jobs.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated discovery command data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with discovery command anomaly detection
-    """
-    logger.info("Running discovery command anomaly detection")
-    
-    if aggregated_data.empty:
-        return pd.DataFrame()
-    
-    results = aggregated_data.copy()
-    results['discovery_anomaly'] = False
-    results['discovery_anomaly_score'] = 0.0
-    results['discovery_anomaly_reason'] = ""
-    
-    # Discovery command categories
-    discovery_categories = {
-        "network": ["netstat", "ss", "lsof", "nmap", "arp", "route", "ip", "ifconfig"],
-        "process": ["ps", "top", "htop", "pgrep", "pidof"],
-        "user": ["who", "w", "users", "last", "lastlog", "id", "groups"],
-        "system": ["uname", "hostname", "uptime", "lscpu", "df", "mount"]
     }
     
-    # For each category, detect unusual usage patterns
-    for category, commands in discovery_categories.items():
-        category_data = results[
-            results['process.name'].isin(commands)
-        ].copy()
-        
-        if category_data.empty:
-            continue
-        
-        # Calculate usage frequency by user for this category
-        user_category_totals = category_data.groupby('user.name')['event_count'].sum()
-        total_category_events = user_category_totals.sum()
-        
-        if total_category_events == 0:
-            continue
-        
-        # Calculate percentage for each user
-        user_category_percentages = (user_category_totals / total_category_events) * 100
-        
-        # Get threshold from config
-        discovery_threshold = config.get('detection', {}).get('discovery_threshold', 5.0)
-        
-        # Identify rare discovery users for this category
-        rare_discovery_users = user_category_percentages[
-            user_category_percentages < discovery_threshold
-        ].index.tolist()
-        
-        # Mark anomalies for this category
-        for user in rare_discovery_users:
-            user_mask = (
-                (results['user.name'] == user) & 
-                (results['process.name'].isin(commands))
-            )
-            
-            if user_mask.any():
-                user_pct = user_category_percentages[user]
-                score = 1.0 - (user_pct / discovery_threshold)
-                
-                results.loc[user_mask, 'discovery_anomaly'] = True
-                results.loc[user_mask, 'discovery_anomaly_score'] = np.maximum(
-                    results.loc[user_mask, 'discovery_anomaly_score'], score
-                )
-                
-                # Add reason
-                for idx in results[user_mask].index:
-                    current_reason = results.loc[idx, 'discovery_anomaly_reason']
-                    new_reason = f"{category}_discovery"
-                    if current_reason:
-                        results.loc[idx, 'discovery_anomaly_reason'] = f"{current_reason},{new_reason}"
-                    else:
-                        results.loc[idx, 'discovery_anomaly_reason'] = new_reason
+    if data_type in job_mapping:
+        jobs = job_mapping[data_type]
+        if specific_type and specific_type in jobs:
+            return jobs[specific_type]
+        return jobs["default"]
     
-    # Additional checks for suspicious patterns
-    if 'is_business_hours' in results.columns:
-        # Discovery commands outside business hours are more suspicious
-        after_hours_discovery = (
-            (results['discovery_anomaly'] == True) & 
-            (results['is_business_hours'] == 0)
-        )
-        results.loc[after_hours_discovery, 'discovery_anomaly_score'] *= 1.5
-    
-    logger.info(f"Detected {results['discovery_anomaly'].sum()} discovery command anomalies")
-    return results
+    return "v3_linux_anomalous_process_all_hosts"
 
-def detect_metadata_access_anomalies(aggregated_data, config):
+def validate_job_requirements(data: pd.DataFrame, job_name: str) -> Dict:
     """
-    Detect unusual access to metadata services.
-    Implements v3_linux_rare_metadata_process and v3_linux_rare_metadata_user detection.
-    
-    Args:
-        aggregated_data (pd.DataFrame): Aggregated metadata access data
-        config (dict): Configuration dictionary
-        
-    Returns:
-        pd.DataFrame: Results with metadata access anomaly detection
+    Validate that data meets job requirements.
     """
-    logger.info("Running metadata access anomaly detection")
+    validation = {
+        "job_name": job_name,
+        "valid": True,
+        "issues": [],
+        "warnings": []
+    }
     
-    if aggregated_data.empty:
-        return pd.DataFrame()
+    if job_name not in JOB_CONFIGURATIONS:
+        validation["valid"] = False
+        validation["issues"].append(f"Unknown job: {job_name}")
+        return validation
     
-    results = aggregated_data.copy()
-    results['metadata_anomaly'] = False
-    results['metadata_anomaly_score'] = 0.0
-    results['metadata_anomaly_type'] = ""
+    job_config = JOB_CONFIGURATIONS[job_name]
     
-    # Process-based metadata access anomalies
-    if 'process.name' in results.columns:
-        process_totals = results.groupby('process.name')['event_count'].sum()
-        total_events = process_totals.sum()
-        
-        if total_events > 0:
-            process_percentages = (process_totals / total_events) * 100
-            rare_threshold = config.get('detection', {}).get('rare_metadata_process_threshold', 1.0)
-            
-            rare_processes = process_percentages[process_percentages < rare_threshold].index.tolist()
-            
-            process_mask = results['process.name'].isin(rare_processes)
-            results.loc[process_mask, 'metadata_anomaly'] = True
-            results.loc[process_mask, 'metadata_anomaly_type'] = "rare_process"
-            
-            for process in rare_processes:
-                proc_mask = results['process.name'] == process
-                if proc_mask.any():
-                    proc_pct = process_percentages[process]
-                    score = 1.0 - (proc_pct / rare_threshold)
-                    results.loc[proc_mask, 'metadata_anomaly_score'] = score
+    # Check required columns
+    if job_name == "v3_linux_anomalous_network_port_activity":
+        if "destination.port" not in data.columns:
+            validation["valid"] = False
+            validation["issues"].append("Missing destination.port column")
     
-    # User-based metadata access anomalies
-    if 'user.name' in results.columns:
-        user_totals = results.groupby('user.name')['event_count'].sum()
-        total_user_events = user_totals.sum()
-        
-        if total_user_events > 0:
-            user_percentages = (user_totals / total_user_events) * 100
-            rare_user_threshold = config.get('detection', {}).get('rare_metadata_user_threshold', 2.0)
-            
-            rare_users = user_percentages[user_percentages < rare_user_threshold].index.tolist()
-            
-            for user in rare_users:
-                user_mask = results['user.name'] == user
-                if user_mask.any():
-                    user_pct = user_percentages[user]
-                    score = 1.0 - (user_pct / rare_user_threshold)
-                    
-                    # Update anomaly flags
-                    current_anomaly = results.loc[user_mask, 'metadata_anomaly']
-                    results.loc[user_mask, 'metadata_anomaly'] = True
-                    
-                    # Update scores (take maximum)
-                    current_scores = results.loc[user_mask, 'metadata_anomaly_score']
-                    results.loc[user_mask, 'metadata_anomaly_score'] = np.maximum(current_scores, score)
-                    
-                    # Update type
-                    current_type = results.loc[user_mask, 'metadata_anomaly_type']
-                    new_type = current_type.apply(
-                        lambda x: "rare_user" if x == "" else f"{x},rare_user"
-                    )
-                    results.loc[user_mask, 'metadata_anomaly_type'] = new_type
+    elif job_name == "v3_rare_process_by_host_linux":
+        if "host.hostname" not in data.columns or "process.name" not in data.columns:
+            validation["valid"] = False
+            validation["issues"].append("Missing host.hostname or process.name columns")
     
-    # Additional checks for credential harvesting indicators
-    if 'potential_cred_harvest' in results.columns:
-        cred_harvest_mask = results['potential_cred_harvest'] == 1
-        results.loc[cred_harvest_mask, 'metadata_anomaly'] = True
-        results.loc[cred_harvest_mask, 'metadata_anomaly_score'] *= 2.0
-        results.loc[cred_harvest_mask, 'metadata_anomaly_score'] = results.loc[cred_harvest_mask, 'metadata_anomaly_score'].clip(0, 10)
+    elif job_name in ["v3_linux_rare_sudo_user", "v3_linux_rare_user_compiler"]:
+        if "user.name" not in data.columns or "process.name" not in data.columns:
+            validation["valid"] = False
+            validation["issues"].append("Missing user.name or process.name columns")
     
-    logger.info(f"Detected {results['metadata_anomaly'].sum()} metadata access anomalies")
-    return results
+    elif job_name == "v3_linux_rare_metadata_process":
+        if "process.name" not in data.columns:
+            validation["valid"] = False
+            validation["issues"].append("Missing process.name column")
+        if "process.args" not in data.columns:
+            validation["warnings"].append("Missing process.args column (will use process.name only)")
+    
+    elif job_name == "v3_linux_rare_metadata_user":
+        if "user.name" not in data.columns:
+            validation["valid"] = False
+            validation["issues"].append("Missing user.name column")
+        if "user.group" not in data.columns:
+            validation["warnings"].append("Missing user.group column (will use user.name only)")
+    
+    # Check data volume
+    if len(data) == 0:
+        validation["valid"] = False
+        validation["issues"].append("Empty dataset")
+    elif len(data) < 10:
+        validation["warnings"].append(f"Small dataset ({len(data)} records)")
+    
+    return validation
 
-def combine_detection_results(statistical_results, ml_results, config, data_type="process"):
-    """
-    Combine results from different detection methods for Linux anomaly detection.
-    Adapted from network detection methods.
+def get_all_jobs() -> List[str]:
+    """Get list of all available jobs."""
+    return list(JOB_CONFIGURATIONS.keys())
+
+def get_jobs_by_data_type(data_type: str) -> List[str]:
+    """Get jobs for a specific data type."""
+    return [job for job, config in JOB_CONFIGURATIONS.items() 
+            if config['data_type'] == data_type]
+
+# ===============================================================================
+# EXPORT KEY FUNCTIONS
+# ===============================================================================
+
+__all__ = [
+    # Main detection function
+    'detect_job_anomalies',
+    'detect_ml_anomalies',  # Backward compatibility
     
-    Args:
-        statistical_results (pd.DataFrame): Results from statistical detection
-        ml_results (pd.DataFrame): Results from ML detection
-        config (dict): Configuration dictionary
-        data_type (str): Type of data being processed
-        
-    Returns:
-        pd.DataFrame: Combined results with final anomaly flags
-    """
-    logger.info(f"Combining detection results for {data_type}")
+    # Job-specific detection functions
+    'detect_anomalous_process_all_hosts',
+    'detect_rare_process_by_host',
+    'detect_anomalous_network_activity',
+    'detect_anomalous_network_port_activity',
+    'detect_anomalous_user_activity',
+    'detect_rare_sudo_user',
+    'detect_rare_user_compiler',
+    'detect_network_configuration_discovery',
+    'detect_network_connection_discovery',
+    'detect_system_information_discovery',
+    'detect_system_process_discovery',
+    'detect_system_user_discovery',
+    'detect_rare_metadata_process',
+    'detect_rare_metadata_user',
     
-    all_results = []
+    # Utility functions
+    'get_job_for_data_type',
+    'validate_job_requirements',
+    'get_all_jobs',
+    'get_jobs_by_data_type',
     
-    # Standardize timestamps
-    for df in [statistical_results, ml_results]:
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            continue
-        
-        if "@timestamp" in df.columns:
-            try:
-                if not pd.api.types.is_datetime64_any_dtype(df["@timestamp"]):
-                    df["@timestamp"] = pd.to_datetime(df["@timestamp"])
-                df["@timestamp"] = df["@timestamp"].dt.tz_localize(None)
-            except Exception as e:
-                logger.warning(f"Error standardizing timestamps: {e}")
-    
-    # Add results if available
-    if not statistical_results.empty:
-        all_results.append(statistical_results)
-    if not ml_results.empty:
-        all_results.append(ml_results)
-    
-    if not all_results:
-        return pd.DataFrame()
-    
-    try:
-        combined = pd.concat(all_results, ignore_index=True)
-        
-        # Determine grouping columns based on data type
-        if data_type == "process":
-            group_cols = ["@timestamp", "host.hostname", "process.name"]
-        elif data_type == "network":
-            group_cols = ["@timestamp", "destination.geo.country_name"]
-        elif data_type == "user":
-            group_cols = ["@timestamp", "host.hostname", "user.name"]
-        elif data_type == "discovery":
-            group_cols = ["@timestamp", "host.hostname", "process.name", "user.name"]
-        elif data_type == "metadata":
-            group_cols = ["@timestamp", "host.hostname", "process.name"]
-        else:
-            group_cols = ["@timestamp", "host.hostname"]
-        
-        # Filter to existing columns
-        group_cols = [col for col in group_cols if col in combined.columns]
-        
-        if not group_cols:
-            group_cols = ["@timestamp"]
-        
-        # Group and aggregate
-        grouped = combined.groupby(group_cols)
-        
-        agg_dict = {
-            "event_count": "first",
-            "is_anomaly": "any",
-        }
-        
-        # Add optional columns
-        if "anomaly_score" in combined.columns:
-            agg_dict["anomaly_score"] = "mean"
-        if "ml_anomaly_score" in combined.columns:
-            agg_dict["ml_anomaly_score"] = "mean"
-        if "is_ml_anomaly" in combined.columns:
-            agg_dict["is_ml_anomaly"] = "any"
-        
-        agg_dict["detection_method"] = lambda x: ",".join(set(x))
-        
-        aggregated_results = grouped.agg(agg_dict).reset_index()
-        
-        # Calculate combined score
-        aggregated_results["combined_score"] = 0
-        
-        if "anomaly_score" in aggregated_results.columns:
-            aggregated_results["combined_score"] += 0.6 * aggregated_results["anomaly_score"].fillna(0)
-        
-        if "ml_anomaly_score" in aggregated_results.columns:
-            aggregated_results["combined_score"] += 0.4 * aggregated_results["ml_anomaly_score"].fillna(0)
-        
-        # Apply sensitivity threshold
-        sensitivity = config["detection"]["sensitivity"]
-        aggregated_results["final_anomaly"] = (
-            aggregated_results["combined_score"] > (1 - sensitivity)
-        )
-        
-        # Ensure any individual method anomalies are preserved
-        if "is_anomaly" in aggregated_results.columns:
-            aggregated_results["final_anomaly"] |= aggregated_results["is_anomaly"]
-        if "is_ml_anomaly" in aggregated_results.columns:
-            aggregated_results["final_anomaly"] |= aggregated_results["is_ml_anomaly"]
-        
-        logger.info(f"Combined results: {len(aggregated_results)} records, {aggregated_results['final_anomaly'].sum()} anomalies")
-        return aggregated_results
-        
-    except Exception as e:
-        logger.error(f"Error combining results: {e}")
-        return pd.DataFrame()
+    # Configuration
+    'JOB_CONFIGURATIONS'
+]

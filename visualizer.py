@@ -12,7 +12,7 @@ from sklearn.ensemble import IsolationForest
 import warnings
 from typing import Dict, List, Optional, Tuple, Any
 warnings.filterwarnings('ignore')
-
+from fixedLDS import ConfigManager,NumpyTypeHandler,StatisticsCalculator,apply_all_fixes
 
 # Optional LLM integration
 try:
@@ -43,289 +43,601 @@ class LinuxAnomalyVisualizer:
         sns.set_style("whitegrid")
         plt.rcParams['figure.figsize'] = (14, 8)
         plt.rcParams['font.size'] = 10
+        self.config = ConfigManager.fix_config(config)
         
-    def _generate_summary_stats(self, anomalies, normal_data, data_type):
-        """
-        FIXED: Generate summary statistics with robust timezone handling.
-        
-        ROOT CAUSE: DataFrame contains mix of timezone-aware and timezone-naive datetimes
-        causing .min()/.max() operations to fail
-        
-        FIX: Normalize all timestamps to same timezone before aggregation
-        """
-        entity_columns = {
-            "process": "process.name",
-            "network": "destination.geo.country_name", 
-            "user": "user.name",
-            "discovery": "process.name",
-            "metadata": "process.name"
-        }
-        
-        entity_col = entity_columns.get(data_type, "host.hostname")
-        
-        summary = {
-            "total_anomalies": len(anomalies),
-            "total_normal": len(normal_data),
-            "anomaly_percentage": len(anomalies) / (len(anomalies) + len(normal_data)) * 100 if (len(anomalies) + len(normal_data)) > 0 else 0,
-        }
-        
-        # FIX: Safe timestamp range calculation with timezone normalization
-        if "@timestamp" in anomalies.columns and not anomalies.empty:
-            try:
-                # Ensure consistent timezone handling
-                timestamp_series = anomalies["@timestamp"]
-                
-                # Check if we have datetime objects
-                if pd.api.types.is_datetime64_any_dtype(timestamp_series):
-                    # Normalize timezone-aware timestamps to UTC, leave naive ones as-is
-                    if hasattr(timestamp_series.dtype, 'tz') and timestamp_series.dtype.tz is not None:
-                        # Already timezone-aware, convert to UTC
-                        timestamp_series = timestamp_series.dt.tz_convert('UTC').dt.tz_localize(None)
-                    elif timestamp_series.dt.tz is not None:
-                        # Mixed timezone situation - normalize all to naive
-                        timestamp_series = timestamp_series.dt.tz_localize(None)
-                    
-                    # Now safe to calculate min/max
-                    summary["time_range"] = {
-                        "start": timestamp_series.min(),
-                        "end": timestamp_series.max()
-                    }
-                else:
-                    # Try to convert to datetime first
-                    try:
-                        timestamp_series = pd.to_datetime(timestamp_series, errors='coerce')
-                        # Remove any NaT values
-                        timestamp_series = timestamp_series.dropna()
-                        
-                        if not timestamp_series.empty:
-                            summary["time_range"] = {
-                                "start": timestamp_series.min(),
-                                "end": timestamp_series.max()
-                            }
-                        else:
-                            summary["time_range"] = {"start": None, "end": None}
-                    except Exception as e:
-                        self.logger.warning(f"Error processing timestamps for summary: {e}")
-                        summary["time_range"] = {"start": None, "end": None}
-                        
-            except Exception as e:
-                self.logger.warning(f"Error calculating time range in summary stats: {e}")
-                summary["time_range"] = {"start": None, "end": None}
-        else:
-            summary["time_range"] = {"start": None, "end": None}
-        
-        # Entity-specific stats with safe operations
-        if entity_col in anomalies.columns and not anomalies.empty:
-            try:
-                # Convert to string to handle mixed types
-                entity_series = anomalies[entity_col].astype(str).fillna('unknown')
-                summary[f"entities_with_anomalies"] = entity_series.nunique()
-                summary[f"top_anomalous_entities"] = entity_series.value_counts().head(10).to_dict()
-            except Exception as e:
-                self.logger.warning(f"Error calculating entity stats: {e}")
-                summary[f"entities_with_anomalies"] = 0
-                summary[f"top_anomalous_entities"] = {}
-        
-        # Score-based stats with safe operations
-        if "combined_score" in anomalies.columns and not anomalies.empty:
-            try:
-                score_series = pd.to_numeric(anomalies["combined_score"], errors='coerce').dropna()
-                if not score_series.empty:
-                    # Get top scoring anomalies
-                    top_indices = score_series.nlargest(5).index
-                    top_anomalies = anomalies.loc[top_indices]
-                    
-                    # Build safe record representation
-                    safe_records = []
-                    for _, row in top_anomalies.iterrows():
-                        safe_record = {}
-                        for col in ["@timestamp", entity_col, "event_count", "combined_score"]:
-                            if col in row:
-                                safe_record[col] = str(row[col]) if pd.notna(row[col]) else "N/A"
-                        safe_records.append(safe_record)
-                    
-                    summary["highest_anomaly_scores"] = safe_records
-                else:
-                    summary["highest_anomaly_scores"] = []
-            except Exception as e:
-                self.logger.warning(f"Error calculating score stats: {e}")
-                summary["highest_anomaly_scores"] = []
-        
-        return summary
-
-    def generate_comprehensive_report(self, results_dict, data_type="process"):
-        """
-        FIXED: Generate comprehensive report for Linux anomaly detection results with robust error handling.
-        
-        Args:
-            results_dict (dict): Dictionary of results by detection job
-            data_type (str): Type of data (process, network, user, discovery, metadata)
-            
-        Returns:
-            tuple: (report_file_path, csv_file_path) or (None, None) if no data
-        """
-        self.logger.info(f"Generating comprehensive report for {data_type} anomalies")
-        
-        if not results_dict:
-            self.logger.warning(f"No results dictionary provided for {data_type}")
-            return None, None
-        
+        #ADD HELPER OBJECTS:
+        self.type_handler = NumpyTypeHandler()
+        self.stats_calculator = StatisticsCalculator()
+        # small helper to avoid calling round() on numpy.bool_ or other non-numeric types
+    def _safe_round(self, value, ndigits=3):
         try:
-            # Check if all results are empty
-            if all(df.empty for df in results_dict.values()):
-                self.logger.warning(f"All results are empty for {data_type}")
-                return None, None
-            
-            # Combine all results
-            all_results = []
-            for job_name, results in results_dict.items():
-                if not results.empty:
-                    results_copy = results.copy()
-                    results_copy['detection_job'] = job_name
-                    all_results.append(results_copy)
-            
-            if not all_results:
-                self.logger.warning(f"No valid results to process for {data_type}")
-                return None, None
-            
-            combined_results = pd.concat(all_results, ignore_index=True)
-            
-            # Filter anomalies - Handle missing 'final_anomaly' column
-            if 'final_anomaly' not in combined_results.columns:
-                # If no final_anomaly column, treat all as normal data for baseline report
-                combined_results['final_anomaly'] = False
-                self.logger.info(f"No 'final_anomaly' column found, treating all data as normal for {data_type}")
-            
-            # FIX 1: Apply robust timestamp formatting BEFORE any operations
-            if '@timestamp' in combined_results.columns:
-                try:
-                    combined_results = self._ensure_datetime_format(combined_results)
-                    self.logger.debug(f"Successfully normalized timestamps for {data_type}")
-                except Exception as e:
-                    self.logger.warning(f"Error normalizing timestamps for {data_type}: {e}")
-                    # Continue without timestamp features rather than failing completely
-            
-            # Separate anomalies and normal data AFTER timestamp normalization
-            anomalies = combined_results[combined_results['final_anomaly'] == True].copy()
-            normal_data = combined_results[combined_results['final_anomaly'] == False].copy()
-            
-            # Generate report even with zero anomalies
-            if anomalies.empty:
-                self.logger.info(f"No anomalies detected in {data_type} results - generating baseline report")
-                
-                # Generate a baseline report with normal data
-                report_content = self._create_baseline_report(combined_results, data_type)
-                
-                # Save baseline report
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                report_file = os.path.join(self.report_dir, f"{data_type}_baseline_report_{timestamp}.md")
-                csv_file = os.path.join(self.report_dir, f"{data_type}_baseline_data_{timestamp}.csv")
-                
-                with open(report_file, "w", encoding='utf-8') as f:
-                    f.write(report_content)
-                
-                combined_results.to_csv(csv_file, index=False)
-                
-                self.logger.info(f"Baseline report saved to {report_file}")
-                self.logger.info(f"Data saved to {csv_file}")
-                
-                return report_file, csv_file
-            
-            # FIX 2: Generate components with proper error handling
+            return round(float(value), ndigits)
+        except Exception:
             try:
-                # Generate summary statistics (now with timezone-safe operations)
-                summary = self._generate_summary_stats(anomalies, normal_data, data_type)
-            except Exception as e:
-                self.logger.warning(f"Error generating summary stats for {data_type}: {e}")
-                summary = {"error": "Could not generate summary statistics"}
+                # Fallback: attempt to coerce to float without rounding
+                return float(value)
+            except Exception:
+                # Last resort: return original value unchanged
+                return value
+    def _create_ml_only_markdown_report(self, summary: Dict, ml_insights: Dict, viz_paths: List[str], data_type: str, llm_analysis: Optional[Dict]=None) -> str:
+        """Create a report where ML anomalies are the only true anomalies."""
+        
+        report_lines = [
+            f"# {data_type.title()} Anomaly Detection Report",
+            "",
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"**Classification Method**: ML Anomalies Only",
+            "",
+            "## Summary",
+            ""
+        ]
+        
+        # Add summary with corrected terminology
+        if 'total_anomalies' in summary:
+            report_lines.extend([
+                f"- **Total anomalies detected**: {summary['total_anomalies']}",
+                f"- **Total normal events**: {summary['total_normal']}",
+                f"- **Total records analyzed**: {summary['total_records']}",
+                f"- **Anomaly percentage**: {summary['anomaly_percentage']}%",
+                f"- **Normal percentage**: {summary['normal_percentage']}%",
+                "",
+                "**Note**: Only machine learning detections are classified as anomalies. ",
+                "Statistical detections and rule-based findings are treated as normal behavior.",
+                ""
+            ])
             
-            try:
-                # Generate comparative analysis
-                comparative_stats = self._generate_comparative_analysis(anomalies, normal_data)
-            except Exception as e:
-                self.logger.warning(f"Error generating comparative analysis for {data_type}: {e}")
-                comparative_stats = {"error": "Could not generate comparative analysis"}
-            
-            try:
-                # Generate data type specific insights
-                specific_insights = self._generate_specific_insights(anomalies, data_type)
-            except Exception as e:
-                self.logger.warning(f"Error generating specific insights for {data_type}: {e}")
-                specific_insights = {"error": "Could not generate specific insights"}
-            
-            try:
-                # Generate false positive analysis
-                suspected_false_positives = self._analyze_false_positives(anomalies)
-            except Exception as e:
-                self.logger.warning(f"Error analyzing false positives for {data_type}: {e}")
-                suspected_false_positives = {"error": "Could not analyze false positives"}
-            
-            try:
-                # Create visualizations
-                viz_paths = self.create_data_type_visualizations(results_dict, data_type)
-            except Exception as e:
-                self.logger.warning(f"Error creating visualizations for {data_type}: {e}")
-                viz_paths = []
-            
-            try:
-                # Generate LLM analysis if available
-                llm_analysis = self._generate_llm_analysis(summary, comparative_stats, specific_insights, 
-                                                        suspected_false_positives, anomalies, data_type)
-            except Exception as e:
-                self.logger.warning(f"Error generating LLM analysis for {data_type}: {e}")
-                llm_analysis = {"error": "Could not generate LLM analysis"}
-            
-            try:
-                # Create markdown report
-                report_content = self._create_markdown_report(
-                    summary, comparative_stats, specific_insights, 
-                    llm_analysis, viz_paths, data_type
-                )
-            except Exception as e:
-                self.logger.warning(f"Error creating markdown report for {data_type}: {e}")
-                # Create a minimal report as fallback
-                report_content = f"""# {data_type.title()} Anomaly Detection Report
+            if 'analysis_time_span_hours' in summary:
+                report_lines.extend([
+                    f"- **Analysis period**: {summary.get('analysis_start', 'N/A')} to {summary.get('analysis_end', 'N/A')}",
+                    f"- **Time span**: {summary['analysis_time_span_hours']} hours",
+                    ""
+                ])
+        
+        # Add ML score statistics  
+        if 'ml_score_stats' in summary:
+            ml_stats = summary['ml_score_stats']
+            report_lines.extend([
+                "### Anomaly Score Statistics",
+                "",
+                f"- **Average Score**: {ml_stats['mean']}",
+                f"- **Highest Score**: {ml_stats['max']}",
+                f"- **Lowest Score**: {ml_stats['min']}",
+                ""
+            ])
+        
+        # Add confidence statistics
+        if 'confidence_stats' in summary:
+            conf_stats = summary['confidence_stats']
+            report_lines.extend([
+                "### Detection Confidence Statistics", 
+                "",
+                f"- **Average Confidence**: {conf_stats['mean']}%",
+                f"- **Highest Confidence**: {conf_stats['max']}%",
+                f"- **Lowest Confidence**: {conf_stats['min']}%",
+                ""
+            ])
+        
+        # Add top entities
+        entity_keys = [k for k in summary.keys() if k.startswith('top_')]
+        if entity_keys:
+            report_lines.extend(["### Top Anomalous Entities", ""])
+            for key in entity_keys:
+                entity_type = key.replace('top_', '').replace('_', ' ').title()
+                entities = summary[key]
+                report_lines.append(f"**{entity_type}:**")
+                for entity, count in list(entities.items())[:5]:
+                    report_lines.append(f"- {entity}: {count} anomalies")
+                report_lines.append("")
+        
+        # Add insights
+        if 'ml_patterns' in ml_insights:
+            report_lines.extend([
+                "### Detection Insights",
+                ""
+            ])
+            for pattern in ml_insights['ml_patterns']:
+                report_lines.append(f"- {pattern}")
+            report_lines.append("")
 
-    Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        # Add LLM analysis (if available) or a deterministic fallback
+        report_lines.append("### LLM Analysis")
+        report_lines.append("")
+        if llm_analysis and isinstance(llm_analysis, dict) and llm_analysis:
+            # Prefer structured fields if returned
+            if 'summary' in llm_analysis:
+                report_lines.append("**LLM Summary:**")
+                report_lines.append("")
+                report_lines.append(str(llm_analysis.get('summary')))
+                report_lines.append("")
+
+            if 'patterns' in llm_analysis:
+                report_lines.append("**Key Patterns Identified by LLM:**")
+                report_lines.append("")
+                report_lines.append(str(llm_analysis.get('patterns')))
+                report_lines.append("")
+
+            if 'implications' in llm_analysis:
+                report_lines.append("**Security Implications (LLM):**")
+                report_lines.append("")
+                report_lines.append(str(llm_analysis.get('implications')))
+                report_lines.append("")
+
+            if 'recommendations' in llm_analysis:
+                report_lines.append("**Recommendations (LLM):**")
+                report_lines.append("")
+                report_lines.append(str(llm_analysis.get('recommendations')))
+                report_lines.append("")
+        else:
+            # Deterministic fallback: summarize top ml_insights into a short paragraph
+            fallback_lines = []
+            if isinstance(ml_insights, dict):
+                det_summary = ml_insights.get('detection_summary') or ''
+                if det_summary:
+                    fallback_lines.append(det_summary)
+
+                patterns = ml_insights.get('ml_patterns') if isinstance(ml_insights.get('ml_patterns', None), list) else None
+                if patterns:
+                    fallback_lines.append('Key patterns: ' + '; '.join([str(p) for p in patterns[:3]]))
+
+            if fallback_lines:
+                report_lines.extend(fallback_lines)
+            else:
+                report_lines.append('LLM analysis unavailable; enable Ollama LLM in config or check Ollama connectivity to include automated reasoning here.')
+            report_lines.append("")
+        
+        # Add visualizations
+        if viz_paths:
+            report_lines.extend([
+                "## Visualizations",
+                ""
+            ])
+            for i, viz_path in enumerate(viz_paths, 1):
+                viz_name = os.path.basename(viz_path)
+                report_lines.extend([
+                    f"### Visualization {i}: {viz_name}",
+                    "",
+                    f"![{viz_name}](../{viz_name})",
+                    ""
+                ])
+        
+        # Add conclusion
+        report_lines.extend([
+            "## Next Steps",
+            "",
+            "1. Investigate the anomalies identified in this report",  
+            "2. Review potential false positives and tune detection thresholds if needed",
+            "3. Implement recommended security controls",
+            "4. Schedule a follow-up analysis to verify improvements",
+            "",
+            "---",
+            "",
+            "*Report generated by Linux Anomaly Detection System*"
+        ])
+        
+        return "\n".join(report_lines)
+
+
+    def _generate_no_ml_anomalies_report(self, data_type: str, total_records: int) -> Tuple[str, str]:
+        """Generate report when no ML anomalies are found."""
+        
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = self.config.get("output", {}).get("results_dir", "results/reports")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        report_file = os.path.join(output_dir, f"{data_type}_anomaly_report_{timestamp_str}.md")
+        csv_file = os.path.join(output_dir, f"{data_type}_anomaly_data_{timestamp_str}.csv")
+        
+        # Create empty CSV
+        empty_df = pd.DataFrame()
+        empty_df.to_csv(csv_file, index=False)
+        
+        # Create report
+        report_content = f"""# {data_type.title()} Anomaly Detection Report
+
+    Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    **Classification Method**: ML Anomalies Only
 
     ## Summary
-    - Total anomalies detected: {len(anomalies)}
-    - Total normal events: {len(normal_data)}
 
-    ## Error
-    An error occurred while generating the detailed report: {str(e)}
+    - **Total anomalies detected**: 0
+    - **Total normal events**: {total_records}
+    - **Anomaly percentage**: 0.0%
 
-    Please check the logs for more information.
+    **Note**: Only machine learning detections are classified as anomalies.
+
+    ## Key Findings
+
+    No true anomalies were detected in the {data_type} data.
+
+    ### Possible Reasons:
+    1. ML detection thresholds may be too high
+    2. Current data patterns are within normal ML baselines  
+    3. ML models may need retraining with recent data
+
+    ### Recommended Actions:
+    1. Review ML detection thresholds
+    2. Check if ML models are properly loaded
+    3. Consider expanding the analysis time window
+    4. Validate ML model performance
+
+    ---
+
+    *Report generated by Linux Anomaly Detection System*
     """
-            
-            # FIX 3: Safe file operations
-            try:
-                # Save report and data
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                report_file = os.path.join(self.report_dir, f"{data_type}_anomaly_report_{timestamp}.md")
-                csv_file = os.path.join(self.report_dir, f"{data_type}_anomaly_data_{timestamp}.csv")
-                
-                # Write report file
-                with open(report_file, "w", encoding='utf-8') as f:
-                    f.write(report_content)
-                
-                # Save anomaly data
-                anomalies.to_csv(csv_file, index=False)
-                
-                self.logger.info(f"Report saved to {report_file}")
-                self.logger.info(f"Data saved to {csv_file}")
-                
-                return report_file, csv_file
-                
-            except Exception as e:
-                self.logger.error(f"Error saving report files for {data_type}: {e}")
-                return None, None
         
+        with open(report_file, "w", encoding='utf-8') as f:
+            f.write(report_content)
+        
+        logger.info(f"Generated no-anomalies report: {report_file}")
+        return report_file, csv_file
+    def create_ml_only_visualizations(self, ml_anomalies: pd.DataFrame, data_type: str) -> List[str]:
+        """Create visualizations showing only ML-detected anomalies (true anomalies)."""
+        
+        viz_paths = []
+        
+        if ml_anomalies.empty:
+            logger.warning(f"No true anomalies to visualize for {data_type} (only ML detections count as anomalies)")
+            return viz_paths
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        try:
+            # Visualization 1: ML Scores Distribution
+            if 'ml_anomaly_score' in ml_anomalies.columns:
+                plt.figure(figsize=(10, 6))
+                ml_scores = ml_anomalies['ml_anomaly_score'].dropna()
+                
+                if len(ml_scores) > 0:
+                    plt.hist(ml_scores, bins=20, alpha=0.7, color='red', edgecolor='black')
+                    plt.title(f'True Anomaly Score Distribution - {data_type.title()} (ML Only)')
+                    plt.xlabel('Anomaly Score (ML)')
+                    plt.ylabel('Count')
+                    plt.grid(True, alpha=0.3)
+                    
+                    viz_file = f"anomaly_scores_{data_type}_{timestamp}.png"
+                    viz_path = os.path.join(self.viz_dir, viz_file)
+                    plt.savefig(viz_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    viz_paths.append(viz_path)
+            
+            # Visualization 2: ML Confidence Levels
+            if 'confidence' in ml_anomalies.columns:
+                plt.figure(figsize=(10, 6))
+                confidence_scores = ml_anomalies['confidence'].dropna() * 100  # Convert to percentage
+                
+                if len(confidence_scores) > 0:
+                    plt.hist(confidence_scores, bins=20, alpha=0.7, color='blue', edgecolor='black')
+                    plt.title(f'Anomaly Confidence Distribution - {data_type.title()} (ML Only)')
+                    plt.xlabel('Confidence (%)')
+                    plt.ylabel('Count')
+                    plt.grid(True, alpha=0.3)
+                    
+                    viz_file = f"anomaly_confidence_{data_type}_{timestamp}.png"
+                    viz_path = os.path.join(self.viz_dir, viz_file)
+                    plt.savefig(viz_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                    viz_paths.append(viz_path)
+            
+            # Visualization 3: Top ML Anomalous Entities
+            entity_cols = ['user.name', 'process.name', 'host.hostname', 'destination.ip']
+            for col in entity_cols:
+                if col in ml_anomalies.columns:
+                    entity_counts = ml_anomalies[col].dropna().astype(str).fillna('unknown').value_counts().head(10)
+                    
+                    if len(entity_counts) > 0:
+                        plt.figure(figsize=(12, 8))
+                        entity_counts.plot(kind='barh', color='orange', alpha=0.7)
+                        plt.title(f'Top 10 Anomalous {col.replace(".", " ").title()} - {data_type.title()}')
+                        plt.xlabel('Anomaly Count')
+                        plt.ylabel(col.replace(".", " ").title())
+                        plt.tight_layout()
+                        
+                        viz_file = f"top_anomalous_{col.replace('.', '_')}_{data_type}_{timestamp}.png"
+                        viz_path = os.path.join(self.viz_dir, viz_file)
+                        plt.savefig(viz_path, dpi=300, bbox_inches='tight')
+                        plt.close()
+                        viz_paths.append(viz_path)
+                        break  # Only create one entity visualization
+            
+            logger.info(f"Created {len(viz_paths)} anomaly visualizations for {data_type} (ML detections only)")
+            
         except Exception as e:
-            self.logger.error(f"Error generating comprehensive report for {data_type}: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
-            return None, None
+            logger.error(f"Error creating anomaly visualizations: {e}")
+            plt.close('all')
+        
+        return viz_paths
+    def _generate_ml_specific_insights(self, ml_anomalies: pd.DataFrame, data_type: str) -> Dict:
+        """Generate insights where only ML detections are considered anomalies."""
+        
+        insights = {
+            'detection_summary': f'Only ML-detected anomalies are classified as true anomalies. Found {len(ml_anomalies)} anomalies in {data_type} data.',
+            'classification_note': 'Statistical detections, rule-based detections, and other methods are classified as normal behavior.',
+            'ml_patterns': []
+        }
+        
+        if ml_anomalies.empty:
+            insights['detection_summary'] = f'No true anomalies detected in {data_type} data (only ML detections count as anomalies)'
+            return insights
+        
+        # ML Score distribution analysis
+        if 'ml_anomaly_score' in ml_anomalies.columns:
+            ml_scores = ml_anomalies['ml_anomaly_score'].dropna()
+            if len(ml_scores) > 0:
+                high_score_count = len(ml_scores[ml_scores >= 0.8])
+                medium_score_count = len(ml_scores[(ml_scores >= 0.5) & (ml_scores < 0.8)])
+                low_score_count = len(ml_scores[ml_scores < 0.5])
+                
+                insights['ml_patterns'].append(
+                    f"ML Score Distribution: {high_score_count} high-confidence (≥0.8), "
+                    f"{medium_score_count} medium-confidence (0.5-0.8), "
+                    f"{low_score_count} low-confidence (<0.5)"
+                )
+        
+        # Confidence analysis
+        if 'confidence' in ml_anomalies.columns:
+            confidence_scores = ml_anomalies['confidence'].dropna()
+            if len(confidence_scores) > 0:
+                avg_confidence = confidence_scores.mean() * 100
+                insights['ml_patterns'].append(
+                    f"Average ML confidence: {self._safe_round(avg_confidence, 1)}%"
+                )
+        
+        # Detection threshold analysis
+        if 'detection_threshold' in ml_anomalies.columns:
+            thresholds = ml_anomalies['detection_threshold'].dropna().unique()
+            if len(thresholds) > 0:
+                insights['ml_patterns'].append(
+                    f"ML thresholds used: {', '.join([str(self._safe_round(t,3)) for t in sorted(thresholds)])}"
+                )
+        
+        # Job source analysis
+        # if 'job_source' in ml_anomalies.columns:
+        #     job_counts = ml_anomalies['job_source'].astype(str).fillna('unknown').value_counts()
+        #     top_jobs = job_counts.head(3)
+        #     insights['ml_specific_patterns'].append(
+        #         f"Top ML detection jobs: {', '.join([f'{job}({count})' for job, count in top_jobs.items()])}"
+        #     )
+        
+        return insights
+    def _generate_ml_only_summary_stats(self, ml_anomalies: pd.DataFrame, total_records: int, data_type: str) -> Dict:
+        """Generate summary statistics where ML anomalies = anomalies, everything else = normal."""
+        
+        ml_count = len(ml_anomalies)
+        normal_count = total_records - ml_count
+        ml_percentage = (ml_count / total_records * 100) if total_records > 0 else 0
+        
+        summary = {
+            'total_anomalies': ml_count,  # Only ML anomalies count as anomalies
+            'total_normal': normal_count,  # Everything else (including statistical) is normal
+            'total_records': total_records,
+            'anomaly_percentage': round(ml_percentage, 2),
+            'normal_percentage': round(100 - ml_percentage, 2),
+            'classification_method': 'ML_anomalies_only',
+            'note': 'Only machine learning detections are classified as anomalies'
+        }
+        
+        # Add temporal analysis for ML anomalies
+        if not ml_anomalies.empty and '@timestamp' in ml_anomalies.columns:
+            try:
+                ml_with_time = self._ensure_datetime_format(ml_anomalies.copy())
+                if not ml_with_time.empty:
+                    time_range = ml_with_time['@timestamp'].max() - ml_with_time['@timestamp'].min()
+                    summary['analysis_time_span_hours'] = round(time_range.total_seconds() / 3600, 1)
+                    summary['analysis_start'] = str(ml_with_time['@timestamp'].min())
+                    summary['analysis_end'] = str(ml_with_time['@timestamp'].max())
+            except Exception as e:
+                logger.warning(f"Error in ML temporal analysis: {e}")
+        
+        # Add ML-specific metrics
+        if not ml_anomalies.empty:
+            if 'ml_anomaly_score' in ml_anomalies.columns:
+                ml_scores = ml_anomalies['ml_anomaly_score'].dropna()
+                if len(ml_scores) > 0:
+                    summary['ml_score_stats'] = {
+                        'mean': self._safe_round(ml_scores.mean(), 3),
+                        'max': self._safe_round(ml_scores.max(), 3),
+                        'min': self._safe_round(ml_scores.min(), 3)
+                    }
+            
+            if 'confidence' in ml_anomalies.columns:
+                confidence_scores = ml_anomalies['confidence'].dropna()
+                if len(confidence_scores) > 0:
+                    summary['confidence_stats'] = {
+                        'mean': self._safe_round(confidence_scores.mean() * 100, 1),
+                        'max': self._safe_round(confidence_scores.max() * 100, 1),
+                        'min': self._safe_round(confidence_scores.min() * 100, 1)
+                    }
+            
+            # Top entities with ML anomalies
+            entity_cols = ['user.name', 'process.name', 'host.hostname', 'destination.ip']
+            for col in entity_cols:
+                if col in ml_anomalies.columns:
+                    entity_counts = ml_anomalies[col].dropna().astype(str).fillna('unknown').value_counts()
+                    if len(entity_counts) > 0:
+                        summary[f'top_{col.replace(".", "_")}'] = entity_counts.head(5).to_dict()
+                        summary[f'unique_{col.replace(".", "_")}_count'] = len(entity_counts)
+                        break
+
+        # Avoid passing raw pandas/numpy types into the statistics calculator
+        # which may attempt to round numpy.bool_ objects. Return the safe
+        # pre-computed summary dictionary instead.
+        return summary
+
+    def generate_comprehensive_report(self, results_dict: Dict[str, pd.DataFrame], data_type: str) -> Tuple[str, str]:
+        """
+        FIXED: Generate reports using ONLY ML-detected anomalies.
+        Statistical anomalies are completely filtered out.
+        """
+        try:
+            logger.info(f"Generating ML-only comprehensive report for {data_type} anomalies")
+            # Defensive normalization: ensure results_dict is a mapping of job_name -> pd.DataFrame
+            normalized_results = {}
+            if not isinstance(results_dict, dict):
+                try:
+                    # Try to coerce to dict if possible
+                    results_dict = dict(results_dict)
+                except Exception:
+                    logger.warning("generate_comprehensive_report: results_dict is not a dict-like object; treating as empty")
+                    results_dict = {}
+
+            for job_name, job_results in results_dict.items():
+                # If it's already a DataFrame, keep it
+                if isinstance(job_results, pd.DataFrame):
+                    normalized_results[job_name] = job_results
+                    continue
+
+                # Tuple like (df, saveable)
+                if isinstance(job_results, tuple) and len(job_results) > 0 and isinstance(job_results[0], pd.DataFrame):
+                    normalized_results[job_name] = job_results[0]
+                    logger.debug(f"Normalized tuple result for job {job_name} to DataFrame")
+                    continue
+
+                # Dict -> try to convert to DataFrame
+                if isinstance(job_results, dict):
+                    try:
+                        normalized_results[job_name] = pd.DataFrame.from_dict(job_results)
+                        logger.debug(f"Converted dict result for job {job_name} to DataFrame")
+                        continue
+                    except Exception:
+                        normalized_results[job_name] = pd.DataFrame([job_results])
+                        logger.debug(f"Wrapped dict result for job {job_name} into single-row DataFrame")
+                        continue
+
+                # List -> try DataFrame
+                if isinstance(job_results, list):
+                    try:
+                        normalized_results[job_name] = pd.DataFrame(job_results)
+                        logger.debug(f"Converted list result for job {job_name} to DataFrame")
+                        continue
+                    except Exception:
+                        normalized_results[job_name] = pd.DataFrame([{'value': job_results}])
+                        continue
+
+                # Unknown type: create empty DataFrame and log
+                logger.warning(f"generate_comprehensive_report: job {job_name} returned unsupported type {type(job_results).__name__}; using empty DataFrame")
+                normalized_results[job_name] = pd.DataFrame()
+
+            # Replace results_dict with normalized mapping
+            results_dict = normalized_results
+            
+            # STEP 1: Extract ONLY ML anomalies from all results
+            ml_only_anomalies = []
+            total_records_processed = 0
+            
+            for job_name, job_results in results_dict.items():
+                if not isinstance(job_results, pd.DataFrame) or job_results.empty:
+                    continue
+                    
+                # Count all records processed (for accurate percentage)
+                total_records_processed += len(job_results)
+                
+                # CRITICAL FILTER: Only ML-detected anomalies
+                if 'detection_method' in job_results.columns and 'final_anomaly' in job_results.columns:
+                    ml_mask = (
+                        (job_results['detection_method'] == 'machine_learning') & 
+                        (job_results['final_anomaly'] == True)
+                    )
+                    ml_anomalies = job_results[ml_mask].copy()
+                    
+                    if not ml_anomalies.empty:
+                        ml_anomalies['job_source'] = job_name  # Track source job
+                        ml_only_anomalies.append(ml_anomalies)
+                        
+            if not ml_only_anomalies:
+                logger.warning(f"No ML anomalies found for {data_type} - generating empty report")
+                return self._generate_no_ml_anomalies_report(data_type, total_records_processed)
+            
+            # Combine all ML anomalies
+            combined_ml_anomalies = pd.concat(ml_only_anomalies, ignore_index=True)
+            
+            # STEP 2: Treat everything else as NORMAL (including statistical detections)
+            ml_anomaly_count = len(combined_ml_anomalies)
+            normal_count = total_records_processed - ml_anomaly_count
+            
+            # Extract all non-ML records as "normal" data
+            all_normal_records = []
+            for job_name, job_results in results_dict.items():
+                if job_results.empty:
+                    continue
+                    
+                # Everything that's NOT an ML anomaly is considered normal
+                if 'detection_method' in job_results.columns and 'final_anomaly' in job_results.columns:
+                    normal_mask = ~(
+                        (job_results['detection_method'] == 'machine_learning') & 
+                        (job_results['final_anomaly'] == True)
+                    )
+                    normal_records = job_results[normal_mask].copy()
+                    
+                    if not normal_records.empty:
+                        # Mark these as normal regardless of their original final_anomaly status
+                        normal_records['final_anomaly'] = False
+                        normal_records['classification'] = 'normal'
+                        all_normal_records.append(normal_records)
+                else:
+                    # If no detection method column, treat all as normal
+                    normal_records = job_results.copy()
+                    normal_records['final_anomaly'] = False
+                    normal_records['classification'] = 'normal'
+                    all_normal_records.append(normal_records)
+            
+            # Create normal data DataFrame
+            normal_data_summary = pd.concat(all_normal_records, ignore_index=True) if all_normal_records else pd.DataFrame()
+            
+            logger.info(f"Classification: {ml_anomaly_count} ML anomalies, {normal_count} normal records (including statistical detections) from {total_records_processed} total")
+            
+            # STEP 3: Generate report components using only ML data
+            try:
+                summary = self._generate_ml_only_summary_stats(combined_ml_anomalies, total_records_processed, data_type)
+            except Exception as e:
+                logger.warning(f"Error generating ML summary stats: {e}")
+                summary = {"error": "Could not generate ML summary statistics"}
+            
+            try:
+                ml_insights = self._generate_ml_specific_insights(combined_ml_anomalies, data_type)
+            except Exception as e:
+                logger.warning(f"Error generating ML insights: {e}")
+                ml_insights = {"error": "Could not generate ML insights"}
+            
+            try:
+                visualizations = self.create_ml_only_visualizations(combined_ml_anomalies, data_type)
+            except Exception as e:
+                logger.warning(f"Error creating ML visualizations: {e}")
+                visualizations = []
+            
+            # STEP 4: Create ML-focused report
+            try:
+                llm_analysis = self._generate_llm_analysis(summary, {}, ml_insights, {}, combined_ml_anomalies, data_type)
+            except Exception as e:
+                logger.warning(f"LLM analysis generation failed: {e}")
+                llm_analysis = None
+
+            report_content = self._create_ml_only_markdown_report(
+                summary, ml_insights, visualizations, data_type, llm_analysis=llm_analysis
+            )
+            
+            # STEP 5: Save report and data
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = self.config.get("output", {}).get("results_dir", "results/reports")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            report_file = os.path.join(output_dir, f"ml_only_{data_type}_report_{timestamp_str}.md")
+            csv_file = os.path.join(output_dir, f"ml_only_{data_type}_data_{timestamp_str}.csv")
+            
+            # Save ML-only report
+            with open(report_file, "w", encoding='utf-8') as f:
+                f.write(report_content)
+            
+            # Save ML-only data
+            combined_ml_anomalies.to_csv(csv_file, index=False)
+            
+            logger.info(f"Generated ML-only report: {report_file}")
+            logger.info(f"Saved ML-only data: {csv_file}")
+            
+            return report_file, csv_file
+            
+        except Exception as e:
+            logger.error(f"Error generating ML-only report for {data_type}: {e}")
+            return self._generate_error_report(data_type, str(e))
     
     def _create_discovery_visualizations(self, results_dict):
         """Create discovery command visualizations."""
@@ -358,7 +670,7 @@ class LinuxAnomalyVisualizer:
             if 'discovery_category' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 
-                category_counts = combined_data['discovery_category'].value_counts()
+                category_counts = combined_data['discovery_category'].astype(str).fillna('unknown').value_counts()
                 
                 ax = category_counts.plot(kind='bar', alpha=0.7, 
                                         color='blue' if not has_anomalies else 'orange')
@@ -377,7 +689,7 @@ class LinuxAnomalyVisualizer:
             if 'process.name' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 
-                cmd_counts = combined_data['process.name'].value_counts().head(15)
+                cmd_counts = combined_data['process.name'].astype(str).fillna('unknown').value_counts().head(15)
                 
                 ax = cmd_counts.plot(kind='barh', alpha=0.7, 
                                 color='blue' if not has_anomalies else 'orange')
@@ -395,7 +707,7 @@ class LinuxAnomalyVisualizer:
             if 'user.name' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 
-                user_counts = combined_data['user.name'].value_counts().head(10)
+                user_counts = combined_data['user.name'].astype(str).fillna('unknown').value_counts().head(10)
                 
                 ax = user_counts.plot(kind='bar', alpha=0.7, 
                                     color='blue' if not has_anomalies else 'orange')
@@ -510,7 +822,7 @@ class LinuxAnomalyVisualizer:
                 try:
                     plt.figure(figsize=(12, 8))
                     
-                    category_counts = combined_data['discovery_category'].value_counts()
+                    category_counts = combined_data['discovery_category'].astype(str).fillna('unknown').value_counts()
                     
                     ax = category_counts.plot(kind='bar', alpha=0.7, 
                                             color='blue' if not has_anomalies else 'orange')
@@ -533,7 +845,7 @@ class LinuxAnomalyVisualizer:
                 try:
                     plt.figure(figsize=(12, 8))
                     
-                    cmd_counts = combined_data['process.name'].value_counts().head(15)
+                    cmd_counts = combined_data['process.name'].astype(str).fillna('unknown').value_counts().head(15)
                     
                     ax = cmd_counts.plot(kind='barh', alpha=0.7, 
                                     color='blue' if not has_anomalies else 'orange')
@@ -555,7 +867,7 @@ class LinuxAnomalyVisualizer:
                 try:
                     plt.figure(figsize=(12, 8))
                     
-                    user_counts = combined_data['user.name'].value_counts().head(10)
+                    user_counts = combined_data['user.name'].astype(str).fillna('unknown').value_counts().head(10)
                     
                     ax = user_counts.plot(kind='bar', alpha=0.7, 
                                         color='blue' if not has_anomalies else 'orange')
@@ -887,33 +1199,63 @@ class LinuxAnomalyVisualizer:
             Format your response as JSON with these five keys, and keep each section brief and focused.
             """
             
-            # Call Ollama
-            model = self.config.get("llm", {}).get("model", "llama3")
-            response = ollama_client.generate(
-                model=model,
-                prompt=prompt,
-                max_tokens=1000,
-                temperature=0.2
-            )
+            # Call Ollama with a safer default model and timeouts
+            model = self.config.get("llm", {}).get("model", "llama3.2")
+            # Some Ollama clients support timeout via kwargs; wrap in try/except
+            try:
+                response = ollama_client.generate(
+                    model=model,
+                    prompt=prompt,
+                    max_tokens=1000,
+                    temperature=0.2,
+                    timeout=30
+                )
+            except TypeError:
+                # Fallback if client doesn't accept timeout
+                response = ollama_client.generate(
+                    model=model,
+                    prompt=prompt,
+                    max_tokens=1000,
+                    temperature=0.2
+                )
             
             # Parse the response
             if response and 'response' in response:
+                raw = response['response']
+                # If response looks like JSON, try to parse; otherwise use heuristics
                 try:
-                    # Try to parse as JSON
-                    parsed_response = json.loads(response['response'])
-                    llm_analysis = parsed_response
-                except json.JSONDecodeError:
-                    # If not valid JSON, use the raw text
-                    llm_analysis = {
-                        "summary": response['response'],
-                        "note": "LLM output could not be parsed as JSON"
-                    }
+                    parsed_response = json.loads(raw)
+                    if isinstance(parsed_response, dict):
+                        llm_analysis = parsed_response
+                    else:
+                        llm_analysis = {"summary": str(parsed_response)}
+                except Exception:
+                    # Try to extract JSON block from text
+                    try:
+                        start = raw.find('{')
+                        end = raw.rfind('}')
+                        if start != -1 and end != -1 and end > start:
+                            candidate = raw[start:end+1]
+                            parsed_response = json.loads(candidate)
+                            llm_analysis = parsed_response if isinstance(parsed_response, dict) else {"summary": raw}
+                        else:
+                            llm_analysis = {"summary": raw, "note": "LLM output could not be parsed as JSON"}
+                    except Exception:
+                        llm_analysis = {"summary": raw, "note": "LLM output could not be parsed as JSON"}
             
             return llm_analysis
             
         except Exception as e:
             self.logger.warning(f"Error generating LLM analysis: {e}")
             return {"error": str(e)}
+    def _safe_get_viz_dir(self):
+        viz_dir = self.config.get('output', {}).get('visualization_dir', 'results')
+        if not isinstance(viz_dir, str):
+            viz_dir = self.config.get('output', {}).get('visualizations_dir', 'results')  
+        if not isinstance(viz_dir, str):
+            viz_dir = os.path.join(str(self.config.get('output', {}).get('results_dir', 'results')), 'visualizations')
+        os.makedirs(viz_dir, exist_ok=True)
+        return str(viz_dir)
     def _analyze_false_positives(self, anomalies):
         """
         FIXED: Analyze anomalies to identify potential false positives.
@@ -930,7 +1272,7 @@ class LinuxAnomalyVisualizer:
         try:
             # Low score anomalies
             if 'anomaly_score' in anomalies.columns:
-                low_score_threshold = 0.7
+                low_score_threshold = 0.3
                 low_score_anomalies = anomalies[anomalies['anomaly_score'] < low_score_threshold]
                 
                 if not low_score_anomalies.empty:
@@ -958,7 +1300,7 @@ class LinuxAnomalyVisualizer:
                     false_positives['common_benign_processes'] = {
                         'count': len(benign_matches),
                         'percentage': len(benign_matches) / len(anomalies) * 100,
-                        'process_counts': benign_matches['process.name'].value_counts().to_dict()
+                        'process_counts': benign_matches['process.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     }
             
             # FIX 2: Safe scheduled task detection
@@ -971,10 +1313,11 @@ class LinuxAnomalyVisualizer:
                 
                 # Safe string operations
                 try:
-                    scheduled_mask = process_series.str.contains(pattern, case=False, na=False)
-                    business_hours_mask = anomalies['is_business_hours'].fillna(True)  # Assume business hours if unknown
-                    
-                    potential_scheduled = anomalies[scheduled_mask & ~business_hours_mask]
+                    scheduled_mask = process_series.astype(str).fillna('').str.contains(pattern, case=False, na=False)
+                    business_hours_mask = anomalies['is_business_hours'].fillna(True).astype(bool)
+
+                    potential_scheduled = anomalies[scheduled_mask & (~business_hours_mask)]
+
                     
                     if not potential_scheduled.empty:
                         false_positives['potential_scheduled_tasks'] = {
@@ -996,7 +1339,7 @@ class LinuxAnomalyVisualizer:
                 pattern = '|'.join(maintenance_indicators)
                 
                 try:
-                    maintenance_mask = process_series.str.contains(pattern, case=False, na=False)
+                    maintenance_mask = process_series.astype(str).fillna('').str.contains(pattern, case=False, na=False)
                     potential_maintenance = anomalies[maintenance_mask]
                     
                     if not potential_maintenance.empty:
@@ -1019,7 +1362,7 @@ class LinuxAnomalyVisualizer:
                 pattern = '|'.join(update_indicators)
                 
                 try:
-                    update_mask = cmd_series.str.contains(pattern, case=False, na=False)
+                    update_mask = cmd_series.astype(str).fillna('').str.contains(pattern, case=False, na=False)
                     potential_updates = anomalies[update_mask]
                     
                     if not potential_updates.empty:
@@ -1038,108 +1381,95 @@ class LinuxAnomalyVisualizer:
             return {}
     def _generate_comparative_analysis(self, anomalies, normal_data):
         """
-        FIXED: Generate comparative analysis between anomalous and normal data.
-        
-        ROOT CAUSE: Boolean operations (ufunc 'invert') failed on mixed data types
-        
-        FIX: Robust data type checking and conversion before operations
+        Generate comparative analysis between anomalous and normal data.
+
+        FIXED:
+        - Added robust type checking and conversions
+        - Safe handling of empty DataFrames and invalid operations
+
+        ROOT CAUSE:
+        - Boolean operations (ufunc 'invert') failed on mixed data types
         """
+
         if anomalies.empty or normal_data.empty:
             return {}
-        
+
         comparison = {}
-        
+
         try:
-            # FIX 1: Safe event count comparison with type validation
+            # --- FIX 1: Event count comparison ---
             if 'event_count' in anomalies.columns and 'event_count' in normal_data.columns:
-                # Ensure numeric types
                 anomaly_counts = pd.to_numeric(anomalies['event_count'], errors='coerce').dropna()
                 normal_counts = pd.to_numeric(normal_data['event_count'], errors='coerce').dropna()
-                
+
                 if not anomaly_counts.empty and not normal_counts.empty:
                     comparison['event_count'] = {
-                        'anomalous': anomaly_counts.describe().to_dict(),
+                        'anomalous': {
+                            k: float(v) if hasattr(v, '__float__') else v
+                            for k, v in anomaly_counts.describe().to_dict().items()
+                        },
                         'normal': normal_counts.describe().to_dict(),
-                        'ratio': anomaly_counts.mean() / normal_counts.mean() if normal_counts.mean() > 0 else 0
+                        'ratio': anomaly_counts.mean() / normal_counts.mean()
+                                if normal_counts.mean() > 0 else 0
                     }
-            
-            # FIX 2: Safe temporal patterns analysis
+
+            # --- FIX 2: Temporal patterns analysis ---
             if '@timestamp' in anomalies.columns and '@timestamp' in normal_data.columns:
+                anomalies_copy = self._ensure_datetime_format(anomalies.copy())
+                normal_copy = self._ensure_datetime_format(normal_data.copy())
+
+                if anomalies_copy.empty or normal_copy.empty:
+                    self.logger.warning("Timestamp conversion failed for temporal analysis")
+                    return comparison
+
+                anomalies_copy['hour'] = anomalies_copy['@timestamp'].dt.hour
+                normal_copy['hour'] = normal_copy['@timestamp'].dt.hour
+
+                anomaly_hours = anomalies_copy['hour'].astype(str).fillna('unknown').value_counts().to_dict()
+                normal_hours = normal_copy['hour'].astype(str).fillna('unknown').value_counts().to_dict()
+
+                significant_hours = {}
+                total_anomalies, total_normal = len(anomalies_copy), len(normal_copy)
+
+                for hour in range(24):
+                    anomaly_count = anomaly_hours.get(hour, 0)
+                    normal_count = normal_hours.get(hour, 0)
+
+                    anomaly_pct = anomaly_count / total_anomalies if total_anomalies > 0 else 0
+                    normal_pct = normal_count / total_normal if total_normal > 0 else 0
+
+                    if normal_pct > 0:
+                        ratio = anomaly_pct / normal_pct
+                    elif anomaly_pct > 0:
+                        ratio = float('inf')
+                    else:
+                        ratio = 1.0
+
+                    if ratio > 2 or ratio < 0.5:
+                        significant_hours[hour] = {
+                            'anomaly_count': int(anomaly_count),
+                            'normal_count': int(normal_count),
+                            'anomaly_pct': float(anomaly_pct),
+                            'normal_pct': float(normal_pct),
+                            'ratio': float(ratio) if ratio != float('inf') else 999.0
+                        }
+
+                # --- FIX 3: Business hours calculation ---
                 try:
-                    anomalies_copy = anomalies.copy()
-                    normal_copy = normal_data.copy()
-                    
-                    # Robust datetime conversion
-                    anomalies_copy = self._ensure_datetime_format(anomalies_copy)
-                    normal_copy = self._ensure_datetime_format(normal_copy)
-                    
-                    # Skip if timestamp conversion failed
-                    if anomalies_copy.empty or normal_copy.empty:
-                        self.logger.warning("Timestamp conversion failed for temporal analysis")
-                        return comparison
-                    
-                    # Extract temporal features safely
-                    anomalies_copy['hour'] = anomalies_copy['@timestamp'].dt.hour
-                    normal_copy['hour'] = normal_copy['@timestamp'].dt.hour
-                    
-                    # Compare hourly patterns with safe operations
-                    anomaly_hours = anomalies_copy['hour'].value_counts().to_dict()
-                    normal_hours = normal_copy['hour'].value_counts().to_dict()
-                    
-                    # Find significant differences with safe division
-                    significant_hours = {}
-                    total_anomalies = len(anomalies_copy)
-                    total_normal = len(normal_copy)
-                    
-                    for hour in range(24):
-                        anomaly_count = anomaly_hours.get(hour, 0)
-                        normal_count = normal_hours.get(hour, 0)
-                        
-                        # Safe percentage calculations
-                        anomaly_pct = anomaly_count / total_anomalies if total_anomalies > 0 else 0
-                        normal_pct = normal_count / total_normal if total_normal > 0 else 0
-                        
-                        # Safe ratio calculation with proper handling of edge cases
-                        if normal_pct > 0:
-                            ratio = anomaly_pct / normal_pct
-                        elif anomaly_pct > 0:
-                            ratio = float('inf')
-                        else:
-                            ratio = 1.0
-                        
-                        # Only record significant differences
-                        if ratio > 2 or ratio < 0.5:
-                            significant_hours[hour] = {
-                                'anomaly_count': int(anomaly_count),
-                                'normal_count': int(normal_count),
-                                'anomaly_pct': float(anomaly_pct),
-                                'normal_pct': float(normal_pct),
-                                'ratio': float(ratio) if ratio != float('inf') else 999.0
-                            }
-                    
-                    # FIX 3: Safe business hours calculation
-                    # Ensure boolean conversion
-                    if 'hour' in anomalies_copy.columns and 'hour' in normal_copy.columns:
-                        try:
-                            # Safe boolean operations
-                            anomaly_business = anomalies_copy['hour'].between(9, 17, inclusive='both')
-                            normal_business = normal_copy['hour'].between(9, 17, inclusive='both')
-                            
-                            business_hours_anomalies = anomaly_business.sum() / len(anomalies_copy) if len(anomalies_copy) > 0 else 0
-                            business_hours_normal = normal_business.sum() / len(normal_copy) if len(normal_copy) > 0 else 0
-                            
-                            comparison['temporal'] = {
-                                'significant_hours': significant_hours,
-                                'business_hours_anomalies': float(business_hours_anomalies),
-                                'business_hours_normal': float(business_hours_normal)
-                            }
-                        except Exception as e:
-                            self.logger.warning(f"Error in business hours calculation: {e}")
-                            
+                    anomalies_copy['hour'] = pd.to_numeric(anomalies_copy['hour'], errors='coerce').fillna(0)
+                    normal_copy['hour'] = pd.to_numeric(normal_copy['hour'], errors='coerce').fillna(0)
+
+                    anomaly_business = anomalies_copy['hour'].between(9, 17, inclusive='both').astype(bool)
+                    normal_business = normal_copy['hour'].between(9, 17, inclusive='both').astype(bool)
+
+                    business_hours_anomalies = float(anomaly_business.sum()) / len(anomalies_copy) if len(anomalies_copy) > 0 else 0
+                    business_hours_normal = float(normal_business.sum()) / len(normal_copy) if len(normal_copy) > 0 else 0
+
                 except Exception as e:
-                    self.logger.warning(f"Error in temporal analysis: {e}")
-            
-            # FIX 4: Safe entity distribution comparison
+                    self.logger.warning(f"Error in business hours calculation: {e}")
+                    business_hours_anomalies, business_hours_normal = 0, 0
+
+            # --- FIX 4: Entity distribution comparison ---
             entity_columns = {
                 'process.name': 'Process',
                 'user.name': 'User',
@@ -1147,25 +1477,20 @@ class LinuxAnomalyVisualizer:
                 'destination.ip': 'Destination IP',
                 'destination.geo.country_name': 'Country'
             }
-            
+
             entity_comparisons = {}
-            
             for col, label in entity_columns.items():
                 if col in anomalies.columns and col in normal_data.columns:
                     try:
-                        # Convert to string and handle NaN
                         anomaly_entities = anomalies[col].astype(str).fillna('unknown')
                         normal_entities = normal_data[col].astype(str).fillna('unknown')
-                        
-                        # Get top entities safely
+
                         top_anomalous = anomaly_entities.value_counts().head(5).to_dict()
                         top_normal = normal_entities.value_counts().head(5).to_dict()
-                        
-                        # Find unique entities with safe set operations
-                        anomalous_set = set(top_anomalous.keys())
-                        normal_set = set(top_normal.keys())
+
+                        anomalous_set, normal_set = set(top_anomalous.keys()), set(top_normal.keys())
                         unique_to_anomalies = anomalous_set - normal_set
-                        
+
                         entity_comparisons[label] = {
                             'top_anomalous': top_anomalous,
                             'top_normal': top_normal,
@@ -1173,15 +1498,16 @@ class LinuxAnomalyVisualizer:
                         }
                     except Exception as e:
                         self.logger.warning(f"Error comparing {label} entities: {e}")
-            
+
             if entity_comparisons:
                 comparison['entities'] = entity_comparisons
-            
+
             return comparison
-            
+
         except Exception as e:
             self.logger.warning(f"Error generating comparative analysis: {e}")
             return {}
+
     def _ensure_datetime_format(self, df):
         if '@timestamp' in df.columns:
             if not pd.api.types.is_datetime64_any_dtype(df['@timestamp']):
@@ -1274,7 +1600,7 @@ Generated: {timestamp_str}
         entity_col = entity_columns.get(data_type, "host.hostname")
         
         if entity_col in data.columns:
-            top_entities = data[entity_col].value_counts().head(10)
+            top_entities = data[entity_col].astype(str).fillna('unknown').value_counts().head(10)
             report_md += f"\n### Top {data_type.title()} Entities\n\n"
             for entity, count in top_entities.items():
                 report_md += f"- **{entity}**: {count} events\n"
@@ -1292,7 +1618,7 @@ Generated: {timestamp_str}
             report_md += f"\n### Host Coverage\n\n"
             report_md += f"- **Hosts monitored**: {unique_hosts}\n"
             
-            top_hosts = data['host.hostname'].value_counts().head(5)
+            top_hosts = data['host.hostname'].astype(str).fillna('unknown').value_counts().head(5)
             report_md += f"\n**Most active hosts**:\n"
             for host, count in top_hosts.items():
                 report_md += f"- {host}: {count} events\n"
@@ -1314,7 +1640,7 @@ Generated: {timestamp_str}
                 report_md += f"\n### Network Baseline Metrics\n\n"
                 report_md += f"- **Unique destination ports**: {unique_ports}\n"
                 
-                common_ports = data['destination.port'].value_counts().head(5)
+                common_ports = data['destination.port'].astype(str).fillna('unknown').value_counts().head(5)
                 report_md += f"\n**Most common ports**:\n"
                 for port, count in common_ports.items():
                     report_md += f"- Port {port}: {count} connections\n"
@@ -1325,7 +1651,7 @@ Generated: {timestamp_str}
                 report_md += f"\n### User Baseline Metrics\n\n"
                 report_md += f"- **Active users**: {unique_users}\n"
                 
-                top_users = data['user.name'].value_counts().head(5)
+                top_users = data['user.name'].astype(str).fillna('unknown').value_counts().head(5)
                 report_md += f"\n**Most active users**:\n"
                 for user, count in top_users.items():
                     report_md += f"- {user}: {count} events\n"
@@ -1389,7 +1715,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 plt.figure(figsize=(12, 8))
                 
                 # Get top 15 ports by frequency
-                port_counts = combined_data['destination.port'].value_counts().head(15)
+                port_counts = combined_data['destination.port'].astype(str).fillna('unknown').value_counts().head(15)
                 
                 # Determine colors based on anomalies
                 if has_anomalies and 'destination.port' in anomalies.columns:
@@ -1434,7 +1760,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'destination.geo.country_name' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 
-                country_counts = combined_data['destination.geo.country_name'].value_counts().head(10)
+                country_counts = combined_data['destination.geo.country_name'].astype(str).fillna('unknown').value_counts().head(10)
                 
                 # Determine colors based on anomalies
                 if has_anomalies and 'destination.geo.country_name' in anomalies.columns:
@@ -1521,7 +1847,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'network.direction' in combined_data.columns:
                 plt.figure(figsize=(10, 6))
                 
-                direction_counts = combined_data['network.direction'].value_counts()
+                direction_counts = combined_data['network.direction'].astype(str).fillna('unknown').value_counts()
                 
                 # Set colors
                 colors = ['#3498db', '#e74c3c']  # Blue for outbound, Red for inbound
@@ -1542,7 +1868,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'network.transport' in combined_data.columns:
                 plt.figure(figsize=(10, 6))
                 
-                protocol_counts = combined_data['network.transport'].value_counts()
+                protocol_counts = combined_data['network.transport'].astype(str).fillna('unknown').value_counts()
                 
                 # Set colors
                 colors = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6']  # Different colors for protocols
@@ -1703,7 +2029,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 # Visualization 1: Anomalies by job type
                 try:
                     plt.figure(figsize=(10, 6))
-                    job_counts = combined_anomalies['job_id'].value_counts()
+                    job_counts = combined_anomalies['job_id'].astype(str).fillna('unknown').value_counts()
                     ax = job_counts.plot(kind='bar')
                     ax.set_title(f'{data_type.title()} Anomalies by Detection Job')
                     ax.set_ylabel('Count')
@@ -1712,7 +2038,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     
                     # Save visualization
                     viz_file = f"{data_type}_anomalies_by_job_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                    viz_path = os.path.join(self._safe_get_viz_dir(), viz_file)
                     plt.savefig(viz_path)
                     plt.close()
                     viz_paths.append(viz_path)
@@ -1725,7 +2051,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     # FIXED: Only attempt hourly visualization if datetime conversion succeeded
                     if 'hour' in combined_anomalies.columns:
                         plt.figure(figsize=(10, 6))
-                        hourly_counts = combined_anomalies['hour'].value_counts().sort_index()
+                        hourly_counts = combined_anomalies['hour'].astype(str).fillna('unknown').value_counts().sort_index()
                         ax = hourly_counts.plot(kind='bar')
                         ax.set_title(f'{data_type.title()} Anomalies by Hour of Day')
                         ax.set_ylabel('Count')
@@ -1734,7 +2060,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                         
                         # Save visualization
                         viz_file = f"{data_type}_anomalies_by_hour_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                        viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                        viz_path = viz_path = os.path.join(self._safe_get_viz_dir(), viz_file)
                         plt.savefig(viz_path)
                         plt.close()
                         viz_paths.append(viz_path)
@@ -1748,7 +2074,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     try:
                         if 'process.name' in combined_anomalies.columns:
                             plt.figure(figsize=(10, 6))
-                            process_counts = combined_anomalies['process.name'].value_counts().head(10)
+                            process_counts = combined_anomalies['process.name'].astype(str).fillna('unknown').value_counts().head(10)
                             ax = process_counts.plot(kind='bar')
                             ax.set_title('Top 10 Anomalous Processes')
                             ax.set_ylabel('Count')
@@ -1757,7 +2083,8 @@ This baseline report shows normal system activity with no detected anomalies. Th
                             
                             # Save visualization
                             viz_file = f"top_anomalous_processes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                            viz_path = os.path.join(str(self.config.get('output', {}).get('results_dir', 'results')), viz_file)
+
                             plt.savefig(viz_path)
                             plt.close()
                             viz_paths.append(viz_path)
@@ -1770,7 +2097,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     try:
                         if 'user.name' in combined_anomalies.columns:
                             plt.figure(figsize=(10, 6))
-                            user_counts = combined_anomalies['user.name'].value_counts().head(10)
+                            user_counts = combined_anomalies['user.name'].astype(str).fillna('unknown').value_counts().head(10)
                             ax = user_counts.plot(kind='bar')
                             ax.set_title('Top 10 Anomalous Users')
                             ax.set_ylabel('Count')
@@ -1779,7 +2106,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                             
                             # Save visualization
                             viz_file = f"top_anomalous_users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                            viz_path = os.path.join(self.config.get('output', {}).get('visualizations_dir', 'results'), viz_file)
                             plt.savefig(viz_path)
                             plt.close()
                             viz_paths.append(viz_path)
@@ -1803,7 +2130,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                             
                             # Save visualization
                             viz_file = f"user_activity_types_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                            viz_path = os.path.join(self.config.get('output', {}).get('visualizations_dir', 'results'), viz_file)
                             plt.savefig(viz_path)
                             plt.close()
                             viz_paths.append(viz_path)
@@ -1816,7 +2143,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     try:
                         if 'process.name' in combined_anomalies.columns:
                             plt.figure(figsize=(10, 6))
-                            cmd_counts = combined_anomalies['process.name'].value_counts().head(10)
+                            cmd_counts = combined_anomalies['process.name'].astype(str).fillna('unknown').value_counts().head(10)
                             ax = cmd_counts.plot(kind='bar')
                             ax.set_title('Top 10 Anomalous Discovery Commands')
                             ax.set_ylabel('Count')
@@ -1825,7 +2152,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                             
                             # Save visualization
                             viz_file = f"top_discovery_commands_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                            viz_path = os.path.join(self.config.get('output', {}).get('visualizations_dir', 'results'), viz_file)
                             plt.savefig(viz_path)
                             plt.close()
                             viz_paths.append(viz_path)
@@ -1833,14 +2160,15 @@ This baseline report shows normal system activity with no detected anomalies. Th
                         # Create discovery category distribution if available
                         if 'discovery_category' in combined_anomalies.columns:
                             plt.figure(figsize=(10, 6))
-                            category_counts = combined_anomalies['discovery_category'].value_counts()
+                            category_counts = combined_anomalies['discovery_category'].astype(str).fillna('unknown').value_counts()
                             ax = category_counts.plot(kind='pie', autopct='%1.1f%%')
                             ax.set_title('Discovery Command Categories')
                             plt.tight_layout()
                             
                             # Save visualization
                             viz_file = f"discovery_categories_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                            viz_path = os.path.join(self.config.get('output', {}).get('results_dir', 'results'), viz_file)
+                            viz_path = os.path.join(str(self.config.get('output', {}).get('results_dir', 'results')), viz_file)
+
                             plt.savefig(viz_path)
                             plt.close()
                             viz_paths.append(viz_path)
@@ -1887,7 +2215,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'metadata_service_type' in combined_data.columns:
                 plt.figure(figsize=(10, 6))
                 
-                service_counts = combined_data['metadata_service_type'].value_counts()
+                service_counts = combined_data['metadata_service_type'].astype(str).fillna('unknown').value_counts()
                 
                 ax = service_counts.plot(kind='pie', autopct='%1.1f%%', 
                                     startangle=90, shadow=True)
@@ -1904,7 +2232,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'process.name' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 
-                process_counts = combined_data['process.name'].value_counts().head(15)
+                process_counts = combined_data['process.name'].astype(str).fillna('unknown').value_counts().head(15)
                 
                 ax = process_counts.plot(kind='barh', alpha=0.7, 
                                         color='blue' if not has_anomalies else 'orange')
@@ -1922,7 +2250,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'user.name' in combined_data.columns:
                 plt.figure(figsize=(10, 6))
                 
-                user_counts = combined_data['user.name'].value_counts().head(10)
+                user_counts = combined_data['user.name'].astype(str).fillna('unknown').value_counts().head(10)
                 
                 ax = user_counts.plot(kind='bar', alpha=0.7, 
                                     color='blue' if not has_anomalies else 'orange')
@@ -1941,7 +2269,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'potential_cred_harvest' in combined_data.columns:
                 plt.figure(figsize=(8, 6))
                 
-                cred_harvest = combined_data['potential_cred_harvest'].value_counts()
+                cred_harvest = combined_data['potential_cred_harvest'].astype(str).fillna('unknown').value_counts()
                 labels = ['No Credential Access', 'Potential Credential Access']
                 
                 plt.pie(cred_harvest, labels=labels, autopct='%1.1f%%', 
@@ -2020,7 +2348,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if data_type == "process":
                 # Check for unusual processes
                 if 'process.name' in anomalies.columns:
-                    unusual_processes = anomalies['process.name'].value_counts().to_dict()
+                    unusual_processes = anomalies['process.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_processes'] = unusual_processes
                 
                 # Check for root privileges
@@ -2052,12 +2380,12 @@ This baseline report shows normal system activity with no detected anomalies. Th
             elif data_type == "network":
                 # Check for unusual destination countries
                 if 'destination.geo.country_name' in anomalies.columns:
-                    unusual_countries = anomalies['destination.geo.country_name'].value_counts().to_dict()
+                    unusual_countries = anomalies['destination.geo.country_name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_countries'] = unusual_countries
                 
                 # Check for unusual ports
                 if 'destination.port' in anomalies.columns:
-                    unusual_ports = anomalies['destination.port'].value_counts().to_dict()
+                    unusual_ports = anomalies['destination.port'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_ports'] = unusual_ports
                     
                     # Check for well-known vs. uncommon ports
@@ -2088,7 +2416,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             elif data_type == "user":
                 # Check for unusual users
                 if 'user.name' in anomalies.columns:
-                    unusual_users = anomalies['user.name'].value_counts().to_dict()
+                    unusual_users = anomalies['user.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_users'] = unusual_users
                 
                 # Check for sudo usage
@@ -2119,24 +2447,24 @@ This baseline report shows normal system activity with no detected anomalies. Th
             elif data_type == "discovery":
                 # Check for unusual discovery commands
                 if 'process.name' in anomalies.columns:
-                    unusual_commands = anomalies['process.name'].value_counts().to_dict()
+                    unusual_commands = anomalies['process.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_discovery_commands'] = unusual_commands
                 
                 # Check for discovery categories
                 if 'discovery_category' in anomalies.columns:
-                    category_counts = anomalies['discovery_category'].value_counts().to_dict()
+                    category_counts = anomalies['discovery_category'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['discovery_categories'] = category_counts
                 
                 # Check for users performing discovery
                 if 'user.name' in anomalies.columns:
-                    discovery_users = anomalies['user.name'].value_counts().to_dict()
+                    discovery_users = anomalies['user.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['discovery_users'] = discovery_users
             
             # Metadata-specific insights
             elif data_type == "metadata":
                 # Check for unusual metadata access
                 if 'process.name' in anomalies.columns:
-                    unusual_processes = anomalies['process.name'].value_counts().to_dict()
+                    unusual_processes = anomalies['process.name'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['unusual_metadata_processes'] = unusual_processes
                 
                 # Check for credential harvesting
@@ -2149,7 +2477,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 
                 # Check for metadata service types
                 if 'metadata_service_type' in anomalies.columns:
-                    service_counts = anomalies['metadata_service_type'].value_counts().to_dict()
+                    service_counts = anomalies['metadata_service_type'].astype(str).fillna('unknown').value_counts().to_dict()
                     insights['metadata_service_types'] = service_counts
             
             return insights
@@ -2189,7 +2517,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 plt.figure(figsize=(12, 8))
                 # Convert to string and handle NaN
                 process_series = anomalies['process.name'].astype(str).fillna('unknown')
-                top_processes = process_series.value_counts().head(15)
+                top_processes = process_series.astype(str).fillna('unknown').value_counts().head(15)
                 
                 if not top_processes.empty:
                     ax = top_processes.plot(kind='barh', color='red', alpha=0.7)
@@ -2207,7 +2535,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'host.hostname' in anomalies.columns:
                 plt.figure(figsize=(12, 8))
                 host_series = anomalies['host.hostname'].astype(str).fillna('unknown')
-                host_anomalies = host_series.value_counts().head(10)
+                host_anomalies = host_series.astype(str).fillna('unknown').value_counts().head(10)
                 
                 if not host_anomalies.empty:
                     ax = host_anomalies.plot(kind='bar', color='orange', alpha=0.7)
@@ -2237,8 +2565,8 @@ This baseline report shows normal system activity with no detected anomalies. Th
                         normal_data = combined_data[combined_data.get('final_anomaly', False) == False]
                         
                         # Count by hour
-                        normal_hours = normal_data['hour'].value_counts().sort_index()
-                        anomaly_hours = anomalies['hour'].value_counts().sort_index()
+                        normal_hours = normal_data['hour'].astype(str).fillna('unknown').value_counts().sort_index()
+                        anomaly_hours = anomalies['hour'].astype(str).fillna('unknown').value_counts().sort_index()
                         
                         # Create bar chart
                         x = range(24)
@@ -2322,7 +2650,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 plt.figure(figsize=(12, 8))
                 # Safe string conversion
                 process_series = anomalies['process.name'].astype(str).fillna('unknown')
-                top_processes = process_series.value_counts().head(15)
+                top_processes = process_series.astype(str).fillna('unknown').value_counts().head(15)
                 
                 if not top_processes.empty:
                     ax = top_processes.plot(kind='barh', color='red', alpha=0.7)
@@ -2340,7 +2668,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if has_anomalies and 'host.hostname' in combined_data.columns:
                 plt.figure(figsize=(12, 8))
                 host_series = anomalies['host.hostname'].astype(str).fillna('unknown')
-                host_anomalies = host_series.value_counts().head(10)
+                host_anomalies = host_series.astype(str).fillna('unknown').value_counts().head(10)
                 
                 if not host_anomalies.empty:
                     ax = host_anomalies.plot(kind='bar', color='orange', alpha=0.7)
@@ -2371,8 +2699,8 @@ This baseline report shows normal system activity with no detected anomalies. Th
                             anomalies_with_hour['hour'] = anomalies_with_hour['@timestamp'].dt.hour
                         
                         normal_data = combined_data[combined_data.get("final_anomaly", False) == False]
-                        normal_hours = normal_data['hour'].value_counts().sort_index()
-                        anomaly_hours = anomalies_with_hour['hour'].value_counts().sort_index()
+                        normal_hours = normal_data['hour'].astype(str).fillna('unknown').value_counts().sort_index()
+                        anomaly_hours = anomalies_with_hour['hour'].astype(str).fillna('unknown').value_counts().sort_index()
                         
                         x = range(24)
                         width = 0.35
@@ -2395,7 +2723,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                         viz_paths.append(path)
                     else:
                         # Baseline hourly chart
-                        hour_counts = combined_data['hour'].value_counts().sort_index()
+                        hour_counts = combined_data['hour'].astype(str).fillna('unknown').value_counts().sort_index()
                         
                         plt.bar(range(24), [hour_counts.get(i, 0) for i in range(24)],
                                 alpha=0.7, color='blue')
@@ -2622,7 +2950,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'process.name' in data.columns:
                 plt.figure(figsize=(12, 8))
                 process_series = data['process.name'].astype(str).fillna('unknown')
-                top_processes = process_series.value_counts().head(15)
+                top_processes = process_series.astype(str).fillna('unknown').value_counts().head(15)
 
                 if not top_processes.empty:
                     ax = top_processes.plot(kind='barh', color='green', alpha=0.7)
@@ -2640,7 +2968,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
             if 'host.hostname' in data.columns:
                 plt.figure(figsize=(12, 8))
                 host_series = data['host.hostname'].astype(str).fillna('unknown')
-                host_process = host_series.value_counts().head(10)
+                host_process = host_series.astype(str).fillna('unknown').value_counts().head(10)
 
                 if not host_process.empty:
                     ax = host_process.plot(kind='bar', color='blue', alpha=0.7)
@@ -2665,7 +2993,7 @@ This baseline report shows normal system activity with no detected anomalies. Th
                     
                     if not data.empty and not data['@timestamp'].isna().all():
                         data['hour'] = data['@timestamp'].dt.hour
-                        hour_counts = data['hour'].value_counts().sort_index()
+                        hour_counts = data['hour'].astype(str).fillna('unknown').value_counts().sort_index()
 
                         plt.bar(range(24), [hour_counts.get(i, 0) for i in range(24)],
                                 alpha=0.7, color='green')
@@ -2723,7 +3051,10 @@ This baseline report shows normal system activity with no detected anomalies. Th
             plt.figure(figsize=(12, 8))
             
             if 'user.name' in combined_data.columns:
-                top_users = combined_data['user.name'].value_counts().head(10)
+                combined_data['user.name'] = combined_data['user.name'].apply(
+                    lambda x: self.type_handler.safe_string_conversion(x) if pd.notna(x) else 'unknown'
+                )
+                top_users = combined_data['user.name'].astype(str).fillna('unknown').value_counts().head(10)
                 
                 ax = top_users.plot(kind='barh', alpha=0.7, 
                                 color='blue' if not has_anomalies else 'orange')
@@ -2776,11 +3107,12 @@ This baseline report shows normal system activity with no detected anomalies. Th
                 plt.title('Specialized User Activities', fontsize=14, fontweight='bold')
                 plt.ylabel('Number of Events')
                 plt.tight_layout()
-                
-                path = os.path.join(self.viz_dir, f"user_specialized_activity_{timestamp}.png")
+
+                viz_file = f"user_specialized_activity_{timestamp}.png"
+                viz_path = ConfigManager.get_visualization_path(self.config, viz_file)
                 plt.savefig(path, dpi=300, bbox_inches='tight')
                 plt.close()
-                viz_paths.append(path)
+                viz_paths.append(viz_path)
             
             return viz_paths
             
@@ -2804,15 +3136,70 @@ def generate_linux_report(results, config, data_type="process"):
     Returns:
         tuple: (report_file_path, csv_file_path)
     """
+    # apply_all_fixes expects a single DataFrame. If we were given a dict of
+    # job results, apply fixes to each DataFrame value individually. This
+    # prevents passing a dict into apply_all_fixes which leads to unexpected
+    # types downstream (e.g. dicts instead of DataFrames).
     visualizer = LinuxAnomalyVisualizer(config)
-    
-    # Handle both single DataFrame and dictionary of results
+
     if isinstance(results, pd.DataFrame):
+        # Safe to apply fixes directly
+        results, fixed_config = apply_all_fixes(results, config, data_type)
         results_dict = {f"{data_type}_detection": results}
+    elif isinstance(results, dict):
+        # Apply fixes per-job for DataFrame values
+        results_dict = {}
+        for k, v in results.items():
+            if isinstance(v, pd.DataFrame):
+                try:
+                    fixed_df, _ = apply_all_fixes(v, config, data_type)
+                    results_dict[k] = fixed_df
+                except Exception:
+                    # If fixing fails, keep original value and let later
+                    # normalization handle it
+                    results_dict[k] = v
+            else:
+                results_dict[k] = v
     else:
-        results_dict = results
-    
-    return visualizer.generate_comprehensive_report(results_dict, data_type)
+        # Unknown type: treat as empty mapping
+        results_dict = {}
+
+    # Defensive normalization: ensure every value in results_dict is a pandas DataFrame
+    normalized = {}
+    for k, v in (results_dict or {}).items():
+        # If it's already a DataFrame, keep it
+        if isinstance(v, pd.DataFrame):
+            normalized[k] = v
+            continue
+
+        # If it's a tuple like (df, saveable), take first element if DataFrame
+        if isinstance(v, tuple) and len(v) > 0 and isinstance(v[0], pd.DataFrame):
+            normalized[k] = v[0]
+            continue
+
+        # If it's a dict, try to convert to DataFrame
+        if isinstance(v, dict):
+            try:
+                normalized[k] = pd.DataFrame.from_dict(v)
+                continue
+            except Exception:
+                # As a last resort wrap it into a single-row DataFrame
+                normalized[k] = pd.DataFrame([v])
+                continue
+
+        # If it's a list, try to make DataFrame
+        if isinstance(v, list):
+            try:
+                normalized[k] = pd.DataFrame(v)
+                continue
+            except Exception:
+                normalized[k] = pd.DataFrame([{'value': v}])
+                continue
+
+        # Unknown type: create empty DataFrame to keep the pipeline running
+        normalized[k] = pd.DataFrame()
+
+    return visualizer.generate_comprehensive_report(normalized, data_type)
 
 def create_linux_visualizations(results, config, data_type="process"):
     """
@@ -2826,15 +3213,54 @@ def create_linux_visualizations(results, config, data_type="process"):
     Returns:
         list: Paths to created visualizations
     """
+    # apply_all_fixes works on a single DataFrame. If given a dict of job
+    # results, apply fixes per-job only for DataFrame values to avoid
+    # transforming dict inputs into incorrect types.
     visualizer = LinuxAnomalyVisualizer(config)
-    
-    # Handle both single DataFrame and dictionary of results
+
     if isinstance(results, pd.DataFrame):
+        results, _ = apply_all_fixes(results, config, data_type)
         results_dict = {f"{data_type}_detection": results}
+    elif isinstance(results, dict):
+        results_dict = {}
+        for k, v in results.items():
+            if isinstance(v, pd.DataFrame):
+                try:
+                    fixed_df, _ = apply_all_fixes(v, config, data_type)
+                    results_dict[k] = fixed_df
+                except Exception:
+                    results_dict[k] = v
+            else:
+                results_dict[k] = v
     else:
-        results_dict = results
-    
-    return visualizer.create_data_type_visualizations(results_dict, data_type)
+        results_dict = {}
+
+    # Defensive normalization: ensure every value in results_dict is a pandas DataFrame
+    normalized = {}
+    for k, v in (results_dict or {}).items():
+        if isinstance(v, pd.DataFrame):
+            normalized[k] = v
+            continue
+        if isinstance(v, tuple) and len(v) > 0 and isinstance(v[0], pd.DataFrame):
+            normalized[k] = v[0]
+            continue
+        if isinstance(v, dict):
+            try:
+                normalized[k] = pd.DataFrame.from_dict(v)
+                continue
+            except Exception:
+                normalized[k] = pd.DataFrame([v])
+                continue
+        if isinstance(v, list):
+            try:
+                normalized[k] = pd.DataFrame(v)
+                continue
+            except Exception:
+                normalized[k] = pd.DataFrame([{'value': v}])
+                continue
+        normalized[k] = pd.DataFrame()
+
+    return visualizer.create_data_type_visualizations(normalized, data_type)
 
 def visualize_linux_results(results, config, entity=None, data_type="process"):
     """

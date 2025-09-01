@@ -1,0 +1,552 @@
+2025-09-01 16:37:39,032 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 16:37:39,033 - linux_anomaly_detection - INFO - Detection mode: group
+2025-09-01 16:37:39,033 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 16:37:39,637 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.022s]
+2025-09-01 16:37:39,637 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 16:37:39,638 - linux_anomaly_detection - INFO - Running group detection for: process
+2025-09-01 16:37:39,638 - linux_anomaly_detection - INFO - Running process group detection
+2025-09-01 16:37:50,060 - linux_anomaly_detection - INFO -  Loaded 655 models for process
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO -   Jobs covered: v3_rare_process_by_host_linux, v3_linux_anomalous_process_all_hosts, v3_rare_process_by_host_linux_ctx
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO - Loaded existing models for process
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_process_all_hosts: 150 models
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO -   Job v3_rare_process_by_host_linux: 355 models
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO -   Job v3_rare_process_by_host_linux_ctx: 150 models
+2025-09-01 16:37:50,061 - linux_anomaly_detection - INFO - Using detection period: 0.042 days for process
+2025-09-01 16:37:50,062 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 16:37:50,062 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 16:37:50,064 - linux_anomaly_detection - INFO - Calculated hourly distribution: 2 hours, strategy=recent_weighted, avg_per_hour=5000
+2025-09-01 16:37:52,792 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:2.728s]
+2025-09-01 16:37:52,889 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.019s]
+2025-09-01 16:37:52,890 - linux_anomaly_detection - INFO - Hourly stratification yielded 6669/10000 records, applying backfill
+2025-09-01 16:37:52,891 - linux_anomaly_detection - INFO - Applying intelligent backfill for 3331 records
+2025-09-01 16:37:52,922 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.015s]
+2025-09-01 16:37:52,922 - linux_anomaly_detection - INFO - Backfill complete: added 3 records
+2025-09-01 16:37:52,923 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 6672 records from 2/2 hours
+2025-09-01 16:37:52,923 - linux_anomaly_detection - INFO - Retrieved 6672 process records from Elasticsearch
+2025-09-01 16:37:53,102 - linux_anomaly_detection - INFO - Processed 6,672/6,672 valid timestamps
+2025-09-01 16:37:53,127 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 1 hours covered, avg=6672 records/hour, balance_score=nan
+2025-09-01 16:37:53,132 - linux_anomaly_detection - INFO - Successfully processed 6672 Linux process records with 58 fields
+2025-09-01 16:37:53,148 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_process_all_hosts
+2025-09-01 16:37:53,245 - linux_anomaly_detection - INFO - Using 150 job-specific models for v3_linux_anomalous_process_all_hosts
+2025-09-01 16:37:53,245 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 16:37:53,245 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_process_all_hosts
+2025-09-01 16:37:53,246 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 16:37:53,246 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 16:37:53,246 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_process_all_hosts
+2025-09-01 16:37:53,247 - linux_anomaly_detection - INFO -   Type: process
+2025-09-01 16:37:53,247 - linux_anomaly_detection - INFO -   Description: Detect anomalous processes across all hosts
+2025-09-01 16:37:53,247 - linux_anomaly_detection - INFO -   Input records: 6672
+2025-09-01 16:37:53,247 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 16:37:53,248 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 16:37:53,248 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_process_all_hosts, using fallback models
+2025-09-01 16:37:53,248 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 16:37:53,265 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_process_all_hosts (process)
+2025-09-01 16:37:53,328 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:postgres ensemble len=2558 min=0 max=1 mean=0.307459 std=0.395527 uniq=4
+2025-09-01 16:37:53,329 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:postgres ensemble_after_synth len=2558 min=0 max=1 mean=0.336746 std=0.406216 uniq=131
+2025-09-01 16:37:53,331 - linux_anomaly_detection - INFO - Entity postgres: 0/2558 anomalies (threshold=1.000)
+2025-09-01 16:37:53,341 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sed ensemble len=58 min=0 max=1 mean=0.354691 std=0.325121 uniq=8
+2025-09-01 16:37:53,342 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sed ensemble_after_synth len=58 min=0 max=1 mean=0.370643 std=0.334656 uniq=10
+2025-09-01 16:37:53,343 - linux_anomaly_detection - INFO - Entity sed: 4/58 anomalies (threshold=0.835)
+2025-09-01 16:37:53,355 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sh ensemble len=536 min=0 max=1 mean=0.153579 std=0.213937 uniq=19
+2025-09-01 16:37:53,356 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sh ensemble_after_synth len=536 min=0 max=1 mean=0.188143 std=0.261694 uniq=45
+2025-09-01 16:37:53,357 - linux_anomaly_detection - INFO - Entity sh: 40/536 anomalies (threshold=0.757)
+2025-09-01 16:37:53,364 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sort ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:53,364 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sort ensemble_after_synth len=14 min=0 max=1 mean=0.206124 std=0.395484 uniq=3
+2025-09-01 16:37:53,368 - linux_anomaly_detection - INFO - Entity sort: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:53,374 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:netstat ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:53,374 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:netstat ensemble_after_synth len=14 min=0 max=1 mean=0.141872 std=0.347525 uniq=3
+2025-09-01 16:37:53,375 - linux_anomaly_detection - INFO - Entity netstat: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:53,381 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:last ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:53,382 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:last ensemble_after_synth len=14 min=0 max=1 mean=0.208241 std=0.399179 uniq=3
+2025-09-01 16:37:53,384 - linux_anomaly_detection - INFO - Entity last: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:53,391 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:df ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,391 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:df ensemble_after_synth len=14 min=0 max=0.980354 mean=0.0700253 std=0.25248 uniq=2
+2025-09-01 16:37:53,393 - linux_anomaly_detection - INFO - Entity df: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:53,398 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:wazuh-logcollector ensemble len=21 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,401 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:wazuh-logcollector ensemble_after_synth len=21 min=0 max=0.86069 mean=0.0409853 std=0.183292 uniq=2
+2025-09-01 16:37:53,402 - linux_anomaly_detection - INFO - Entity wazuh-logcollector: 1/21 anomalies (threshold=0.600)
+2025-09-01 16:37:53,410 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falconctl ensemble len=310 min=0 max=1 mean=0.212768 std=0.25714 uniq=16
+2025-09-01 16:37:53,411 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falconctl ensemble_after_synth len=310 min=0 max=1 mean=0.249735 std=0.291809 uniq=31
+2025-09-01 16:37:53,412 - linux_anomaly_detection - INFO - Entity falconctl: 0/310 anomalies (threshold=1.000)
+2025-09-01 16:37:53,421 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falcon-sensor-bpf ensemble len=140 min=0 max=1 mean=0.206031 std=0.274376 uniq=15
+2025-09-01 16:37:53,421 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falcon-sensor-bpf ensemble_after_synth len=140 min=0 max=1 mean=0.240873 std=0.311526 uniq=22
+2025-09-01 16:37:53,422 - linux_anomaly_detection - INFO - Entity falcon-sensor-bpf: 0/140 anomalies (threshold=1.000)
+2025-09-01 16:37:53,433 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cron ensemble len=540 min=0 max=1 mean=0.142935 std=0.231681 uniq=13
+2025-09-01 16:37:53,434 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cron ensemble_after_synth len=540 min=0 max=1 mean=0.183314 std=0.283279 uniq=40
+2025-09-01 16:37:53,438 - linux_anomaly_detection - INFO - Entity cron: 52/540 anomalies (threshold=0.654)
+2025-09-01 16:37:53,446 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:debian-sa1 ensemble len=222 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,446 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:debian-sa1 ensemble_after_synth len=222 min=0 max=0.953202 mean=0.0437721 std=0.192053 uniq=12
+2025-09-01 16:37:53,448 - linux_anomaly_detection - INFO - Entity debian-sa1: 11/222 anomalies (threshold=0.600)
+2025-09-01 16:37:53,457 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:systemd ensemble len=139 min=0 max=1 mean=0.214239 std=0.365049 uniq=5
+2025-09-01 16:37:53,457 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:systemd ensemble_after_synth len=139 min=0 max=1 mean=0.244854 std=0.382938 uniq=11
+2025-09-01 16:37:53,459 - linux_anomaly_detection - INFO - Entity systemd: 0/139 anomalies (threshold=1.000)
+2025-09-01 16:37:53,468 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:rm ensemble len=24 min=0 max=1 mean=0.333333 std=0.471405 uniq=2
+2025-09-01 16:37:53,468 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:rm ensemble_after_synth len=24 min=0 max=1 mean=0.367043 std=0.475274 uniq=3
+2025-09-01 16:37:53,470 - linux_anomaly_detection - INFO - Entity rm: 0/24 anomalies (threshold=1.000)
+2025-09-01 16:37:53,476 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:50-motd-news ensemble len=132 min=0 max=1 mean=0.198886 std=0.22211 uniq=22
+2025-09-01 16:37:53,476 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:50-motd-news ensemble_after_synth len=132 min=0 max=1 mean=0.228613 std=0.259607 uniq=28
+2025-09-01 16:37:53,478 - linux_anomaly_detection - INFO - Entity 50-motd-news: 0/132 anomalies (threshold=1.000)
+2025-09-01 16:37:53,484 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:tr ensemble len=16 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:53,485 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:tr ensemble_after_synth len=16 min=0 max=1 mean=0.499137 std=0.499148 uniq=3
+2025-09-01 16:37:53,486 - linux_anomaly_detection - INFO - Entity tr: 0/16 anomalies (threshold=1.000)
+2025-09-01 16:37:53,494 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cut ensemble len=32 min=0 max=1 mean=0.459978 std=0.463447 uniq=3
+2025-09-01 16:37:53,495 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cut ensemble_after_synth len=32 min=0 max=1 mean=0.464559 std=0.467884 uniq=4
+2025-09-01 16:37:53,496 - linux_anomaly_detection - INFO - Entity cut: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:53,503 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:head ensemble len=16 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:53,504 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:head ensemble_after_synth len=16 min=0 max=1 mean=0.498061 std=0.498114 uniq=3
+2025-09-01 16:37:53,506 - linux_anomaly_detection - INFO - Entity head: 0/16 anomalies (threshold=1.000)
+2025-09-01 16:37:53,513 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cat ensemble len=16 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:53,514 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cat ensemble_after_synth len=16 min=0 max=1 mean=0.498512 std=0.498543 uniq=3
+2025-09-01 16:37:53,515 - linux_anomaly_detection - INFO - Entity cat: 0/16 anomalies (threshold=1.000)
+2025-09-01 16:37:53,523 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:wget ensemble len=8 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,524 - linux_anomaly_detection - INFO - Entity wget: 0/8 anomalies (threshold=0.600)
+2025-09-01 16:37:53,531 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:uname ensemble len=40 min=0 max=1 mean=0.279993 std=0.371701 uniq=5
+2025-09-01 16:37:53,532 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:uname ensemble_after_synth len=40 min=0 max=1 mean=0.323983 std=0.388631 uniq=7
+2025-09-01 16:37:53,534 - linux_anomaly_detection - INFO - Entity uname: 0/40 anomalies (threshold=1.000)
+2025-09-01 16:37:53,545 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:grep ensemble len=84 min=0 max=1 mean=0.222852 std=0.299102 uniq=5
+2025-09-01 16:37:53,545 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:grep ensemble_after_synth len=84 min=0 max=1 mean=0.251825 std=0.328455 uniq=9
+2025-09-01 16:37:53,547 - linux_anomaly_detection - INFO - Entity grep: 0/84 anomalies (threshold=1.000)
+2025-09-01 16:37:53,556 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:awk ensemble len=40 min=0 max=1 mean=0.308583 std=0.366404 uniq=3
+2025-09-01 16:37:53,557 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:awk ensemble_after_synth len=40 min=0 max=1 mean=0.355233 std=0.383255 uniq=5
+2025-09-01 16:37:53,558 - linux_anomaly_detection - INFO - Entity awk: 0/40 anomalies (threshold=1.000)
+2025-09-01 16:37:53,567 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:dpkg ensemble len=148 min=0 max=1 mean=0.0586167 std=0.189469 uniq=3
+2025-09-01 16:37:53,567 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:dpkg ensemble_after_synth len=148 min=0 max=1 mean=0.100242 std=0.256912 uniq=10
+2025-09-01 16:37:53,569 - linux_anomaly_detection - INFO - Entity dpkg: 11/148 anomalies (threshold=0.600)
+2025-09-01 16:37:53,576 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:mktemp ensemble len=24 min=0 max=1 mean=0.623247 std=0.443899 uniq=3
+2025-09-01 16:37:53,576 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:mktemp ensemble_after_synth len=24 min=0 max=1 mean=0.663369 std=0.429021 uniq=4
+2025-09-01 16:37:53,578 - linux_anomaly_detection - INFO - Entity mktemp: 0/24 anomalies (threshold=1.000)
+2025-09-01 16:37:53,585 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:9 ensemble len=38 min=0 max=1 mean=0.578947 std=0.493728 uniq=2
+2025-09-01 16:37:53,585 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:9 ensemble_after_synth len=38 min=0 max=1 mean=0.60508 std=0.488647 uniq=3
+2025-09-01 16:37:53,587 - linux_anomaly_detection - INFO - Entity 9: 0/38 anomalies (threshold=1.000)
+2025-09-01 16:37:53,593 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falcon-sensor-bpf17804 ensemble len=15 min=0 max=1 mean=0.6 std=0.489898 uniq=2
+2025-09-01 16:37:53,593 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:falcon-sensor-bpf17804 ensemble_after_synth len=15 min=0 max=1 mean=0.591067 std=0.483705 uniq=3
+2025-09-01 16:37:53,594 - linux_anomaly_detection - INFO - Entity falcon-sensor-bpf17804: 0/15 anomalies (threshold=1.000)
+2025-09-01 16:37:53,607 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt.systemd.daily ensemble len=174 min=0 max=1 mean=0.195567 std=0.274389 uniq=22
+2025-09-01 16:37:53,607 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt.systemd.daily ensemble_after_synth len=174 min=0 max=1 mean=0.230771 std=0.309236 uniq=30
+2025-09-01 16:37:53,608 - linux_anomaly_detection - INFO - Entity apt.systemd.daily: 0/174 anomalies (threshold=1.000)
+2025-09-01 16:37:53,617 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:date ensemble len=108 min=0 max=1 mean=0.408704 std=0.349307 uniq=7
+2025-09-01 16:37:53,618 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:date ensemble_after_synth len=108 min=0 max=1 mean=0.42874 std=0.35816 uniq=12
+2025-09-01 16:37:53,619 - linux_anomaly_detection - INFO - Entity date: 0/108 anomalies (threshold=1.000)
+2025-09-01 16:37:53,625 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:unattended-upgrade ensemble len=30 min=0 max=1 mean=0.51343 std=0.433798 uniq=4
+2025-09-01 16:37:53,626 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:unattended-upgrade ensemble_after_synth len=30 min=0 max=1 mean=0.540993 std=0.426509 uniq=5
+2025-09-01 16:37:53,627 - linux_anomaly_detection - INFO - Entity unattended-upgrade: 0/30 anomalies (threshold=1.000)
+2025-09-01 16:37:53,635 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:lsb_release ensemble len=36 min=0 max=1 mean=0.666667 std=0.471405 uniq=2
+2025-09-01 16:37:53,635 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:lsb_release ensemble_after_synth len=36 min=0 max=1 mean=0.663308 std=0.469444 uniq=3
+2025-09-01 16:37:53,637 - linux_anomaly_detection - INFO - Entity lsb_release: 0/36 anomalies (threshold=1.000)
+2025-09-01 16:37:53,639 - linux_anomaly_detection - ERROR - Missing model for entity env
+2025-09-01 16:37:53,646 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-config ensemble len=180 min=0 max=1 mean=0.454659 std=0.288464 uniq=18
+2025-09-01 16:37:53,647 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-config ensemble_after_synth len=180 min=0 max=1 mean=0.473791 std=0.297161 uniq=27
+2025-09-01 16:37:53,649 - linux_anomaly_detection - INFO - Entity apt-config: 0/180 anomalies (threshold=1.000)
+2025-09-01 16:37:53,659 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-get ensemble len=24 min=0 max=1 mean=0.389973 std=0.41987 uniq=3
+2025-09-01 16:37:53,659 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-get ensemble_after_synth len=24 min=0 max=1 mean=0.386642 std=0.415309 uniq=4
+2025-09-01 16:37:53,660 - linux_anomaly_detection - INFO - Entity apt-get: 0/24 anomalies (threshold=1.000)
+2025-09-01 16:37:53,668 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cmp ensemble len=12 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,669 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:cmp ensemble_after_synth len=12 min=0 max=0.810174 mean=0.0675145 std=0.22392 uniq=2
+2025-09-01 16:37:53,670 - linux_anomaly_detection - INFO - Entity cmp: 1/12 anomalies (threshold=0.600)
+2025-09-01 16:37:53,676 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-helper ensemble len=36 min=0 max=1 mean=0.468949 std=0.405424 uniq=5
+2025-09-01 16:37:53,676 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:apt-helper ensemble_after_synth len=36 min=0 max=1 mean=0.490848 std=0.402915 uniq=6
+2025-09-01 16:37:53,678 - linux_anomaly_detection - INFO - Entity apt-helper: 0/36 anomalies (threshold=1.000)
+2025-09-01 16:37:53,686 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:systemctl ensemble len=52 min=0 max=1 mean=0.446244 std=0.411881 uniq=4
+2025-09-01 16:37:53,688 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:systemctl ensemble_after_synth len=52 min=0 max=1 mean=0.447057 std=0.41203 uniq=6
+2025-09-01 16:37:53,690 - linux_anomaly_detection - INFO - Entity systemctl: 0/52 anomalies (threshold=1.000)
+2025-09-01 16:37:53,695 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sadc ensemble len=30 min=0 max=1 mean=0.466667 std=0.498888 uniq=2
+2025-09-01 16:37:53,695 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sadc ensemble_after_synth len=30 min=0 max=1 mean=0.460345 std=0.493259 uniq=3
+2025-09-01 16:37:53,697 - linux_anomaly_detection - INFO - Entity sadc: 0/30 anomalies (threshold=1.000)
+2025-09-01 16:37:53,705 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sa1 ensemble len=15 min=0 max=1 mean=0.533333 std=0.498888 uniq=2
+2025-09-01 16:37:53,705 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:sa1 ensemble_after_synth len=15 min=0 max=1 mean=0.522862 std=0.490562 uniq=3
+2025-09-01 16:37:53,707 - linux_anomaly_detection - INFO - Entity sa1: 0/15 anomalies (threshold=1.000)
+2025-09-01 16:37:53,712 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:pickup ensemble len=29 min=0 max=1 mean=0.517241 std=0.499703 uniq=2
+2025-09-01 16:37:53,713 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:pickup ensemble_after_synth len=29 min=0 max=1 mean=0.514716 std=0.497436 uniq=3
+2025-09-01 16:37:53,715 - linux_anomaly_detection - INFO - Entity pickup: 0/29 anomalies (threshold=1.000)
+2025-09-01 16:37:53,722 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxXPCOMIPCD ensemble len=15 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,723 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxXPCOMIPCD ensemble_after_synth len=15 min=0 max=0.927132 mean=0.0618088 std=0.231267 uniq=2
+2025-09-01 16:37:53,724 - linux_anomaly_detection - INFO - Entity VBoxXPCOMIPCD: 1/15 anomalies (threshold=0.600)
+2025-09-01 16:37:53,730 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxSVC ensemble len=31 min=0 max=1 mean=0.398029 std=0.418986 uniq=3
+2025-09-01 16:37:53,732 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxSVC ensemble_after_synth len=31 min=0 max=1 mean=0.42988 std=0.425004 uniq=4
+2025-09-01 16:37:53,734 - linux_anomaly_detection - INFO - Entity VBoxSVC: 0/31 anomalies (threshold=1.000)
+2025-09-01 16:37:53,740 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:openvpn ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,741 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:openvpn ensemble_after_synth len=16 min=0 max=0.951858 mean=0.0594911 std=0.230408 uniq=2
+2025-09-01 16:37:53,742 - linux_anomaly_detection - INFO - Entity openvpn: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:53,748 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:checkOpenVPN.sh ensemble len=48 min=0 max=1 mean=0.372968 std=0.394719 uniq=4
+2025-09-01 16:37:53,749 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:checkOpenVPN.sh ensemble_after_synth len=48 min=0 max=1 mean=0.39744 std=0.40377 uniq=6
+2025-09-01 16:37:53,751 - linux_anomaly_detection - INFO - Entity checkOpenVPN.sh: 0/48 anomalies (threshold=1.000)
+2025-09-01 16:37:53,757 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:true ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,757 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:true ensemble_after_synth len=16 min=0 max=0.91423 mean=0.0571394 std=0.2213 uniq=2
+2025-09-01 16:37:53,759 - linux_anomaly_detection - INFO - Entity true: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:53,766 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:basename ensemble len=64 min=0 max=1 mean=0.45146 std=0.394357 uniq=4
+2025-09-01 16:37:53,767 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:basename ensemble_after_synth len=64 min=0 max=1 mean=0.465587 std=0.392751 uniq=7
+2025-09-01 16:37:53,768 - linux_anomaly_detection - INFO - Entity basename: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:53,774 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:service ensemble len=24 min=0 max=1 mean=0.53603 std=0.411416 uniq=3
+2025-09-01 16:37:53,775 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:service ensemble_after_synth len=24 min=0 max=1 mean=0.548371 std=0.417785 uniq=4
+2025-09-01 16:37:53,776 - linux_anomaly_detection - INFO - Entity service: 0/24 anomalies (threshold=1.000)
+2025-09-01 16:37:53,785 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:echo ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,785 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:echo ensemble_after_synth len=16 min=0 max=0.89986 mean=0.0562412 std=0.217821 uniq=2
+2025-09-01 16:37:53,787 - linux_anomaly_detection - INFO - Entity echo: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:53,794 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:ip ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,795 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:ip ensemble_after_synth len=16 min=0 max=0.859324 mean=0.0537077 std=0.208009 uniq=2
+2025-09-01 16:37:53,796 - linux_anomaly_detection - INFO - Entity ip: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:53,805 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:check_and_start_vm.sh ensemble len=64 min=0 max=1 mean=0.30175 std=0.316757 uniq=4
+2025-09-01 16:37:53,805 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:check_and_start_vm.sh ensemble_after_synth len=64 min=0 max=1 mean=0.33532 std=0.340057 uniq=7
+2025-09-01 16:37:53,806 - linux_anomaly_detection - INFO - Entity check_and_start_vm.sh: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:53,814 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxManage ensemble len=232 min=0 max=1 mean=0.317248 std=0.270918 uniq=14
+2025-09-01 16:37:53,815 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxManage ensemble_after_synth len=232 min=0 max=1 mean=0.346022 std=0.293667 uniq=25
+2025-09-01 16:37:53,818 - linux_anomaly_detection - INFO - Entity VBoxManage: 13/232 anomalies (threshold=0.922)
+2025-09-01 16:37:53,825 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:ps ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:53,826 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:ps ensemble_after_synth len=32 min=0 max=0.901661 mean=0.0281769 std=0.156882 uniq=2
+2025-09-01 16:37:53,827 - linux_anomaly_detection - INFO - Entity ps: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:53,834 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:whoami ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:53,834 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:whoami ensemble_after_synth len=32 min=0 max=1 mean=0.494943 std=0.495717 uniq=3
+2025-09-01 16:37:53,836 - linux_anomaly_detection - INFO - Entity whoami: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:53,842 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxNetAdpCtl ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:53,843 - linux_anomaly_detection - INFO - [scoring-debug] v3_linux_anomalous_process_all_hosts:VBoxNetAdpCtl ensemble_after_synth len=32 min=0 max=1 mean=0.53059 std=0.498416 uniq=3
+2025-09-01 16:37:53,844 - linux_anomaly_detection - INFO - Entity VBoxNetAdpCtl: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:53,864 - linux_anomaly_detection - INFO - Applied safety limits: 2.1% -> 0.4%
+2025-09-01 16:37:53,876 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 16:37:53,876 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 16:37:53,877 - linux_anomaly_detection - INFO -   Total records: 6,577
+2025-09-01 16:37:53,877 - linux_anomaly_detection - INFO -   Anomalies detected: 31
+2025-09-01 16:37:53,877 - linux_anomaly_detection - INFO -   Anomaly rate: 0.47%
+2025-09-01 16:37:53,877 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 16:37:53,878 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_process_all_hosts complete
+2025-09-01 16:37:53,879 - linux_anomaly_detection - INFO - Running job: v3_rare_process_by_host_linux
+2025-09-01 16:37:53,964 - linux_anomaly_detection - INFO - Using 355 job-specific models for v3_rare_process_by_host_linux
+2025-09-01 16:37:53,965 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 16:37:53,965 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_rare_process_by_host_linux
+2025-09-01 16:37:53,965 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO -   Job: v3_rare_process_by_host_linux
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO -   Type: process
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO -   Description: Detect rare processes specific to each host
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO -   Input records: 6672
+2025-09-01 16:37:53,966 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 16:37:53,967 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 16:37:53,967 - linux_anomaly_detection - WARNING - No models found for job v3_rare_process_by_host_linux, using fallback models
+2025-09-01 16:37:53,967 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 16:37:53,986 - linux_anomaly_detection - INFO - Feature extraction for job v3_rare_process_by_host_linux (process)
+2025-09-01 16:37:54,027 - linux_anomaly_detection - INFO - Created composite entity for v3_rare_process_by_host_linux: entity_host_process
+2025-09-01 16:37:54,038 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:postgres ensemble len=315 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,038 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:postgres ensemble_after_synth len=315 min=0 max=0.97254 mean=0.0420485 std=0.188406 uniq=16
+2025-09-01 16:37:54,040 - linux_anomaly_detection - INFO - Entity dataportability1:postgres: 15/315 anomalies (threshold=0.600)
+2025-09-01 16:37:54,047 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:inji-certify:postgres ensemble len=438 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,048 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:inji-certify:postgres ensemble_after_synth len=438 min=0 max=0.998437 mean=0.0437592 std=0.195528 uniq=22
+2025-09-01 16:37:54,050 - linux_anomaly_detection - INFO - Entity inji-certify:postgres: 21/438 anomalies (threshold=0.600)
+2025-09-01 16:37:54,057 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sed ensemble len=42 min=0 max=1 mean=0.576902 std=0.378922 uniq=6
+2025-09-01 16:37:54,058 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sed ensemble_after_synth len=42 min=0 max=1 mean=0.583431 std=0.383667 uniq=8
+2025-09-01 16:37:54,059 - linux_anomaly_detection - INFO - Entity misp:sed: 3/42 anomalies (threshold=0.939)
+2025-09-01 16:37:54,068 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sh ensemble len=106 min=0 max=1 mean=0.297432 std=0.311999 uniq=14
+2025-09-01 16:37:54,068 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sh ensemble_after_synth len=106 min=0 max=1 mean=0.327814 std=0.336133 uniq=19
+2025-09-01 16:37:54,070 - linux_anomaly_detection - INFO - Entity misp:sh: 0/106 anomalies (threshold=1.000)
+2025-09-01 16:37:54,076 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sort ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:54,076 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:sort ensemble_after_synth len=14 min=0 max=1 mean=0.201255 std=0.387424 uniq=3
+2025-09-01 16:37:54,078 - linux_anomaly_detection - INFO - Entity misp:sort: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:54,085 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:netstat ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:54,086 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:netstat ensemble_after_synth len=14 min=0 max=1 mean=0.213629 std=0.409074 uniq=3
+2025-09-01 16:37:54,088 - linux_anomaly_detection - INFO - Entity misp:netstat: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:54,093 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:last ensemble len=14 min=0 max=1 mean=0.142857 std=0.349927 uniq=2
+2025-09-01 16:37:54,093 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:last ensemble_after_synth len=14 min=0 max=1 mean=0.210066 std=0.402453 uniq=3
+2025-09-01 16:37:54,095 - linux_anomaly_detection - INFO - Entity misp:last: 0/14 anomalies (threshold=1.000)
+2025-09-01 16:37:54,101 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:df ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,101 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:df ensemble_after_synth len=14 min=0 max=0.858148 mean=0.0612963 std=0.221007 uniq=2
+2025-09-01 16:37:54,104 - linux_anomaly_detection - INFO - Entity misp:df: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:54,109 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:wazuh-logcollector ensemble len=21 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,110 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:wazuh-logcollector ensemble_after_synth len=21 min=0 max=0.895478 mean=0.0426418 std=0.1907 uniq=2
+2025-09-01 16:37:54,111 - linux_anomaly_detection - INFO - Entity misp:wazuh-logcollector: 1/21 anomalies (threshold=0.600)
+2025-09-01 16:37:54,121 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:pdp-analyzer:falconctl ensemble len=6 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,123 - linux_anomaly_detection - INFO - Entity pdp-analyzer:falconctl: 0/6 anomalies (threshold=0.600)
+2025-09-01 16:37:54,129 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:falconctl ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,130 - linux_anomaly_detection - INFO - Entity misp:falconctl: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,140 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:cron ensemble len=64 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,140 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:cron ensemble_after_synth len=64 min=0 max=1 mean=0.527133 std=0.49551 uniq=5
+2025-09-01 16:37:54,141 - linux_anomaly_detection - INFO - Entity dataportability1:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,149 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:sh ensemble len=48 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,151 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:sh ensemble_after_synth len=48 min=0 max=0.883037 mean=0.0355127 std=0.170428 uniq=3
+2025-09-01 16:37:54,153 - linux_anomaly_detection - INFO - Entity dataportability1:sh: 2/48 anomalies (threshold=0.600)
+2025-09-01 16:37:54,158 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:debian-sa1 ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,159 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:debian-sa1 ensemble_after_synth len=32 min=0 max=0.99584 mean=0.03112 std=0.173269 uniq=2
+2025-09-01 16:37:54,161 - linux_anomaly_detection - INFO - Entity dataportability1:debian-sa1: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,170 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:cron ensemble len=64 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,171 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:cron ensemble_after_synth len=64 min=0 max=1 mean=0.50986 std=0.494953 uniq=5
+2025-09-01 16:37:54,172 - linux_anomaly_detection - INFO - Entity africa-int-obs:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,179 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:sh ensemble len=48 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,180 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:sh ensemble_after_synth len=48 min=0 max=0.981136 mean=0.0398528 std=0.191194 uniq=3
+2025-09-01 16:37:54,183 - linux_anomaly_detection - INFO - Entity africa-int-obs:sh: 2/48 anomalies (threshold=0.600)
+2025-09-01 16:37:54,193 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:debian-sa1 ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,194 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:debian-sa1 ensemble_after_synth len=32 min=0 max=0.906529 mean=0.028329 std=0.157729 uniq=2
+2025-09-01 16:37:54,197 - linux_anomaly_detection - INFO - Entity africa-int-obs:debian-sa1: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,205 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:cron ensemble len=20 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,206 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:cron ensemble_after_synth len=20 min=0 max=1 mean=0.499731 std=0.499732 uniq=3
+2025-09-01 16:37:54,208 - linux_anomaly_detection - INFO - Entity misp:cron: 0/20 anomalies (threshold=1.000)
+2025-09-01 16:37:54,217 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:misp:debian-sa1 ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,221 - linux_anomaly_detection - INFO - Entity misp:debian-sa1: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,230 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:cron ensemble len=64 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,231 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:cron ensemble_after_synth len=64 min=0 max=1 mean=0.525142 std=0.494102 uniq=5
+2025-09-01 16:37:54,235 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,242 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:debian-sa1 ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,242 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:debian-sa1 ensemble_after_synth len=32 min=0 max=0.903894 mean=0.0282467 std=0.157271 uniq=2
+2025-09-01 16:37:54,244 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:debian-sa1: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,253 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:sh ensemble len=48 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,254 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:sh ensemble_after_synth len=48 min=0 max=0.897816 mean=0.0365972 std=0.175559 uniq=3
+2025-09-01 16:37:54,255 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sh: 2/48 anomalies (threshold=0.600)
+2025-09-01 16:37:54,261 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:cron ensemble len=64 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,262 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:cron ensemble_after_synth len=64 min=0 max=1 mean=0.543189 std=0.494818 uniq=5
+2025-09-01 16:37:54,263 - linux_anomaly_detection - INFO - Entity socsensor:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,269 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:debian-sa1 ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,270 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:debian-sa1 ensemble_after_synth len=32 min=0 max=0.825599 mean=0.0258 std=0.143648 uniq=2
+2025-09-01 16:37:54,272 - linux_anomaly_detection - INFO - Entity socsensor:debian-sa1: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,279 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:sh ensemble len=48 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,280 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:sh ensemble_after_synth len=48 min=0 max=0.961979 mean=0.0390881 std=0.187523 uniq=3
+2025-09-01 16:37:54,281 - linux_anomaly_detection - INFO - Entity socsensor:sh: 2/48 anomalies (threshold=0.600)
+2025-09-01 16:37:54,288 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-ai:falconctl ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,289 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-ai:falconctl ensemble_after_synth len=32 min=0 max=0.952561 mean=0.0297675 std=0.165739 uniq=2
+2025-09-01 16:37:54,290 - linux_anomaly_detection - INFO - Entity mira-ai:falconctl: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,295 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-ai:falcon-sensor-bpf ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,296 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-ai:falcon-sensor-bpf ensemble_after_synth len=16 min=0 max=0.839954 mean=0.0524971 std=0.203321 uniq=2
+2025-09-01 16:37:54,297 - linux_anomaly_detection - INFO - Entity mira-ai:falcon-sensor-bpf: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,305 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:cron ensemble len=64 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,306 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:cron ensemble_after_synth len=64 min=0 max=1 mean=0.493444 std=0.494318 uniq=5
+2025-09-01 16:37:54,307 - linux_anomaly_detection - INFO - Entity sftp:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,313 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:debian-sa1 ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,313 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:debian-sa1 ensemble_after_synth len=32 min=0 max=0.862704 mean=0.0269595 std=0.150104 uniq=2
+2025-09-01 16:37:54,315 - linux_anomaly_detection - INFO - Entity sftp:debian-sa1: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,323 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:sh ensemble len=48 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,324 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:sh ensemble_after_synth len=48 min=0 max=0.970167 mean=0.0385563 std=0.185136 uniq=3
+2025-09-01 16:37:54,325 - linux_anomaly_detection - INFO - Entity sftp:sh: 2/48 anomalies (threshold=0.600)
+2025-09-01 16:37:54,330 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:systemd ensemble len=33 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,331 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:systemd ensemble_after_synth len=33 min=0 max=0.881772 mean=0.0267204 std=0.151153 uniq=2
+2025-09-01 16:37:54,333 - linux_anomaly_detection - INFO - Entity sftp:systemd: 1/33 anomalies (threshold=0.600)
+2025-09-01 16:37:54,340 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:9 ensemble len=22 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,341 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:9 ensemble_after_synth len=22 min=0 max=0.962111 mean=0.0437323 std=0.200407 uniq=2
+2025-09-01 16:37:54,342 - linux_anomaly_detection - INFO - Entity sftp:9: 1/22 anomalies (threshold=0.600)
+2025-09-01 16:37:54,347 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:falconctl ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,350 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:falconctl: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,356 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:falcon-sensor-bpf ensemble len=5 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,358 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:falcon-sensor-bpf: 0/5 anomalies (threshold=0.600)
+2025-09-01 16:37:54,363 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:falconctl ensemble len=12 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,363 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:socsensor:falconctl ensemble_after_synth len=12 min=0 max=0.860087 mean=0.071674 std=0.237716 uniq=2
+2025-09-01 16:37:54,365 - linux_anomaly_detection - INFO - Entity socsensor:falconctl: 1/12 anomalies (threshold=0.600)
+2025-09-01 16:37:54,373 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:unattended-upgrade ensemble len=30 min=0 max=1 mean=0.356911 std=0.388777 uniq=4
+2025-09-01 16:37:54,373 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:unattended-upgrade ensemble_after_synth len=30 min=0 max=1 mean=0.384385 std=0.391696 uniq=5
+2025-09-01 16:37:54,375 - linux_anomaly_detection - INFO - Entity dataportability1:unattended-upgrade: 0/30 anomalies (threshold=1.000)
+2025-09-01 16:37:54,380 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:lsb_release ensemble len=36 min=0 max=1 mean=0.555255 std=0.41566 uniq=3
+2025-09-01 16:37:54,380 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:lsb_release ensemble_after_synth len=36 min=0 max=1 mean=0.577495 std=0.406678 uniq=4
+2025-09-01 16:37:54,383 - linux_anomaly_detection - INFO - Entity dataportability1:lsb_release: 0/36 anomalies (threshold=1.000)
+2025-09-01 16:37:54,391 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:apt-config ensemble len=180 min=0 max=1 mean=0.389422 std=0.239166 uniq=18
+2025-09-01 16:37:54,392 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:apt-config ensemble_after_synth len=180 min=0 max=1 mean=0.408735 std=0.259236 uniq=27
+2025-09-01 16:37:54,393 - linux_anomaly_detection - INFO - Entity dataportability1:apt-config: 14/180 anomalies (threshold=0.761)
+2025-09-01 16:37:54,401 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:dpkg ensemble len=144 min=0 max=1 mean=0.0833333 std=0.276385 uniq=2
+2025-09-01 16:37:54,402 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:dpkg ensemble_after_synth len=144 min=0 max=1 mean=0.126073 std=0.324444 uniq=9
+2025-09-01 16:37:54,403 - linux_anomaly_detection - INFO - Entity dataportability1:dpkg: 0/144 anomalies (threshold=1.000)
+2025-09-01 16:37:54,409 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:systemd ensemble len=44 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,409 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:systemd ensemble_after_synth len=44 min=0 max=0.908952 mean=0.041288 std=0.189206 uniq=3
+2025-09-01 16:37:54,410 - linux_anomaly_detection - INFO - Entity senegal-soc:systemd: 2/44 anomalies (threshold=0.600)
+2025-09-01 16:37:54,416 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:systemd ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,417 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:systemd ensemble_after_synth len=14 min=0 max=0.807836 mean=0.0577026 std=0.20805 uniq=2
+2025-09-01 16:37:54,420 - linux_anomaly_detection - INFO - Entity ids-server:systemd: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:54,436 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:postgres ensemble len=1805 min=0 max=1 mean=0.282548 std=0.450239 uniq=2
+2025-09-01 16:37:54,437 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:postgres ensemble_after_synth len=1805 min=0 max=1 mean=0.314216 std=0.459633 uniq=92
+2025-09-01 16:37:54,438 - linux_anomaly_detection - INFO - Entity esignet:postgres: 0/1805 anomalies (threshold=1.000)
+2025-09-01 16:37:54,443 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:systemd ensemble len=24 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,444 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:systemd ensemble_after_synth len=24 min=0 max=0.887068 mean=0.0369612 std=0.177259 uniq=2
+2025-09-01 16:37:54,445 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:systemd: 1/24 anomalies (threshold=0.600)
+2025-09-01 16:37:54,453 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:sadc ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,453 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:sadc ensemble_after_synth len=16 min=0 max=0.883964 mean=0.0552478 std=0.213974 uniq=2
+2025-09-01 16:37:54,455 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sadc: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,460 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:sa1 ensemble len=8 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,461 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sa1: 0/8 anomalies (threshold=0.600)
+2025-09-01 16:37:54,469 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:9 ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,470 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:upanzi-infra-cancerproject:9 ensemble_after_synth len=16 min=0 max=0.980271 mean=0.0612669 std=0.237286 uniq=2
+2025-09-01 16:37:54,471 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:9: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,477 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:pickup ensemble len=29 min=0 max=1 mean=0.517241 std=0.499703 uniq=2
+2025-09-01 16:37:54,477 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:pickup ensemble_after_synth len=29 min=0 max=1 mean=0.551573 std=0.497182 uniq=3
+2025-09-01 16:37:54,478 - linux_anomaly_detection - INFO - Entity senegal-soc:pickup: 0/29 anomalies (threshold=1.000)
+2025-09-01 16:37:54,485 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:llm-vapt:falconctl ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,486 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:llm-vapt:falconctl ensemble_after_synth len=16 min=0 max=0.93775 mean=0.0586094 std=0.226993 uniq=2
+2025-09-01 16:37:54,487 - linux_anomaly_detection - INFO - Entity llm-vapt:falconctl: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,492 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:llm-vapt:falcon-sensor-bpf ensemble len=8 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,493 - linux_anomaly_detection - INFO - Entity llm-vapt:falcon-sensor-bpf: 0/8 anomalies (threshold=0.600)
+2025-09-01 16:37:54,498 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxXPCOMIPCD ensemble len=15 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,499 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxXPCOMIPCD ensemble_after_synth len=15 min=0 max=0.917093 mean=0.0611395 std=0.228763 uniq=2
+2025-09-01 16:37:54,502 - linux_anomaly_detection - INFO - Entity ids-server:VBoxXPCOMIPCD: 1/15 anomalies (threshold=0.600)
+2025-09-01 16:37:54,507 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxSVC ensemble len=31 min=0 max=1 mean=0.398029 std=0.418986 uniq=3
+2025-09-01 16:37:54,508 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxSVC ensemble_after_synth len=31 min=0 max=1 mean=0.429679 std=0.424742 uniq=4
+2025-09-01 16:37:54,509 - linux_anomaly_detection - INFO - Entity ids-server:VBoxSVC: 0/31 anomalies (threshold=1.000)
+2025-09-01 16:37:54,515 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:falconctl ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,516 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:falconctl ensemble_after_synth len=14 min=0 max=0.884447 mean=0.0631748 std=0.22778 uniq=2
+2025-09-01 16:37:54,519 - linux_anomaly_detection - INFO - Entity sftp:falconctl: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:54,524 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:falcon-sensor-bpf ensemble len=7 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,525 - linux_anomaly_detection - INFO - Entity sftp:falcon-sensor-bpf: 0/7 anomalies (threshold=0.600)
+2025-09-01 16:37:54,531 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:sadc ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,532 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:sadc ensemble_after_synth len=14 min=0 max=0.905138 mean=0.0646527 std=0.233109 uniq=2
+2025-09-01 16:37:54,534 - linux_anomaly_detection - INFO - Entity sftp:sadc: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:54,539 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:sftp:sa1 ensemble len=7 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,542 - linux_anomaly_detection - INFO - Entity sftp:sa1: 0/7 anomalies (threshold=0.600)
+2025-09-01 16:37:54,549 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:openvpn ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,550 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:openvpn ensemble_after_synth len=16 min=0 max=0.868497 mean=0.0542811 std=0.21023 uniq=2
+2025-09-01 16:37:54,552 - linux_anomaly_detection - INFO - Entity senegal-soc:openvpn: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,559 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:cron ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,560 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:cron ensemble_after_synth len=32 min=0 max=1 mean=0.525406 std=0.494574 uniq=3
+2025-09-01 16:37:54,561 - linux_anomaly_detection - INFO - Entity senegal-soc:cron: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,571 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:checkOpenVPN.sh ensemble len=48 min=0 max=1 mean=0.372968 std=0.394719 uniq=4
+2025-09-01 16:37:54,572 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:checkOpenVPN.sh ensemble_after_synth len=48 min=0 max=1 mean=0.408718 std=0.398163 uniq=6
+2025-09-01 16:37:54,573 - linux_anomaly_detection - INFO - Entity senegal-soc:checkOpenVPN.sh: 0/48 anomalies (threshold=1.000)
+2025-09-01 16:37:54,579 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:sh ensemble len=24 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,580 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:sh ensemble_after_synth len=24 min=0 max=0.844237 mean=0.0351765 std=0.168701 uniq=2
+2025-09-01 16:37:54,581 - linux_anomaly_detection - INFO - Entity senegal-soc:sh: 1/24 anomalies (threshold=0.600)
+2025-09-01 16:37:54,589 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:systemctl ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,590 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:systemctl ensemble_after_synth len=16 min=0 max=0.803154 mean=0.0501972 std=0.194413 uniq=2
+2025-09-01 16:37:54,591 - linux_anomaly_detection - INFO - Entity senegal-soc:systemctl: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,596 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:true ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,597 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:true ensemble_after_synth len=16 min=0 max=0.880538 mean=0.0550336 std=0.213144 uniq=2
+2025-09-01 16:37:54,598 - linux_anomaly_detection - INFO - Entity senegal-soc:true: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,605 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:basename ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,605 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:basename ensemble_after_synth len=32 min=0 max=1 mean=0.498382 std=0.49846 uniq=3
+2025-09-01 16:37:54,606 - linux_anomaly_detection - INFO - Entity senegal-soc:basename: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,611 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:service ensemble len=24 min=0 max=1 mean=0.53603 std=0.411416 uniq=3
+2025-09-01 16:37:54,612 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:service ensemble_after_synth len=24 min=0 max=1 mean=0.54822 std=0.417657 uniq=4
+2025-09-01 16:37:54,613 - linux_anomaly_detection - INFO - Entity senegal-soc:service: 0/24 anomalies (threshold=1.000)
+2025-09-01 16:37:54,621 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:echo ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,621 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:echo ensemble_after_synth len=16 min=0 max=0.820481 mean=0.05128 std=0.198607 uniq=2
+2025-09-01 16:37:54,622 - linux_anomaly_detection - INFO - Entity senegal-soc:echo: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,628 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:ip ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,628 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:ip ensemble_after_synth len=16 min=0 max=0.87218 mean=0.0545113 std=0.211121 uniq=2
+2025-09-01 16:37:54,629 - linux_anomaly_detection - INFO - Entity senegal-soc:ip: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,637 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:grep ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,638 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:grep ensemble_after_synth len=16 min=0 max=0.980575 mean=0.0612859 std=0.237359 uniq=2
+2025-09-01 16:37:54,639 - linux_anomaly_detection - INFO - Entity senegal-soc:grep: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,645 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:cron ensemble len=64 min=0 max=1 mean=0.499063 std=0.499065 uniq=3
+2025-09-01 16:37:54,645 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:cron ensemble_after_synth len=64 min=0 max=1 mean=0.523411 std=0.492623 uniq=6
+2025-09-01 16:37:54,646 - linux_anomaly_detection - INFO - Entity ids-server:cron: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,655 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:check_and_start_vm.sh ensemble len=64 min=0 max=1 mean=0.30175 std=0.316757 uniq=4
+2025-09-01 16:37:54,655 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:check_and_start_vm.sh ensemble_after_synth len=64 min=0 max=1 mean=0.323788 std=0.335936 uniq=7
+2025-09-01 16:37:54,656 - linux_anomaly_detection - INFO - Entity ids-server:check_and_start_vm.sh: 0/64 anomalies (threshold=1.000)
+2025-09-01 16:37:54,668 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:sh ensemble len=88 min=0 max=1 mean=0.234457 std=0.364873 uniq=6
+2025-09-01 16:37:54,668 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:sh ensemble_after_synth len=88 min=0 max=1 mean=0.273203 std=0.388809 uniq=10
+2025-09-01 16:37:54,670 - linux_anomaly_detection - INFO - Entity ids-server:sh: 0/88 anomalies (threshold=1.000)
+2025-09-01 16:37:54,678 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxManage ensemble len=232 min=0 max=1 mean=0.317248 std=0.270918 uniq=14
+2025-09-01 16:37:54,678 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxManage ensemble_after_synth len=232 min=0 max=1 mean=0.337282 std=0.289179 uniq=25
+2025-09-01 16:37:54,680 - linux_anomaly_detection - INFO - Entity ids-server:VBoxManage: 12/232 anomalies (threshold=0.922)
+2025-09-01 16:37:54,689 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:awk ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,690 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:awk ensemble_after_synth len=32 min=0 max=1 mean=0.527274 std=0.495768 uniq=3
+2025-09-01 16:37:54,691 - linux_anomaly_detection - INFO - Entity ids-server:awk: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,698 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:grep ensemble len=48 min=0 max=1 mean=0.333333 std=0.471405 uniq=2
+2025-09-01 16:37:54,698 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:grep ensemble_after_synth len=48 min=0 max=1 mean=0.351679 std=0.475041 uniq=4
+2025-09-01 16:37:54,700 - linux_anomaly_detection - INFO - Entity ids-server:grep: 0/48 anomalies (threshold=1.000)
+2025-09-01 16:37:54,705 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:basename ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,706 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:basename ensemble_after_synth len=32 min=0 max=1 mean=0.527415 std=0.495867 uniq=3
+2025-09-01 16:37:54,707 - linux_anomaly_detection - INFO - Entity ids-server:basename: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,713 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:ps ensemble len=32 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,714 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:ps ensemble_after_synth len=32 min=0 max=0.844355 mean=0.0263861 std=0.146912 uniq=2
+2025-09-01 16:37:54,716 - linux_anomaly_detection - INFO - Entity ids-server:ps: 1/32 anomalies (threshold=0.600)
+2025-09-01 16:37:54,722 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:whoami ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,722 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:whoami ensemble_after_synth len=32 min=0 max=1 mean=0.496592 std=0.496943 uniq=3
+2025-09-01 16:37:54,724 - linux_anomaly_detection - INFO - Entity ids-server:whoami: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,729 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:cut ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,729 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:cut ensemble_after_synth len=16 min=0 max=0.82134 mean=0.0513337 std=0.198815 uniq=2
+2025-09-01 16:37:54,731 - linux_anomaly_detection - INFO - Entity ids-server:cut: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,738 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxNetAdpCtl ensemble len=32 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,738 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:VBoxNetAdpCtl ensemble_after_synth len=32 min=0 max=1 mean=0.526979 std=0.495565 uniq=3
+2025-09-01 16:37:54,740 - linux_anomaly_detection - INFO - Entity ids-server:VBoxNetAdpCtl: 0/32 anomalies (threshold=1.000)
+2025-09-01 16:37:54,745 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:rm ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,746 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:ids-server:rm ensemble_after_synth len=16 min=0 max=0.934007 mean=0.0583754 std=0.226087 uniq=2
+2025-09-01 16:37:54,747 - linux_anomaly_detection - INFO - Entity ids-server:rm: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,753 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-server:falconctl ensemble len=18 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,754 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-server:falconctl ensemble_after_synth len=18 min=0 max=0.93364 mean=0.0518689 std=0.213861 uniq=2
+2025-09-01 16:37:54,755 - linux_anomaly_detection - INFO - Entity mira-server:falconctl: 1/18 anomalies (threshold=0.600)
+2025-09-01 16:37:54,760 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:mira-server:falcon-sensor-bpf17804 ensemble len=9 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,762 - linux_anomaly_detection - INFO - Entity mira-server:falcon-sensor-bpf17804: 0/9 anomalies (threshold=0.600)
+2025-09-01 16:37:54,769 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:humeka-server:falconctl ensemble len=18 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,769 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:humeka-server:falconctl ensemble_after_synth len=18 min=0 max=0.824508 mean=0.045806 std=0.188863 uniq=2
+2025-09-01 16:37:54,770 - linux_anomaly_detection - INFO - Entity humeka-server:falconctl: 1/18 anomalies (threshold=0.600)
+2025-09-01 16:37:54,776 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:humeka-server:falcon-sensor-bpf ensemble len=9 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,777 - linux_anomaly_detection - INFO - Entity humeka-server:falcon-sensor-bpf: 0/9 anomalies (threshold=0.600)
+2025-09-01 16:37:54,784 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:inji-certify:falconctl ensemble len=16 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,785 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:inji-certify:falconctl ensemble_after_synth len=16 min=0 max=0.85867 mean=0.0536668 std=0.207851 uniq=2
+2025-09-01 16:37:54,786 - linux_anomaly_detection - INFO - Entity inji-certify:falconctl: 1/16 anomalies (threshold=0.600)
+2025-09-01 16:37:54,792 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:inji-certify:falcon-sensor-bpf ensemble len=8 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,793 - linux_anomaly_detection - INFO - Entity inji-certify:falcon-sensor-bpf: 0/8 anomalies (threshold=0.600)
+2025-09-01 16:37:54,801 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:falconctl ensemble len=18 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,801 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:falconctl ensemble_after_synth len=18 min=0 max=0.944467 mean=0.0524704 std=0.216341 uniq=2
+2025-09-01 16:37:54,802 - linux_anomaly_detection - INFO - Entity dataportability1:falconctl: 1/18 anomalies (threshold=0.600)
+2025-09-01 16:37:54,808 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability1:falcon-sensor-bpf ensemble len=9 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,809 - linux_anomaly_detection - INFO - Entity dataportability1:falcon-sensor-bpf: 0/9 anomalies (threshold=0.600)
+2025-09-01 16:37:54,815 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:reverseProxy:falconctl ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,818 - linux_anomaly_detection - INFO - Entity reverseProxy:falconctl: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,824 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:reverseProxy:falcon-sensor-bpf ensemble len=5 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,825 - linux_anomaly_detection - INFO - Entity reverseProxy:falcon-sensor-bpf: 0/5 anomalies (threshold=0.600)
+2025-09-01 16:37:54,831 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:falconctl ensemble len=18 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,832 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:falconctl ensemble_after_synth len=18 min=0 max=0.95161 mean=0.0528672 std=0.217977 uniq=2
+2025-09-01 16:37:54,834 - linux_anomaly_detection - INFO - Entity africa-int-obs:falconctl: 1/18 anomalies (threshold=0.600)
+2025-09-01 16:37:54,841 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:africa-int-obs:falcon-sensor-bpf ensemble len=9 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,842 - linux_anomaly_detection - INFO - Entity africa-int-obs:falcon-sensor-bpf: 0/9 anomalies (threshold=0.600)
+2025-09-01 16:37:54,849 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability2:falconctl ensemble len=20 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,849 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability2:falconctl ensemble_after_synth len=20 min=0 max=0.817563 mean=0.0408782 std=0.178184 uniq=2
+2025-09-01 16:37:54,852 - linux_anomaly_detection - INFO - Entity dataportability2:falconctl: 1/20 anomalies (threshold=0.600)
+2025-09-01 16:37:54,857 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:dataportability2:falcon-sensor-bpf ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,858 - linux_anomaly_detection - INFO - Entity dataportability2:falcon-sensor-bpf: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,864 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:falconctl ensemble len=18 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,865 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:falconctl ensemble_after_synth len=18 min=0 max=0.907518 mean=0.0504176 std=0.207877 uniq=2
+2025-09-01 16:37:54,868 - linux_anomaly_detection - INFO - Entity esignet:falconctl: 1/18 anomalies (threshold=0.600)
+2025-09-01 16:37:54,873 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:falcon-sensor-bpf ensemble len=9 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,875 - linux_anomaly_detection - INFO - Entity esignet:falcon-sensor-bpf: 0/9 anomalies (threshold=0.600)
+2025-09-01 16:37:54,880 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:falconctl ensemble len=20 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,881 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:falconctl ensemble_after_synth len=20 min=0 max=0.933457 mean=0.0466729 std=0.203442 uniq=2
+2025-09-01 16:37:54,883 - linux_anomaly_detection - INFO - Entity senegal-soc:falconctl: 1/20 anomalies (threshold=0.600)
+2025-09-01 16:37:54,889 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:senegal-soc:falcon-sensor-bpf ensemble len=10 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,891 - linux_anomaly_detection - INFO - Entity senegal-soc:falcon-sensor-bpf: 0/10 anomalies (threshold=0.600)
+2025-09-01 16:37:54,897 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:aiops:falconctl ensemble len=26 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,898 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:aiops:falconctl ensemble_after_synth len=26 min=0 max=0.885128 mean=0.0340434 std=0.170217 uniq=2
+2025-09-01 16:37:54,900 - linux_anomaly_detection - INFO - Entity aiops:falconctl: 1/26 anomalies (threshold=0.600)
+2025-09-01 16:37:54,906 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:aiops:falcon-sensor-bpf ensemble len=13 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,906 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:aiops:falcon-sensor-bpf ensemble_after_synth len=13 min=0 max=0.855313 mean=0.0657933 std=0.227915 uniq=2
+2025-09-01 16:37:54,908 - linux_anomaly_detection - INFO - Entity aiops:falcon-sensor-bpf: 1/13 anomalies (threshold=0.600)
+2025-09-01 16:37:54,913 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:cron ensemble len=52 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,913 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:cron ensemble_after_synth len=52 min=0 max=1 mean=0.495099 std=0.495731 uniq=4
+2025-09-01 16:37:54,917 - linux_anomaly_detection - INFO - Entity fleetserver:cron: 0/52 anomalies (threshold=1.000)
+2025-09-01 16:37:54,923 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:debian-sa1 ensemble len=26 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,923 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:debian-sa1 ensemble_after_synth len=26 min=0 max=0.921501 mean=0.0354423 std=0.177212 uniq=2
+2025-09-01 16:37:54,924 - linux_anomaly_detection - INFO - Entity fleetserver:debian-sa1: 1/26 anomalies (threshold=0.600)
+2025-09-01 16:37:54,934 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:sh ensemble len=39 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,935 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:sh ensemble_after_synth len=39 min=0 max=0.984655 mean=0.0252476 std=0.155636 uniq=2
+2025-09-01 16:37:54,936 - linux_anomaly_detection - INFO - Entity fleetserver:sh: 1/39 anomalies (threshold=0.600)
+2025-09-01 16:37:54,942 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:cron ensemble len=52 min=0 max=1 mean=0.5 std=0.5 uniq=2
+2025-09-01 16:37:54,942 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:cron ensemble_after_synth len=52 min=0 max=1 mean=0.513847 std=0.495232 uniq=4
+2025-09-01 16:37:54,944 - linux_anomaly_detection - INFO - Entity esignet:cron: 0/52 anomalies (threshold=1.000)
+2025-09-01 16:37:54,952 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:debian-sa1 ensemble len=26 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,953 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:debian-sa1 ensemble_after_synth len=26 min=0 max=0.872584 mean=0.0335609 std=0.167805 uniq=2
+2025-09-01 16:37:54,954 - linux_anomaly_detection - INFO - Entity esignet:debian-sa1: 1/26 anomalies (threshold=0.600)
+2025-09-01 16:37:54,961 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:sh ensemble len=39 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,962 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:esignet:sh ensemble_after_synth len=39 min=0 max=0.917292 mean=0.0235203 std=0.144989 uniq=2
+2025-09-01 16:37:54,964 - linux_anomaly_detection - INFO - Entity esignet:sh: 1/39 anomalies (threshold=0.600)
+2025-09-01 16:37:54,971 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:falconctl ensemble len=28 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,972 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:falconctl ensemble_after_synth len=28 min=0 max=0.947676 mean=0.0338456 std=0.175867 uniq=2
+2025-09-01 16:37:54,973 - linux_anomaly_detection - INFO - Entity fleetserver:falconctl: 1/28 anomalies (threshold=0.600)
+2025-09-01 16:37:54,979 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:falcon-sensor-bpf ensemble len=14 min=0 max=0 mean=0 std=0 uniq=1
+2025-09-01 16:37:54,980 - linux_anomaly_detection - INFO - [scoring-debug] v3_rare_process_by_host_linux:fleetserver:falcon-sensor-bpf ensemble_after_synth len=14 min=0 max=0.860606 mean=0.0614719 std=0.22164 uniq=2
+2025-09-01 16:37:54,981 - linux_anomaly_detection - INFO - Entity fleetserver:falcon-sensor-bpf: 1/14 anomalies (threshold=0.600)
+2025-09-01 16:37:55,010 - linux_anomaly_detection - INFO - Applied safety limits: 2.1% -> 0.4%
+2025-09-01 16:37:55,023 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 16:37:55,024 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 16:37:55,024 - linux_anomaly_detection - INFO -   Total records: 5,825
+2025-09-01 16:37:55,025 - linux_anomaly_detection - INFO -   Anomalies detected: 29
+2025-09-01 16:37:55,025 - linux_anomaly_detection - INFO -   Anomaly rate: 0.50%
+2025-09-01 16:37:55,025 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 16:37:55,026 - linux_anomaly_detection - INFO - Job v3_rare_process_by_host_linux complete
+2025-09-01 16:37:55,093 - linux_anomaly_detection - INFO - Successfully wrote Parquet for job v3_linux_anomalous_process_all_hosts: ./results\persisted_results\v3_linux_anomalous_process_all_hosts.parquet
+2025-09-01 16:37:55,178 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_process_all_hosts: 6577 rows
+2025-09-01 16:37:55,221 - linux_anomaly_detection - INFO - Successfully wrote Parquet for job v3_rare_process_by_host_linux: ./results\persisted_results\v3_rare_process_by_host_linux.parquet
+2025-09-01 16:37:55,260 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_rare_process_by_host_linux: 5825 rows
+2025-09-01 16:37:55,280 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 16:37:55,295 - linux_anomaly_detection - INFO - Total anomalies detected in group process: 0
+2025-09-01 16:37:55,295 - linux_anomaly_detection - INFO - Extracting ONLY ML anomalies from detection results
+2025-09-01 16:37:55,321 - linux_anomaly_detection - INFO - Saved 60 ML-only anomalies to ./results\ml_only_anomalies_20250901_143755.json
+2025-09-01 16:37:55,325 - linux_anomaly_detection - INFO - Also saved ML anomalies to CSV: ./results\ml_only_anomalies_20250901_143755.csv
+2025-09-01 16:37:55,326 - linux_anomaly_detection - INFO - Saved anomalies to: ./results\ml_only_anomalies_20250901_143755.json
+2025-09-01 16:37:55,326 - linux_anomaly_detection - INFO - Generating report for group: process
+2025-09-01 16:37:55,462 - linux_anomaly_detection - INFO - Generating ML-only comprehensive report for process anomalies
+2025-09-01 16:37:55,490 - linux_anomaly_detection - INFO - Classification: 60 ML anomalies, 12342 normal records (including statistical detections) from 12402 total
+2025-09-01 16:37:55,492 - linux_anomaly_detection - WARNING - Error generating ML summary stats: type numpy.bool doesn't define __round__ method
+2025-09-01 16:37:56,645 - linux_anomaly_detection - INFO - Created 3 anomaly visualizations for process (ML detections only)
+2025-09-01 16:37:56,652 - linux_anomaly_detection - INFO - Generated ML-only report: ./results\ml_only_process_report_20250901_163756.md
+2025-09-01 16:37:56,653 - linux_anomaly_detection - INFO - Saved ML-only data: ./results\ml_only_process_data_20250901_163756.csv
+2025-09-01 16:37:56,656 - linux_anomaly_detection - INFO - Generated 1 reports
+2025-09-01 16:37:56,657 - linux_anomaly_detection - INFO - Linux anomaly detection completed successfully

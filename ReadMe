@@ -88,3 +88,52 @@
 5. **Implement Better Error Handling**: Add more robust error recovery to prevent cascading failures.
 
 These changes should significantly improve the system's ability to detect anomalies while reducing error messages.
+
+## Feature manifest files (new)
+
+What: When models/scalers are saved the system now writes a small, human-readable JSON manifest next to the saved scalers containing the per-entity feature lists and training statistics used for imputation.
+
+Where: By default the manifests are written to the models base path configured in `config.yaml` (default: `/tmp/linux_anomaly_models`). Filenames are of the form:
+
+	- `/tmp/linux_anomaly_models/{data_type}_feature_manifests.json`
+
+Format: JSON mapping entity -> info, example entry:
+
+	{
+		"ip": {
+			"feature_names_in_": ["hour_sin","hour_cos","command_length"],
+			"center_": [0.0, 1.0, 12.3],
+			"scale_": [0.5, 0.5, 4.2]
+		},
+		"global": { ... }
+	}
+
+How extractors use it: `extract_ml_features()` was extended to accept an optional `expected_features` list and an `impute_map`. When `expected_features` is provided and no `impute_map` is supplied, `extract_ml_features` will try to load the corresponding `{job_prefix}_feature_manifests.json` from the models base path and build a simple imputation map from the manifest (prefers a `global` entry if present). Missing numeric features are then filled using (in priority): `center_` -> `mean_` -> `median_` -> `0.0`.
+
+Why: This avoids the previous brittle behavior of always filling missing features with zeros and reduces scaler/feature-size mismatches at runtime.
+
+Regeneration & auditing commands
+
+ - Re-save models (writes manifests):
+
+	 ```pwsh
+	 # from project root - runs the model save path used by model_manager
+	 python -c "from model_manager import LinuxModelManager; m=LinuxModelManager(<config>); m.save_models('process')"
+	 ```
+
+ - Run the scaler audit (produces `scaler_feature_summary.json`):
+
+	 ```pwsh
+	 python scripts\audit_scalers.py
+	 ```
+
+ - Produce a compact CSV summary for humans:
+
+	 ```pwsh
+	 python scripts\scaler_summary_to_csv.py
+	 ```
+
+Notes and next steps
+
+- Manifests are intentionally JSON and human-readable so you can inspect which features a scaler expects and the training centers used for imputation.
+- Currently extractors prefer a `global` manifest if present; I can update the extractor to use entity-specific manifests when a tight entity match exists (recommended if you train per-entity scalers). 

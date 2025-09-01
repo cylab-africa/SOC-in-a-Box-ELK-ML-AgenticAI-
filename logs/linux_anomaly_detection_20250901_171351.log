@@ -1,0 +1,50 @@
+2025-09-01 17:13:51,464 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 17:13:51,465 - linux_anomaly_detection - INFO - Detection mode: group
+2025-09-01 17:13:51,465 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 17:13:51,826 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.022s]
+2025-09-01 17:13:51,826 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 17:13:51,827 - linux_anomaly_detection - INFO - Running group detection for: metadata
+2025-09-01 17:13:51,829 - linux_anomaly_detection - INFO - Running metadata group detection
+2025-09-01 17:13:51,830 - linux_anomaly_detection - WARNING - Model files not found for metadata in /tmp/linux_anomaly_models
+2025-09-01 17:13:51,830 - linux_anomaly_detection - WARNING - No existing models found for metadata
+2025-09-01 17:13:51,831 - linux_anomaly_detection - INFO - Using detection period: 1 days for metadata
+2025-09-01 17:13:51,831 - linux_anomaly_detection - INFO - Fetching metadata access data from .ds-logs-endpoint.events.network-default-* with stratified sampling
+2025-09-01 17:13:51,832 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 17:13:51,835 - linux_anomaly_detection - INFO - Calculated hourly distribution: 24 hours, strategy=recent_weighted, avg_per_hour=416
+2025-09-01 17:13:51,859 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 17:13:51,890 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.030s]
+2025-09-01 17:13:51,913 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 17:13:51,936 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 17:13:51,960 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.024s]
+2025-09-01 17:13:51,996 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.034s]
+2025-09-01 17:13:52,020 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 17:13:52,042 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 17:13:52,064 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.020s]
+2025-09-01 17:13:52,082 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.018s]
+2025-09-01 17:13:52,103 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.020s]
+2025-09-01 17:13:52,127 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 17:13:52,149 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 17:13:52,173 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.022s]
+2025-09-01 17:13:52,196 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.022s]
+2025-09-01 17:13:52,219 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 17:13:52,244 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.024s]
+2025-09-01 17:13:52,265 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 17:13:52,291 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.024s]
+2025-09-01 17:13:52,314 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.022s]
+2025-09-01 17:13:52,341 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.026s]
+2025-09-01 17:13:52,363 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 17:13:52,382 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.019s]
+2025-09-01 17:13:52,408 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.024s]
+2025-09-01 17:13:52,409 - linux_anomaly_detection - INFO - Hourly stratification yielded 0/10000 records, applying backfill
+2025-09-01 17:13:52,409 - linux_anomaly_detection - INFO - Applying intelligent backfill for 10000 records
+2025-09-01 17:13:52,413 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 0 records from 0/24 hours
+2025-09-01 17:13:52,413 - linux_anomaly_detection - INFO - Retrieved 0 metadata access records from Elasticsearch
+2025-09-01 17:13:52,413 - linux_anomaly_detection - WARNING - No metadata access events found
+2025-09-01 17:13:52,414 - linux_anomaly_detection - WARNING - No data available for metadata group
+2025-09-01 17:13:52,415 - linux_anomaly_detection - INFO - Total anomalies detected in group metadata: 0
+2025-09-01 17:13:52,415 - linux_anomaly_detection - INFO - Generating report for group: metadata
+2025-09-01 17:13:52,416 - linux_anomaly_detection - INFO - Generating ML-only comprehensive report for metadata anomalies
+2025-09-01 17:13:52,416 - linux_anomaly_detection - WARNING - No ML anomalies found for metadata - generating empty report
+2025-09-01 17:13:52,421 - linux_anomaly_detection - INFO - Generated no-anomalies report: ./results\metadata_anomaly_report_20250901_171352.md
+2025-09-01 17:13:52,421 - linux_anomaly_detection - INFO - Generated 1 reports
+2025-09-01 17:13:52,421 - linux_anomaly_detection - INFO - Linux anomaly detection completed successfully

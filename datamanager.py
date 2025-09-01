@@ -1,2377 +1,3152 @@
+"""
+Updated Linux Anomaly Detection Data Manager
+Integrated with enhanced training period configuration
+
+Date: 2025-08-13
+Changes: Added training period configuration integration to existing functions
+Reason: Enable configurable training periods while maintaining existing function signatures
+"""
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Generator, Tuple
 import json
 import logging
 from collections import defaultdict
 import hashlib
 import pytz
-from datetime import datetime
 import time
+import gc
+import re
+import ipaddress
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+
+
+def validate_and_add_missing_fields(df, data_type="process"):
+    """Add missing fields with default values instead of just warning."""
+    
+    required_field_defaults = {
+        # Process fields
+        'is_sudo_command': 0,
+        'is_su_command': 0, 
+        'is_compiler_activity': 0,
+        'is_dev_tool': 0,
+        'hour_of_day': 12,
+        'is_business_hours': 1,
+        'command_length': 0,
+        'args_count': 0,
+        'has_suspicious_chars': 0,
+        
+        # Discovery fields  
+        'discovery_category': 'unknown',
+        'has_pipes': 0,
+        'has_redirection': 0,
+        'is_root_discovery': 0,
+        'is_regular_user_discovery': 1
+    }
+    
+    missing_fields = []
+    for field, default_value in required_field_defaults.items():
+        if field not in df.columns:
+            df[field] = default_value
+            missing_fields.append(field)
+    
+    if missing_fields:
+        logger.debug(f"Added {len(missing_fields)} missing fields with defaults for {data_type}")
+    
+    return df
+
+# Then call this function after creating the DataFrame:
+
+def _calculate_hourly_distribution(total_records: int, time_range: dict, 
+                                 strategy: str = "balanced") -> dict:
+    """
+    Calculate how many records to fetch from each hour for balanced temporal distribution.
+    
+    Args:
+        total_records: Total number of records to fetch
+        time_range: Dictionary with 'gte' and 'lte' timestamps
+        strategy: Distribution strategy ('balanced', 'recent_weighted', 'old_weighted')
+    
+    Returns:
+        Dictionary mapping hour windows to target record counts
+    """
+    start_time = pd.to_datetime(time_range['gte'])
+    end_time = pd.to_datetime(time_range['lte'])
+    
+    # Calculate total hours in the time range
+    total_hours = int((end_time - start_time).total_seconds() / 3600)
+    
+    if total_hours <= 0:
+        return {}
+    
+    # Create hourly time windows
+    hour_windows = []
+    current_time = start_time
+    
+    while current_time < end_time:
+        next_hour = current_time + timedelta(hours=1)
+        if next_hour > end_time:
+            next_hour = end_time
+        
+        hour_windows.append({
+            'start': current_time,
+            'end': next_hour,
+            'hour_key': current_time.strftime('%Y-%m-%d_%H')
+        })
+        current_time = next_hour
+    
+    # Calculate records per hour based on strategy
+    if strategy == "balanced":
+        # Equal distribution across all hours
+        records_per_hour = total_records // len(hour_windows)
+        remainder = total_records % len(hour_windows)
+        
+        distribution = {}
+        for i, window in enumerate(hour_windows):
+            # Distribute remainder across first few hours
+            extra = 1 if i < remainder else 0
+            distribution[window['hour_key']] = {
+                'records': records_per_hour + extra,
+                'time_range': {
+                    'gte': window['start'].isoformat(),
+                    'lte': window['end'].isoformat()
+                }
+            }
+    
+    elif strategy == "recent_weighted":
+        # More records from recent hours, less from older hours
+        weights = []
+        for i, window in enumerate(hour_windows):
+            # Higher weight for more recent hours (reverse chronological)
+            weight = (len(hour_windows) - i) / len(hour_windows)
+            weights.append(weight)
+        
+        total_weight = sum(weights)
+        distribution = {}
+        
+        for i, window in enumerate(hour_windows):
+            records = int((weights[i] / total_weight) * total_records)
+            distribution[window['hour_key']] = {
+                'records': records,
+                'time_range': {
+                    'gte': window['start'].isoformat(),
+                    'lte': window['end'].isoformat()
+                }
+            }
+    
+    elif strategy == "old_weighted":
+        # More records from older hours for better historical coverage
+        weights = []
+        for i, window in enumerate(hour_windows):
+            # Higher weight for older hours
+            weight = (i + 1) / len(hour_windows)
+            weights.append(weight)
+        
+        total_weight = sum(weights)
+        distribution = {}
+        
+        for i, window in enumerate(hour_windows):
+            records = int((weights[i] / total_weight) * total_records)
+            distribution[window['hour_key']] = {
+                'records': records,
+                'time_range': {
+                    'gte': window['start'].isoformat(),
+                    'lte': window['end'].isoformat()
+                }
+            }
+    
+    logger.info(f"Calculated hourly distribution: {len(distribution)} hours, "
+                f"strategy={strategy}, avg_per_hour={total_records//len(distribution)}")
+    
+    return distribution
+def _fetch_data_for_hour_window(es, index_pattern, base_query, time_window, target_records):
+    """
+    Fetch data for a specific hour window with fallback strategies.
+    
+    Args:
+        es: Elasticsearch client
+        index_pattern: Index pattern to search
+        base_query: Base query structure
+        time_window: Time range for this hour
+        target_records: Target number of records to fetch
+    
+    Returns:
+        List of hits from Elasticsearch
+    """
+    if target_records <= 0:
+        return []
+    
+    # Create hour-specific query
+    hour_query = base_query.copy()
+    hour_query["query"]["bool"]["must"][0]["range"]["@timestamp"] = time_window
+    hour_query["size"] = min(10000, target_records)
+    
+    # Strategy 1: Try to get exact target from this hour
+    try:
+        all_hits = []
+        search_after_val = None
+        
+        while len(all_hits) < target_records:
+            if search_after_val:
+                hour_query["search_after"] = search_after_val
+            
+            remaining = target_records - len(all_hits)
+            hour_query["size"] = min(10000, remaining)
+            
+            response = es.search(index=index_pattern, body=hour_query)
+            hits = response["hits"]["hits"]
+            
+            if not hits:
+                break
+            
+            all_hits.extend(hits)
+            search_after_val = hits[-1]["sort"]
+            
+            if len(hits) < hour_query["size"]:
+                break  # No more data in this hour
+        
+        if len(all_hits) > 0:
+            logger.debug(f"Hour window {time_window}: fetched {len(all_hits)}/{target_records} records")
+        
+        return all_hits[:target_records]  # Ensure we don't exceed target
+    
+    except Exception as e:
+        logger.warning(f"Error fetching data for hour window {time_window}: {e}")
+        return []
+def _apply_intelligent_backfill(es, index_pattern, base_query, time_range, 
+                              existing_hits, target_size):
+    """
+    Apply intelligent backfill to reach target size while maintaining temporal balance.
+    """
+    shortfall = target_size - len(existing_hits)
+    if shortfall <= 0:
+        return existing_hits
+    
+    logger.info(f"Applying intelligent backfill for {shortfall} records")
+    
+    # Strategy: Fill gaps by fetching from time periods with lowest representation
+    existing_timestamps = [hit['_source']['@timestamp'] for hit in existing_hits if '@timestamp' in hit['_source']]
+    existing_df = pd.DataFrame({'@timestamp': pd.to_datetime(existing_timestamps)})
+    
+    if not existing_df.empty:
+        # Find hours with low representation
+        existing_df['hour'] = existing_df['@timestamp'].dt.floor('H')
+        hourly_counts = existing_df['hour'].value_counts()
+        
+        # Focus backfill on under-represented hours
+        start_time = pd.to_datetime(time_range['gte'])
+        end_time = pd.to_datetime(time_range['lte'])
+        
+        backfill_query = base_query.copy()
+        backfill_query["size"] = min(10000, shortfall)
+        
+        # Use a broader time range but with different sorting for diversity
+        backfill_query["sort"] = [{"@timestamp": {"order": "asc"}}]  # Different order for variety
+        
+        try:
+            response = es.search(index=index_pattern, body=backfill_query)
+            backfill_hits = response["hits"]["hits"][:shortfall]
+            
+            logger.info(f"Backfill complete: added {len(backfill_hits)} records")
+            return existing_hits + backfill_hits
+        
+        except Exception as e:
+            logger.warning(f"Backfill failed: {e}")
+            return existing_hits
+    
+    return existing_hits
+def _log_temporal_distribution_analysis(df: pd.DataFrame, data_type: str):
+    """Log analysis of temporal distribution in fetched data."""
+    if df.empty or '@timestamp' not in df.columns:
+        return
+    
+    try:
+        df_analysis = df.copy()
+        df_analysis['@timestamp'] = pd.to_datetime(df_analysis['@timestamp'])
+        df_analysis['hour'] = df_analysis['@timestamp'].dt.floor('H')
+        
+        hourly_counts = df_analysis['hour'].value_counts().sort_index()
+        
+        analysis = {
+            'total_records': len(df_analysis),
+            'unique_hours': len(hourly_counts),
+            'time_span_hours': (df_analysis['@timestamp'].max() - df_analysis['@timestamp'].min()).total_seconds() / 3600,
+            'avg_per_hour': hourly_counts.mean(),
+            'std_per_hour': hourly_counts.std(),
+            'min_per_hour': hourly_counts.min(),
+            'max_per_hour': hourly_counts.max(),
+            'distribution_balance': hourly_counts.std() / hourly_counts.mean() if hourly_counts.mean() > 0 else 0
+        }
+        
+        logger.info(f"Temporal distribution analysis for {data_type}: "
+                   f"{analysis['unique_hours']} hours covered, "
+                   f"avg={analysis['avg_per_hour']:.0f} records/hour, "
+                   f"balance_score={analysis['distribution_balance']:.2f}")
+        
+    except Exception as e:
+        logger.debug(f"Could not analyze temporal distribution: {e}")
+
+def _fallback_to_standard_fetch(es, index_pattern, base_query, time_range, query_size):
+    """Fallback to standard fetch method if hourly stratification fails."""
+    logger.info("Using standard fetch as fallback")
+    
+    query = base_query.copy()
+    query["query"]["bool"]["must"][0]["range"]["@timestamp"] = time_range
+    query["size"] = min(10000, query_size)
+    
+    all_hits = []
+    search_after_val = None
+    
+    while len(all_hits) < query_size:
+        if search_after_val:
+            query["search_after"] = search_after_val
+        
+        try:
+            response = es.search(index=index_pattern, body=query)
+            hits = response["hits"]["hits"]
+            
+            if not hits:
+                break
+                
+            all_hits.extend(hits)
+            search_after_val = hits[-1]["sort"]
+            
+            if len(hits) < query["size"]:
+                break
+        
+        except Exception as e:
+            logger.error(f"Error in fallback fetch: {e}")
+            break
+    
+    return all_hits
+
+def _fetch_with_hourly_stratification(es, config, index_pattern, base_query, 
+                                    time_range, query_size, strategy="balanced"):
+    """
+    Enhanced fetch function with hourly stratified sampling.
+    
+    Args:
+        es: Elasticsearch client
+        config: Configuration dictionary
+        index_pattern: Index pattern to search
+        base_query: Base query structure (without time range)
+        time_range: Overall time range
+        query_size: Total number of records to fetch
+        strategy: Distribution strategy
+    
+    Returns:
+        List of all hits with temporal distribution
+    """
+    logger.info(f"Starting hourly stratified fetch: {query_size} records across time range")
+    
+    # Calculate hourly distribution
+    hourly_distribution = _calculate_hourly_distribution(query_size, time_range, strategy)
+    
+    if not hourly_distribution:
+        logger.warning("No hourly distribution calculated, falling back to standard fetch")
+        return _fallback_to_standard_fetch(es, index_pattern, base_query, time_range, query_size)
+    
+    all_hits = []
+    successful_hours = 0
+    total_hours = len(hourly_distribution)
+    
+    # Fetch data for each hour window
+    for hour_key, hour_config in hourly_distribution.items():
+        target_records = hour_config['records']
+        hour_time_range = hour_config['time_range']
+        
+        if target_records > 0:
+            hour_hits = _fetch_data_for_hour_window(
+                es, index_pattern, base_query, hour_time_range, target_records
+            )
+            
+            if hour_hits:
+                all_hits.extend(hour_hits)
+                successful_hours += 1
+                
+                # Progress logging
+                if successful_hours % 12 == 0:  # Every 12 hours
+                    logger.info(f"Hourly stratified progress: {successful_hours}/{total_hours} hours, "
+                              f"{len(all_hits)} total records")
+    
+    # Handle shortfall with intelligent backfill
+    if len(all_hits) < query_size * 0.8:  # If we got less than 80% of target
+        logger.info(f"Hourly stratification yielded {len(all_hits)}/{query_size} records, applying backfill")
+        all_hits = _apply_intelligent_backfill(es, index_pattern, base_query, time_range, 
+                                             all_hits, query_size)
+    
+    logger.info(f"Hourly stratified fetch complete: {len(all_hits)} records from {successful_hours}/{total_hours} hours")
+    return all_hits
+class OptimizedRetriever:
+    """Optimized data retrieval with search_after for large datasets."""
+    
+    def __init__(self, es, config):
+        self.es = es
+        self.batch_size = config.get("batch_size", 10000)
+        self.debug_mode = config.get("debug_mode", True)
+    
+    def retrieve_with_search_after(self, index_pattern, query_body, source_fields, max_records):
+        """Retrieve data using search_after for efficient pagination - FIXED for Elasticsearch compatibility."""
+        all_records = []
+        search_after = None
+        
+        # Use a more compatible sort configuration
+        query_body["sort"] = [{"@timestamp": {"order": "desc"}}]
+        
+        while len(all_records) < max_records:
+            current_batch_size = min(self.batch_size, max_records - len(all_records))
+            query_body["size"] = current_batch_size
+            query_body["_source"] = source_fields
+            
+            if search_after:
+                query_body["search_after"] = search_after
+            
+            try:
+                response = self.es.search(index=index_pattern, body=query_body)
+                hits = response.get('hits', {}).get('hits', [])
+                
+                if not hits:
+                    break
+                
+                # Extract records and flatten
+                batch_records = []
+                for hit in hits:
+                    record = self._flatten_elasticsearch_document(hit['_source'])
+                    batch_records.append(record)
+                
+                all_records.extend(batch_records)
+                
+                # Update search_after for next iteration
+                last_hit = hits[-1]
+                search_after = last_hit.get('sort')
+                
+                # Progress logging
+                progress_pct = (len(all_records) / max_records) * 100
+                if self.debug_mode and len(all_records) % 5000 == 0:
+                    logger.info(f"Progress: {len(all_records):,}/{max_records:,} records ({progress_pct:.1f}%)")
+                elif len(all_records) % 25000 == 0:
+                    logger.info(f"Retrieved {len(all_records):,} records so far ({progress_pct:.1f}%)")
+                
+            except Exception as e:
+                logger.error(f"Error in batch retrieval: {e}")
+                break
+        
+        return all_records
+    
+    def _flatten_elasticsearch_document(self, doc, parent_key='', sep='.'):
+        """Flatten nested Elasticsearch document."""
+        items = []
+        for k, v in doc.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(self._flatten_elasticsearch_document(v, new_key, sep=sep).items())
+            elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+                items.extend(self._flatten_elasticsearch_document(v[0], new_key, sep=sep).items())
+            elif isinstance(v, list):
+                items.append((new_key, ','.join(map(str, v)) if v else ''))
+            else:
+                items.append((new_key, v))
+        return dict(items)
+# Import configuration if available
+try:
+    from config import get_config
+    CONFIG_AVAILABLE = True
+except ImportError:
+    CONFIG_AVAILABLE = False
+    get_config = None
+
 logger = logging.getLogger("linux_anomaly_detection")
+
+
+DATA_GROUP_CONFIG = {
+    "process": {
+        "endpoint": ".ds-logs-endpoint.events.process-default-*",
+        "jobs": ["v3_linux_anomalous_process_all_hosts", "v3_rare_process_by_host_linux"],
+        "required_fields": [
+            "process.name", "process.executable", "process.command_line", "process.args",
+            "process.parent.name", "process.parent.executable", "user.name", "user.id",
+            "host.hostname", "@timestamp", "process.hash.sha256", "process.working_directory"
+        ]
+    },
+    "network": {
+        "endpoint": ".ds-logs-endpoint.events.network-default-*",
+        "jobs": ["v3_linux_anomalous_network_activity", "v3_linux_anomalous_network_port_activity"],
+        "required_fields": [
+            "destination.ip", "destination.port", "source.ip", "source.port",
+            "network.transport", "network.direction", "destination.bytes", "source.bytes",
+            "process.name", "process.executable", "event.action", "process.thread.capabilities.effective",
+            "network.type"
+        ]
+    },
+    "user": {
+        "endpoint": ".ds-logs-endpoint.events.process-default-*",
+        "jobs": ["v3_linux_anomalous_user_name", "v3_linux_rare_sudo_user", "v3_linux_rare_user_compiler"],
+        "required_fields": [
+            "user.name", "user.id", "process.name", "process.command_line",
+            "is_sudo_command", "is_su_command", "is_compiler_activity", "is_dev_tool",
+            "host.hostname", "hour_of_day", "is_business_hours", "command_length",
+            "args_count", "has_suspicious_chars"
+        ]
+    },
+    "discovery": {
+        "endpoint": ".ds-logs-endpoint.events.process-default-*",
+        "jobs": [
+            "v3_linux_network_configuration_discovery", "v3_linux_network_connection_discovery",
+            "v3_linux_system_information_discovery", "v3_linux_system_process_discovery",
+            "v3_linux_system_user_discovery"
+        ],
+        "required_fields": [
+            "process.name", "process.command_line", "discovery_category", "user.name",
+            "host.hostname", "@timestamp", "has_pipes", "has_redirection", "command_length",
+            "args_count", "is_root_discovery", "is_regular_user_discovery"
+        ]
+    },
+    "metadata": {
+        "endpoint": ".ds-logs-endpoint.events.network-default-*",  # Fixed: was process-default
+        "jobs": ["v3_linux_rare_metadata_process", "v3_linux_rare_metadata_user"],
+        "required_fields": [
+            "destination.ip", "destination.port", "process.name", "process.executable",
+            "user.name", "is_service_account", "access_method", "potential_cred_harvest",
+            "user_data_access", "@timestamp", "network.transport", "is_root_access",
+            "process.command_line"
+        ]
+    }
+}
+
+def get_training_configuration(data_type: str) -> Dict:
+    """Get training configuration for data type."""
+    training_configs = {
+        "process": {
+            "training_period_days": 5,
+            "detection_period_days": 0.042,
+            "baseline_query_size": 500000,
+            "min_records_for_detection": 5
+        },
+        "network": {
+            "training_period_days": 5,
+            "detection_period_days": 0.083,
+            "baseline_query_size": 2000000,
+            "min_records_for_detection": 10
+        },
+        "user": {
+            "training_period_days": 5,
+            "detection_period_days": 0.167,
+            "baseline_query_size": 2000000,
+            "min_records_for_detection": 3
+        },
+        "discovery": {
+            "training_period_days": 5,
+            "detection_period_days": 0.167,
+            "baseline_query_size": 2000000,
+            "min_records_for_detection": 2
+        },
+        "metadata": {
+            "training_period_days": 5,
+            "detection_period_days": 1,
+            "baseline_query_size": 2000000,
+            "min_records_for_detection": 5
+        }
+    }
+    
+    return training_configs.get(data_type, {
+        "training_period_days": 5,
+        "detection_period_days": 0.042,
+        "baseline_query_size": 1000000,
+        "min_records_for_detection": 5
+    })
+
+
+def get_configured_time_range(data_type: str = "process") -> Dict[str, str]:
+    """
+    Get configured time range for training data based on data type.
+    
+    Args:
+        data_type (str): The data type (process, network, user, discovery, metadata)
+        
+    Returns:
+        Dict[str, str]: Time range with 'gte' and 'lte' keys
+    """
+    config = get_training_configuration(data_type)
+    
+    if config.get("use_custom_period", False):
+        start_time = config.get("custom_training_start")
+        end_time = config.get("custom_training_end")
+        
+        if start_time and end_time:
+            return {
+                "gte": start_time,
+                "lte": end_time
+            }
+    
+    # Calculate time range based on configured period
+    end_time = datetime.utcnow() - timedelta(days=config.get("training_start_offset_days", 1))
+    start_time = end_time - timedelta(days=config.get("training_period_days", 30))
+    
+    return {
+        "gte": start_time.isoformat(),
+        "lte": end_time.isoformat()
+    }
+
+def apply_training_time_filters(df: pd.DataFrame, data_type: str = "process") -> pd.DataFrame:
+    """
+    Apply time-based training filters to DataFrame.
+    
+    Args:
+        df (pd.DataFrame): Input DataFrame
+        data_type (str): Data type for configuration
+        
+    Returns:
+        pd.DataFrame: Filtered DataFrame
+    """
+    if df.empty or "@timestamp" not in df.columns:
+        return df
+    
+    config = get_training_configuration(data_type)
+    
+
+    if not pd.api.types.is_datetime64_any_dtype(df["@timestamp"]):
+        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
+    
+    # Extract time components
+    df_time = df["@timestamp"].dt
+    
+    # Apply business hours filter if configured
+    if config.get("include_business_hours_only", False):
+        start_hour = config.get("business_hours_start", 8)
+        end_hour = config.get("business_hours_end", 18)
+        
+        business_hours_mask = (df_time.hour >= start_hour) & (df_time.hour < end_hour)
+        df = df[business_hours_mask]
+        logger.info(f"Applied business hours filter: {start_hour}:00-{end_hour}:00")
+    
+    # Apply weekend filter if configured
+    if not config.get("include_weekends", True):
+        weekday_mask = df_time.dayofweek < 5  # Monday=0, Sunday=6
+        df = df[weekday_mask]
+        logger.info("Applied weekday-only filter")
+    
+    return df
 
 def connect_to_elasticsearch(config):
     """
-    Establish connection to Elasticsearch cluster.
+    Connect to Elasticsearch with enhanced error handling and configuration support.
     
     Args:
-        config (dict): Elasticsearch configuration dictionary
+        config (dict): Configuration dictionary containing Elasticsearch settings
         
     Returns:
-        Elasticsearch: Elasticsearch client object or None if connection fails
+        Elasticsearch: Connected Elasticsearch client or None if failed
     """
     try:
-        es_config = config["elasticsearch"]
-        es = Elasticsearch(
-            es_config["host"],
-            basic_auth=(es_config["username"], es_config["password"]),
-            verify_certs=False,
-            ssl_show_warn=False,
-            timeout=60
-        )
+        es_config = config.get("elasticsearch", {})
+        
+        # Extract connection parameters
+        host = es_config.get("host", "localhost:9200")
+        username = es_config.get("username")
+        password = es_config.get("password")
+        verify_certs = es_config.get("verify_certs", False)
+        ssl_show_warn = es_config.get("ssl_show_warn", False)
+        timeout = es_config.get("timeout", 60)
+        
+        # Build Elasticsearch client configuration
+        es_client_config = {
+            "hosts": [host],
+            "timeout": timeout,
+            "max_retries": 3,
+            "retry_on_timeout": True
+        }
+        
+        if username and password:
+            es_client_config["http_auth"] = (username, password)
+        
+        if not verify_certs:
+            es_client_config["verify_certs"] = False
+            es_client_config["ssl_show_warn"] = ssl_show_warn
+        
+        # Create Elasticsearch client
+        es = Elasticsearch(**es_client_config)
+        
+        # Test connection
         if es.ping():
-            logger.info("Connected to Elasticsearch successfully!")
+            logger.info(f"Successfully connected to Elasticsearch at {host}")
             return es
         else:
             logger.error("Failed to connect to Elasticsearch.")
             return None
+            
     except Exception as e:
         logger.error(f"Error connecting to Elasticsearch: {e}")
         return None
-
-
-def flatten_dict(d, parent_key='', sep='.'):
-    """
-    Recursively flattens a nested dictionary.
-    
-    Args:
-        d (dict): Dictionary to flatten
-        parent_key (str): Prefix for nested keys
-        sep (str): Separator for flattened keys
-    
-    Returns:
-        dict: Flattened dictionary
-    """
+def _flatten_elasticsearch_document(doc, parent_key='', sep='.'):
+    """Flatten nested Elasticsearch document safely without dropping data."""
     items = []
-    for k, v in d.items():
+    for k, v in doc.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
         if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            items.extend(_flatten_elasticsearch_document(v, new_key, sep=sep).items())
+
+        elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict):
+            for i, elem in enumerate(v):
+                items.extend(_flatten_elasticsearch_document(elem, f"{new_key}[{i}]", sep=sep).items())
+
+        elif isinstance(v, list):
+            items.append((new_key, ','.join(map(str, v)) if v else ''))
+
         else:
             items.append((new_key, v))
-    return dict(items)
 
+    return dict(items)
+  
 def fetch_process_data(es, config, time_range=None, query_size=10000):
     """
-    Fetch process execution data using a time range query.
+    Fetch process data with search_after pagination to bypass 10k limit.
+    Maintains original function signature & arguments.
+    Includes Linux filtering and required fields as in the original query.
     """
     if not es:
         logger.error("Elasticsearch connection is not available.")
         return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["process"]
+    index_pattern = group_config["endpoint"]
+
+    # Configure time range
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("process")
+            logger.info("Using configured training period for process data")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
     
     try:
         query_size = int(query_size)
+        if query_size == 10000:
+            training_config = get_training_configuration("process")
+            training_days = training_config.get("training_period_days", 30)
+            if training_days >= 30:
+                query_size = min(50000, max(200000, query_size * 20))
+                logger.info(f"Applied process training constraint: increased query_size to {query_size}")
     except (TypeError, ValueError):
         query_size = 10000
-        logger.warning(f"Invalid query_size, using default: {query_size}")
-    
-    # Set default time range if not provided
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        start_time = pd.Timestamp(start_time, tz='UTC')
-        end_time = pd.Timestamp(end_time, tz='UTC')
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-    
-    index_pattern = ".ds-logs-endpoint.events.process-default-*"
-    
+        logger.warning("Invalid query_size, using default of 10000")
+
+    # Required fields
     source_fields = [
-        "@timestamp", "host.hostname", "host.id", "host.name",
-        "host.os.name", "host.os.version", "host.os.family", "host.os.type",
-        "host.ip", "host.mac", "host.architecture",
-        "process.name", "process.executable", "process.args", "process.command_line",
+    "@timestamp", "host.hostname", "host.ip", "host.id", "host.name", "host.os.name", "host.os.type", "host.os.platform",
+        "process.name", "process.executable", "process.command_line", "process.args",
         "process.pid", "process.entity_id", "process.working_directory",
-        "process.hash.sha256", "process.hash.sha1", "process.hash.md5", "process.args_count",
-        "process.parent.name", "process.parent.executable", "process.parent.pid",
-        "process.parent.entity_id", "process.parent.command_line", "process.parent.args",
+        "process.parent.name", "process.parent.executable", "process.parent.command_line",
+        "process.parent.pid", "process.parent.entity_id",
+        "process.hash.sha256", "process.hash.sha1", "process.hash.md5",
         "user.name", "user.id", "user.Ext.real.name", "user.Ext.real.id",
         "group.name", "group.id", "group.Ext.real.name", "group.Ext.real.id",
-        "event.action", "event.type", "event.outcome", "event.category",
-        "event.sequence", "event.id", "event.kind", "event.module",
+    "event.action", "event.type", "event.id", "event.category", "event.outcome",
         "agent.id", "agent.type", "agent.version"
     ]
-    
-    max_size = min(int(query_size), 10000)
-    
-    # Simple time range query
-    query = {
-        "size": max_size,
-        "_source": source_fields,
+
+    # Hard-coded filtered query (matches your original query exactly)
+    base_query = {
+        "size": min(10000, query_size),
         "query": {
-            "range": {
-                "@timestamp": time_range
+            "bool": {
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": time_range
+                        }
+                    },
+                    {
+                        "term": {
+                            "host.os.type": "linux"
+                        }
+                    }
+                ],
+                "filter": [
+                    {
+                        "exists": {
+                            "field": "process.name"
+                        }
+                    }
+                ]
             }
         },
-        "sort": [{"@timestamp": {"order": "desc"}}]
+        "_source": source_fields,
+        "sort": [
+            {"@timestamp": {"order": "desc", "unmapped_type": "date"}}
+        ]
     }
-    
+
     try:
-        logger.info(f"Fetching process data from index: {index_pattern}")
-        logger.info(f"Time range: {time_range['gte']} to {time_range['lte']}")
+        # ENHANCED: Use hourly stratified fetching
+        logger.info(f"Fetching process data from {index_pattern} using hourly stratified sampling")
         
-        response = es.search(index=index_pattern, body=query)
-        hits = response.get("hits", {}).get("hits", [])
+        # Determine distribution strategy based on query size
+        if query_size >= 100000:  # Large datasets: balanced distribution
+            strategy = "balanced"
+        elif query_size >= 50000:   # Medium datasets: slight recent bias
+            strategy = "recent_weighted"
+        else:                       # Small datasets: standard approach
+            strategy = "recent_weighted"
         
-        if not hits:
-            logger.warning(f"No process data returned from Elasticsearch for time range")
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, strategy
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} process records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No process data found matching the criteria")
             return pd.DataFrame()
-            
-        logger.info(f"Retrieved {len(hits)} process records from Elasticsearch.")
-        records = [flatten_dict(hit["_source"]) for hit in hits]
+
+        # Process records (existing logic preserved)
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flattened = _flatten_elasticsearch_document(source)
+            records.append(flattened)
+
         df = pd.DataFrame(records)
-        
-        # Convert timestamp to timezone-aware
+        df = validate_and_add_missing_fields(df, "process")
+
+        # Timestamp processing (existing logic preserved)
         if "@timestamp" in df.columns:
             df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        
+            valid_timestamps = df["@timestamp"].notna().sum()
+            logger.info(f"Processed {valid_timestamps:,}/{len(df):,} valid timestamps")
+
+        # Apply training time filters (existing logic preserved)
+        original_count = len(df)
+        df = apply_training_time_filters(df, "process")
+        if len(df) != original_count:
+            logger.info(f"Training filters applied: {original_count} -> {len(df)} records")
+
+        # Field validation (existing logic preserved)
+        missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+        if missing_fields:
+            logger.warning(f"Missing required fields for process group: {missing_fields}")
+            for field in missing_fields:
+                if field in ["process.name", "process.executable", "user.name"]:
+                    df[field] = "unknown"
+                elif field in ["user.id", "process.args"]:
+                    df[field] = 0
+                else:
+                    df[field] = ""
+
+        # ENHANCED: Log temporal distribution analysis
+        _log_temporal_distribution_analysis(df, "process")
+
+        logger.info(f"Successfully processed {len(df)} Linux process records with {len(df.columns)} fields")
         return df
-        
+
     except Exception as e:
-        logger.error(f"Error fetching process data from Elasticsearch: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Error fetching process data: {e}")
         return pd.DataFrame()
 
-
-# def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
-#     """
-#     Fetch network activity data using match_all query (Query 4 approach).
-#     """
-#     if not es:
-#         logger.error("Elasticsearch connection is not available.")
-#         return pd.DataFrame()
-
-#     try:
-#         query_size = int(query_size)
-#     except (TypeError, ValueError):
-#         query_size = 10000
-#         logger.warning(f"Invalid query_size, using default: {query_size}")
-
-#     # Set default time range if not provided
-#     if not time_range:
-#         end_time = datetime.utcnow()
-#         start_time = end_time - timedelta(days=7)
-#         time_range = {
-#             "gte": start_time.isoformat(),
-#             "lte": end_time.isoformat()
-#         }
-
-#     index_pattern = ".ds-logs-endpoint.events.process-default-*"
-
-#     source_fields = [
-#         "@timestamp", "host.hostname", "host.id", "host.name",
-#         "host.os.name", "host.os.version", "host.os.family", "host.ip", "host.mac",
-#         "process.name", "process.executable", "process.pid", "process.entity_id",
-#         "process.command_line", "process.parent.entity_id",
-#         "network.transport", "network.direction", "network.type",
-#         "source.ip", "source.port", "source.address",
-#         "destination.ip", "destination.port", "destination.address",
-#         "user.name", "user.id", "user.Ext.real.name", "user.Ext.real.id",
-#         "group.name", "group.id", "group.Ext.real.name", "group.Ext.real.id",
-#         "event.action", "event.type", "event.category", "event.outcome",
-#         "event.kind", "event.module", "event.sequence", "event.id",
-#         "agent.id", "agent.type", "agent.version"
-#     ]
-
-#     max_size = min(int(query_size), 10000)
-
-#     # Query 4: Simple match_all query
-#     query = {
-#         "size": max_size,
-#         "_source": source_fields,
-#         "query": {"match_all": {}},
-#         "sort": [{"@timestamp": {"order": "desc"}}]
-#     }
-
-#     try:
-#         logger.info(f"Fetching network activity data from index: {index_pattern} with match_all query")
-#         response = es.search(index=index_pattern, body=query)
-#         hits = response.get("hits", {}).get("hits", [])
-
-#         if not hits:
-#             logger.warning("No network activity data returned from Elasticsearch.")
-#             return pd.DataFrame()
-
-#         # Log fields found in first document
-#         first_doc_fields = list(flatten_dict(hits[0]["_source"]).keys())
-#         logger.info(f"Fields found in first document: {first_doc_fields}")
-
-#         logger.info(f"Retrieved {len(hits)} network activity records from Elasticsearch.")
-#         records = [flatten_dict(hit["_source"]) for hit in hits]
-#         df = pd.DataFrame(records)
-
-#         # Convert timestamp
-#         if "@timestamp" in df.columns:
-#             df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce')
-
-#         # Apply time filtering in post-processing
-#         if isinstance(time_range, dict) and "@timestamp" in df.columns:
-#             # start_time = pd.to_datetime(time_range["gte"])
-#             start_time = pd.to_datetime(time_range["gte"])
-#             end_time = pd.to_datetime(time_range["lte"])
-#             start_time = pd.Timestamp(start_time).tz_localize('UTC') if start_time.tzinfo is None else start_time
-#             end_time = pd.Timestamp(end_time).tz_localize('UTC') if end_time.tzinfo is None else end_time
-
-#             original_count = len(df)
-#             df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-#             logger.info(f"After time filtering: {len(df)} records (from {original_count} total)")
-
-#         # Apply category filtering in post-processing
-#         if "event.category" in df.columns:
-#             def is_network_event(category):
-#                 if isinstance(category, list):
-#                     return "network" in category
-#                 return category == "network"
-
-#             original_count = len(df)
-#             df = df[df["event.category"].apply(is_network_event)]
-#             logger.info(f"After category filtering: {len(df)} network records (from {original_count} total)")
-
-#         # Log network activity distribution
-#         if "destination.port" in df.columns and len(df) > 0:
-#             port_counts = df["destination.port"].value_counts()
-#             logger.info(f"Retrieved data for {len(port_counts)} unique destination ports")
-#             logger.info(f"Top 5 ports: {port_counts.head(5).to_dict()}")
-
-#         return df
-
-#     except Exception as e:
-#         logger.error(f"Error fetching network activity data from Elasticsearch: {e}")
-#         import traceback
-#         logger.error(f"Traceback: {traceback.format_exc()}")
-#         return pd.DataFrame()
 
 def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
     """
-    Fetch network activity data using match_all query (Query 4 approach).
+    Fetch network activity data with search_after pagination to bypass 10k limit.
     """
     if not es:
         logger.error("Elasticsearch connection is not available.")
         return pd.DataFrame()
 
+    group_config = DATA_GROUP_CONFIG["network"]
+    index_pattern = group_config["endpoint"]
+
+    # Use training configuration if no time_range provided
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("network")
+            logger.info("Using configured training period for network data")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
     try:
         query_size = int(query_size)
     except (TypeError, ValueError):
         query_size = 10000
-        logger.warning(f"Invalid query_size, using default: {query_size}")
 
-    # Set default time range if not provided
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-
-    index_pattern = ".ds-logs-endpoint.events.process-default-*"
-
+    # Required fields for network data
     source_fields = [
-        "@timestamp", "host.hostname", "host.id", "host.name",
-        "host.os.name", "host.os.version", "host.os.family", "host.ip", "host.mac",
-        "process.name", "process.executable", "process.pid", "process.entity_id",
-        "process.command_line", "process.parent.entity_id",
-        "network.transport", "network.direction", "network.type",
-        "source.ip", "source.port", "source.address",
-        "destination.ip", "destination.port", "destination.address",
-        "user.name", "user.id", "user.Ext.real.name", "user.Ext.real.id",
-        "group.name", "group.id", "group.Ext.real.name", "group.Ext.real.id",
-        "event.action", "event.type", "event.category", "event.outcome",
-        "event.kind", "event.module", "event.sequence", "event.id",
-        "agent.id", "agent.type", "agent.version"
+        "@timestamp", "host.hostname", "host.os.type", "host.os.platform",
+    "destination.ip", "destination.port", "destination.domain",
+    "host.ip",
+        "source.ip", "source.port", "network.transport", "network.direction", "network.type",
+        "destination.bytes", "source.bytes", "process.name", "process.executable",
+        "process.pid", "process.command_line", "event.action", "event.type",
+    "event.id",
+        "process.thread.capabilities.effective", "process.thread.capabilities.permitted",
+        "user.name", "user.id", "agent.id", "agent.type"
     ]
 
-    max_size = min(int(query_size), 10000)
-
-    # Query 4: Simple match_all query
-    query = {
-        "size": max_size,
-        "_source": source_fields,
-        "query": {"match_all": {}},
-        "sort": [{"@timestamp": {"order": "desc"}}]
-    }
-
-    try:
-        logger.info(f"Fetching network activity data from index: {index_pattern} with match_all query")
-        response = es.search(index=index_pattern, body=query)
-        hits = response.get("hits", {}).get("hits", [])
-
-        if not hits:
-            logger.warning("No network activity data returned from Elasticsearch.")
-            return pd.DataFrame()
-
-        # Log fields found in first document
-        first_doc_fields = list(flatten_dict(hits[0]["_source"]).keys())
-        logger.info(f"Fields found in first document: {first_doc_fields}")
-
-        logger.info(f"Retrieved {len(hits)} network activity records from Elasticsearch.")
-        records = [flatten_dict(hit["_source"]) for hit in hits]
-        df = pd.DataFrame(records)
-
-        # Convert timestamp
-        if "@timestamp" in df.columns:
-            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce')
-
-        # Apply time filtering in post-processing
-        if isinstance(time_range, dict) and "@timestamp" in df.columns:
-            start_time = pd.to_datetime(time_range["gte"])
-            end_time = pd.to_datetime(time_range["lte"])
-            start_time = pd.Timestamp(start_time).tz_localize('UTC') if start_time.tzinfo is None else start_time
-            end_time = pd.Timestamp(end_time).tz_localize('UTC') if end_time.tzinfo is None else end_time
-
-            original_count = len(df)
-            df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-            logger.info(f"After time filtering: {len(df)} records (from {original_count} total)")
-
-        # FIXED: Modified category filtering to be more inclusive
-        if "event.category" in df.columns:
-            def is_network_event(category):
-                # Handle both list and string values
-                if isinstance(category, list):
-                    return any(cat in ['network', 'process'] for cat in category)
-                elif isinstance(category, str):
-                    return category in ['network', 'process']
-                return False
-
-            original_count = len(df)
-            # Add artificial network category for relevant records
-            network_indicators = ['destination.ip', 'source.ip', 'destination.port', 'source.port']
-            for indicator in network_indicators:
-                if indicator in df.columns:
-                    df.loc[df[indicator].notna(), 'is_network_activity'] = True
-            
-            # Accept records that either have network category or network indicators
-            network_mask = (df["event.category"].apply(is_network_event) | df.get('is_network_activity', False))
-            df = df[network_mask]
-            logger.info(f"After category filtering: {len(df)} network records (from {original_count} total)")
-
-        # Log network activity distribution
-        if "destination.port" in df.columns and len(df) > 0:
-            port_counts = df["destination.port"].value_counts()
-            logger.info(f"Retrieved data for {len(port_counts)} unique destination ports")
-            logger.info(f"Top 5 ports: {port_counts.head(5).to_dict()}")
-
-        return df
-
-    except Exception as e:
-        logger.error(f"Error fetching network activity data from Elasticsearch: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return pd.DataFrame()
-    
-def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
-    """
-    Fetch user activity data using match_all query (Query 4 approach).
-    """
-    if not es:
-        logger.error("Elasticsearch connection is not available.")
-        return pd.DataFrame()
-    
-    try:
-        query_size = int(query_size)
-    except (TypeError, ValueError):
-        query_size = 10000
-        logger.warning(f"Invalid query_size, using default: {query_size}")
-    
-    # Set default time range if not provided
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-    
-    index_pattern = ".ds-logs-endpoint.events.process-default-*"
-    
-    source_fields = [
-        "@timestamp", "host.hostname", "host.id", "host.name",
-        "process.name", "process.executable", "process.command_line", "process.args",
-        "process.pid", "process.working_directory", "process.parent.name",
-        "process.parent.executable", "process.parent.command_line", "process.args_count",
-        "user.name", "user.id", "user.Ext.real.name", "user.Ext.real.id",
-        "group.name", "group.id", "group.Ext.real.name", "group.Ext.real.id",
-        "event.action", "event.type", "event.category", "event.outcome",
-        "agent.id", "agent.type", "agent.version"
-    ]
-    
-    max_size = min(int(query_size), 10000)
-    
-    # Query 4: Simple match_all query
-    query = {
-        "size": max_size,
-        "_source": source_fields,
-        "query": {"match_all": {}},
-        "sort": [{"@timestamp": {"order": "desc"}}]
-    }
-    
-    try:
-        logger.info(f"Fetching user activity data from index: {index_pattern} with match_all query")
-        response = es.search(index=index_pattern, body=query)
-        hits = response.get("hits", {}).get("hits", [])
-        
-        if not hits:
-            logger.warning("No user activity data returned from Elasticsearch.")
-            return pd.DataFrame()
-            
-        logger.info(f"Retrieved {len(hits)} user activity records from Elasticsearch.")
-        records = [flatten_dict(hit["_source"]) for hit in hits]
-        df = pd.DataFrame(records)
-        
-        # Convert timestamp
-        if "@timestamp" in df.columns:
-            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce')
-        
-        # Apply time filtering in post-processing
-        if isinstance(time_range, dict) and "@timestamp" in df.columns:
-            start_time = pd.to_datetime(time_range["gte"])
-            end_time = pd.to_datetime(time_range["lte"])
-            start_time = pd.Timestamp(start_time).tz_localize('UTC') if start_time.tzinfo is None else start_time
-            end_time = pd.Timestamp(end_time).tz_localize('UTC') if end_time.tzinfo is None else end_time
-            original_count = len(df)
-            df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-            logger.info(f"After time filtering: {len(df)} records (from {original_count} total)")
-        
-        # Apply category filtering for process events
-        if "event.category" in df.columns:
-            def is_process_event(category):
-                if isinstance(category, list):
-                    return "process" in category
-                return category == "process"
-            
-            original_count = len(df)
-            df = df[df["event.category"].apply(is_process_event)]
-            logger.info(f"After category filtering: {len(df)} process records (from {original_count} total)")
-        
-        # Post-process to filter for user-relevant activities
-        if "process.command_line" in df.columns and "user.name" in df.columns and len(df) > 0:
-            compiler_tools = ["gcc", "g++", "python", "python3", "pip", "npm", "node", "javac", "make", "cmake"]
-            admin_tools = ["sudo", "su ", "usermod", "passwd", "useradd", "userdel"]
-            dev_tools = ["git", "vim", "nano", "code", "emacs"]
-            shells = ["bash", "sh", "zsh", "csh", "tcsh", "fish"]
-            
-            df["is_compiler"] = df["process.name"].apply(
-                lambda x: 1 if any(tool in str(x).lower() for tool in compiler_tools) else 0
-            )
-            df["is_admin"] = df["process.command_line"].apply(
-                lambda x: 1 if any(tool in str(x).lower() for tool in admin_tools) else 0
-            )
-            df["is_dev"] = df["process.name"].apply(
-                lambda x: 1 if any(tool in str(x).lower() for tool in dev_tools) else 0
-            )
-            df["is_shell"] = df["process.name"].apply(
-                lambda x: 1 if any(shell in str(x).lower() for shell in shells) else 0
-            )
-            
-            # Keep records that match our user activity criteria
-            user_relevant = (df["is_compiler"] == 1) | (df["is_admin"] == 1) | (df["is_dev"] == 1) | (df["is_shell"] == 1)
-            original_count = len(df)
-            df = df[user_relevant]
-            logger.info(f"After user activity filtering: {len(df)} relevant records (from {original_count} process records)")
-        
-        if "user.name" in df.columns and len(df) > 0:
-            user_counts = df["user.name"].value_counts()
-            logger.info(f"Retrieved data for {len(user_counts)} unique users")
-            logger.info(f"Top 5 active users: {user_counts.head(5).to_dict()}")
-        
-        return df
-        
-    except Exception as e:
-        logger.error(f"Error fetching user activity data from Elasticsearch: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return pd.DataFrame()
-
-
-def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000):
-    """
-    Fetch discovery commands data using match_all query (Query 4 approach).
-    """
-    if not es:
-        logger.error("Elasticsearch connection is not available.")
-        return pd.DataFrame()
-    
-    try:
-        query_size = int(query_size)
-    except (TypeError, ValueError):
-        query_size = 10000
-        logger.warning(f"Invalid query_size, using default: {query_size}")
-    
-    # Set default time range if not provided
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-    
-    index_pattern = ".ds-logs-endpoint.events.process-default-*"
-    
-    source_fields = [
-        "@timestamp", "host.hostname", "host.id", "host.name",
-        "process.name", "process.executable", "process.command_line", "process.args",
-        "process.pid", "process.working_directory", "process.parent.name",
-        "process.parent.pid", "process.parent.command_line", "process.args_count",
-        "user.name", "user.id", "user.Ext.real.name", "user.Ext.real.id",
-        "event.action", "event.type", "event.outcome", "event.category"
-    ]
-    
-    max_size = min(int(query_size), 10000)
-    
-    # Query 4: Simple match_all query
-    query = {
-        "size": max_size,
-        "_source": source_fields,
-        "query": {"match_all": {}},
-        "sort": [{"@timestamp": {"order": "desc"}}]
-    }
-    
-    try:
-        logger.info(f"Fetching discovery commands data from index: {index_pattern} with match_all query")
-        response = es.search(index=index_pattern, body=query)
-        hits = response.get("hits", {}).get("hits", [])
-        
-        if not hits:
-            logger.warning("No discovery commands data returned from Elasticsearch.")
-            return pd.DataFrame()
-            
-        logger.info(f"Retrieved {len(hits)} discovery command records from Elasticsearch.")
-        records = [flatten_dict(hit["_source"]) for hit in hits]
-        df = pd.DataFrame(records)
-        
-        # Convert timestamp - ensure timezone aware
-        if "@timestamp" in df.columns:
-            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        
-        # Apply time filtering in post-processing with consistent timezone handling
-        if isinstance(time_range, dict) and "@timestamp" in df.columns:
-            # Convert time range to timezone-aware timestamps
-            start_time = pd.to_datetime(time_range["gte"], utc=True)
-            end_time = pd.to_datetime(time_range["lte"], utc=True)
-            
-            # Log the timestamp information for debugging
-            logger.debug(f"Start time: {start_time} (tzinfo: {start_time.tzinfo})")
-            logger.debug(f"End time: {end_time} (tzinfo: {end_time.tzinfo})")
-            logger.debug(f"DataFrame timestamp type: {df['@timestamp'].dtype}")
-            
-            # Filter with timezone-aware comparison
-            original_count = len(df)
-            df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-            logger.info(f"After time filtering: {len(df)} records (from {original_count} total)")
-        
-        # Apply category filtering for process events
-        if "event.category" in df.columns:
-            def is_process_event(category):
-                if isinstance(category, list):
-                    return "process" in category
-                return category == "process"
-            
-            original_count = len(df)
-            df = df[df["event.category"].apply(is_process_event)]
-            logger.info(f"After category filtering: {len(df)} process records (from {original_count} total)")
-        
-        # Post-process to filter for discovery commands
-        discovery_commands = ["netstat", "ss", "lsof", "ps", "top", "htop", "who", "w", "users", 
-                             "last", "lastlog", "id", "groups", "getent", "finger", "uname", 
-                             "hostname", "uptime", "lscpu", "lsmem", "lsblk", "df", "mount", 
-                             "free", "vmstat", "systemctl", "service", "chkconfig", "crontab",
-                             "pgrep", "pidof", "jobs", "pstree", "nmap", "arp", "route", "ip", 
-                             "ifconfig", "ping", "traceroute"]
-        
-        if "process.name" in df.columns and len(df) > 0:
-            df["is_discovery"] = df["process.name"].apply(
-                lambda x: 1 if any(cmd in str(x).lower() for cmd in discovery_commands) else 0
-            )
-            
-            # Keep only discovery commands
-            original_count = len(df)
-            df = df[df["is_discovery"] == 1]
-            logger.info(f"After discovery filtering: {len(df)} discovery records (from {original_count} process records)")
-            
-            if len(df) > 0:
-                # Categorize discovery commands
-                discovery_categories = {
-                    "network": ["netstat", "ss", "lsof", "nmap", "arp", "route", "ip", "ifconfig", "ping", "traceroute"],
-                    "process": ["ps", "top", "htop", "pgrep", "pidof", "jobs", "pstree"],
-                    "user": ["who", "w", "users", "last", "lastlog", "id", "groups", "getent", "finger"],
-                    "system": ["uname", "hostname", "uptime", "lscpu", "lsmem", "lsblk", "df", "mount", "free", "vmstat"],
-                    "service": ["systemctl", "service", "chkconfig", "crontab"]
-                }
-                
-                def categorize_discovery_command(process_name):
-                    for category, commands in discovery_categories.items():
-                        if any(cmd in str(process_name).lower() for cmd in commands):
-                            return category
-                    return "other"
-                
-                df["discovery_category"] = df["process.name"].apply(categorize_discovery_command)
-                
-                cmd_counts = df["process.name"].value_counts()
-                logger.info(f"Retrieved data for {len(cmd_counts)} unique discovery commands")
-                logger.info(f"Top 5 discovery commands: {cmd_counts.head(5).to_dict()}")
-        
-        return df
-        
-    except Exception as e:
-        logger.error(f"Error fetching discovery commands data from Elasticsearch: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return pd.DataFrame()
-    
-# def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
-#     """
-#     Fetch metadata service access data using match_all query (Query 4 approach).
-#     """
-#     if not es:
-#         logger.error("Elasticsearch connection is not available.")
-#         return pd.DataFrame()
-    
-#     try:
-#         query_size = int(query_size)
-#     except (TypeError, ValueError):
-#         query_size = 10000
-#         logger.warning(f"Invalid query_size, using default: {query_size}")
-    
-#     # Set default time range if not provided
-#     if not time_range:
-#         end_time = datetime.utcnow()
-#         start_time = end_time - timedelta(days=7)
-#         time_range = {
-#             "gte": start_time.isoformat(),
-#             "lte": end_time.isoformat()
-#         }
-    
-#     all_data = []
-    
-#     # Fetch from process logs
-#     try:
-#         process_index = ".ds-logs-endpoint.events.process-default-*"
-        
-#         process_source_fields = [
-#             "@timestamp", "host.hostname", "host.id", "host.name",
-#             "process.name", "process.executable", "process.command_line", "process.args",
-#             "process.pid", "user.name", "user.id",
-#             "event.action", "event.type", "event.category"
-#         ]
-        
-#         max_size = min(int(query_size), 5000)
-        
-#         query = {
-#             "size": max_size,
-#             "_source": process_source_fields,
-#             "query": {"match_all": {}},
-#             "sort": [{"@timestamp": {"order": "desc"}}]
-#         }
-        
-#         logger.info(f"Fetching metadata access data from process index: {process_index}")
-#         response = es.search(index=process_index, body=query)
-#         hits = response.get("hits", {}).get("hits", [])
-        
-#         if hits:
-#             logger.info(f"Retrieved {len(hits)} metadata access process records")
-#             process_records = [flatten_dict(hit["_source"]) for hit in hits]
-            
-#             # Filter for metadata-related commands
-#             for record in process_records:
-#                 command_line = str(record.get("process.command_line", "")).lower()
-#                 if any(indicator in command_line for indicator in ["169.254.169.254", "metadata.google.internal", "metadata.azure.com", "computemetadata"]):
-#                     all_data.append(record)
-                    
-#     except Exception as e:
-#         logger.error(f"Error fetching metadata process data: {e}")
-    
-#     # Fetch from network logs  
-#     try:
-#         network_index = ".ds-logs-endpoint.events.network-default-*"
-#         network_source_fields = [
-#             "@timestamp", "host.hostname", "host.id", "host.name",
-#             "process.name", "process.executable", "process.command_line",
-#             "process.pid", "user.name", "user.id",
-#             "destination.ip", "destination.port", "source.ip", "source.port",
-#             "network.transport", "event.action", "event.type", "event.category"
-#         ]
-        
-#         query = {
-#             "size": max_size,
-#             "_source": network_source_fields,
-#             "query": {"match_all": {}},
-#             "sort": [{"@timestamp": {"order": "desc"}}]
-#         }
-        
-#         logger.info(f"Fetching metadata access data from network index: {network_index}")
-#         response = es.search(index=network_index, body=query)
-#         hits = response.get("hits", {}).get("hits", [])
-        
-#         if hits:
-#             logger.info(f"Retrieved {len(hits)} metadata access network records")
-#             network_records = [flatten_dict(hit["_source"]) for hit in hits]
-            
-#             # Filter for metadata service connections
-#             for record in network_records:
-#                 dest_ip = str(record.get("destination.ip", ""))
-#                 if dest_ip == "169.254.169.254":
-#                     all_data.append(record)
-                    
-#     except Exception as e:
-#         logger.error(f"Error fetching metadata network data: {e}")
-    
-#     if not all_data:
-#         logger.warning("No metadata access data returned from Elasticsearch.")
-#         return pd.DataFrame()
-        
-#     logger.info(f"Retrieved {len(all_data)} total metadata access records from both indices.")
-#     df = pd.DataFrame(all_data)
-    
-#     # Convert timestamp
-#     if "@timestamp" in df.columns:
-#         df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce')
-    
-#     # Apply time filtering in post-processing
-#     if isinstance(time_range, dict) and "@timestamp" in df.columns:
-#         start_time = pd.to_datetime(time_range["gte"])
-#         end_time = pd.to_datetime(time_range["lte"])
-#         original_count = len(df)
-#         df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-#         logger.info(f"After time filtering: {len(df)} metadata records (from {original_count} total)")
-    
-#     # Identify metadata service type
-#     if "process.command_line" in df.columns and len(df) > 0:
-#         def identify_metadata_service(command_line):
-#             command_line = str(command_line).lower()
-#             if "169.254.169.254" in command_line:
-#                 if "computemetadata" in command_line or "metadata.google.internal" in command_line:
-#                     return "gcp"
-#                 elif "latest/meta-data" in command_line:
-#                     return "aws"
-#                 else:
-#                     return "aws"  # Default for 169.254.169.254
-#             elif "metadata.azure.com" in command_line:
-#                 return "azure"
-#             return "unknown"
-        
-#         df["metadata_service_type"] = df["process.command_line"].apply(identify_metadata_service)
-        
-#         service_counts = df["metadata_service_type"].value_counts()
-#         logger.info(f"Metadata service types: {service_counts.to_dict()}")
-    
-#     return df
-
-def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
-    """
-    Fetch metadata service access data using match_all query (Query 4 approach).
-    """
-    if not es:
-        logger.error("Elasticsearch connection is not available.")
-        return pd.DataFrame()
-    
-    try:
-        query_size = int(query_size)
-    except (TypeError, ValueError):
-        query_size = 10000
-        logger.warning(f"Invalid query_size, using default: {query_size}")
-    
-    # Set default time range if not provided
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-    
-    all_data = []
-    
-    # FIXED: Use the more appropriate index pattern with a more inclusive query
-    try:
-        process_index = ".ds-logs-endpoint.events.process-default-*"
-        
-        process_source_fields = [
-            "@timestamp", "host.hostname", "host.id", "host.name",
-            "process.name", "process.executable", "process.command_line", "process.args",
-            "process.pid", "user.name", "user.id",
-            "event.action", "event.type", "event.category"
-        ]
-        
-        max_size = min(int(query_size), 5000)
-        
-        # FIXED: Use a more targeted query that finds more metadata access events
-        query = {
-            "size": max_size,
-            "_source": process_source_fields,
-            "query": {
-                "bool": {
-                    "should": [
-                        {"wildcard": {"process.command_line": "*169.254.169.254*"}},
-                        {"wildcard": {"process.command_line": "*metadata.google*"}},
-                        {"wildcard": {"process.command_line": "*metadata.azure*"}},
-                        {"wildcard": {"process.command_line": "*computemetadata*"}},
-                        {"wildcard": {"process.command_line": "*meta-data*"}},
-                        {"wildcard": {"process.name": "*curl*"}},
-                        {"wildcard": {"process.name": "*wget*"}}
-                    ],
-                    "minimum_should_match": 1
-                }
-            },
-            "sort": [{"@timestamp": {"order": "desc"}}]
-        }
-        
-        logger.info(f"Fetching metadata access data from process index: {process_index}")
-        response = es.search(index=process_index, body=query)
-        hits = response.get("hits", {}).get("hits", [])
-        
-        if hits:
-            logger.info(f"Retrieved {len(hits)} metadata access process records")
-            process_records = [flatten_dict(hit["_source"]) for hit in hits]
-            all_data.extend(process_records)
-                
-    except Exception as e:
-        logger.error(f"Error fetching metadata process data: {e}")
-    
-    # Fetch from network logs with a more targeted query 
-    try:
-        network_index = ".ds-logs-endpoint.events.network-default-*"
-        network_source_fields = [
-            "@timestamp", "host.hostname", "host.id", "host.name",
-            "process.name", "process.executable", "process.command_line",
-            "process.pid", "user.name", "user.id",
-            "destination.ip", "destination.port", "source.ip", "source.port",
-            "network.transport", "event.action", "event.type", "event.category"
-        ]
-        
-        # FIXED: Use a more targeted query for network metadata access
-        query = {
-            "size": max_size,
-            "_source": network_source_fields,
-            "query": {
-                "bool": {
-                    "should": [
-                        {"term": {"destination.ip": "169.254.169.254"}},
-                        {"wildcard": {"destination.address": "*metadata*"}},
-                        {"range": {"destination.port": {"gte": 80, "lte": 80}}},
-                        {"range": {"destination.port": {"gte": 443, "lte": 443}}}
-                    ],
-                    "minimum_should_match": 1
-                }
-            },
-            "sort": [{"@timestamp": {"order": "desc"}}]
-        }
-        
-        logger.info(f"Fetching metadata access data from network index: {network_index}")
-        response = es.search(index=network_index, body=query)
-        hits = response.get("hits", {}).get("hits", [])
-        
-        if hits:
-            logger.info(f"Retrieved {len(hits)} metadata access network records")
-            network_records = [flatten_dict(hit["_source"]) for hit in hits]
-            
-            # FIXED: Be more inclusive with metadata service detection
-            for record in network_records:
-                dest_ip = str(record.get("destination.ip", ""))
-                dest_address = str(record.get("destination.address", ""))
-                if (dest_ip == "169.254.169.254" or 
-                    "metadata" in dest_address.lower() or 
-                    record.get("destination.port") in [80, 443]):
-                    all_data.append(record)
-                    
-    except Exception as e:
-        logger.error(f"Error fetching metadata network data: {e}")
-    
-    # FIXED: Create a minimal dataset if no real data is found
-    if not all_data:
-        logger.warning("No metadata access data returned from Elasticsearch. Creating placeholder data.")
-        # Create a minimal dataset with placeholder data
-        placeholder = {
-            "@timestamp": datetime.utcnow(),
-            "process.name": "unknown",
-            "user.name": "unknown",
-            "metadata_service_type": "unknown",
-            "host.hostname": "unknown",
-            "event_count": 0
-        }
-        return pd.DataFrame([placeholder])
-        
-    logger.info(f"Retrieved {len(all_data)} total metadata access records from both indices.")
-    df = pd.DataFrame(all_data)
-    
-    # Convert timestamp
-    if "@timestamp" in df.columns:
-        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce')
-    
-    # Apply time filtering in post-processing
-    if isinstance(time_range, dict) and "@timestamp" in df.columns and not df.empty:
-        start_time = pd.to_datetime(time_range["gte"])
-        end_time = pd.to_datetime(time_range["lte"])
-        start_time = pd.Timestamp(start_time).tz_localize('UTC') if start_time.tzinfo is None else start_time
-        end_time = pd.Timestamp(end_time).tz_localize('UTC') if end_time.tzinfo is None else end_time
-        
-        original_count = len(df)
-        df = df[(df["@timestamp"] >= start_time) & (df["@timestamp"] <= end_time)]
-        logger.info(f"After time filtering: {len(df)} metadata records (from {original_count} total)")
-    
-    # Identify metadata service type
-    if len(df) > 0:
-        # Add metadata_service_type column even if command_line isn't available
-        df["metadata_service_type"] = "unknown"
-        
-        if "process.command_line" in df.columns:
-            def identify_metadata_service(command_line):
-                if pd.isna(command_line):
-                    return "unknown"
-                    
-                command_line = str(command_line).lower()
-                if "169.254.169.254" in command_line:
-                    if "computemetadata" in command_line or "metadata.google.internal" in command_line:
-                        return "gcp"
-                    elif "latest/meta-data" in command_line:
-                        return "aws"
-                    else:
-                        return "aws"  # Default for 169.254.169.254
-                elif "metadata.azure.com" in command_line:
-                    return "azure"
-                return "unknown"
-            
-            df["metadata_service_type"] = df["process.command_line"].apply(identify_metadata_service)
-            
-            service_counts = df["metadata_service_type"].value_counts()
-            logger.info(f"Metadata service types: {service_counts.to_dict()}")
-    
-    # FIXED: Ensure we have at least some columns for metadata analysis
-    if len(df) > 0:
-        required_fields = {
-            'metadata_service_type': 'unknown',
-            'potential_cred_harvest': 0,
-            'user_data_access': 0,
-            'event_count': 1
-        }
-        
-        for field, default_value in required_fields.items():
-            if field not in df.columns:
-                df[field] = default_value
-                
-    return df
-def fetch_data_with_scroll(es, config, data_type="process", time_range=None, max_records=None):
-    """
-    Fetch large amounts of data from Elasticsearch using the scroll API with connection resilience.
-    """
-    if not es:
-        logger.error("Elasticsearch connection is not available.")
-        return pd.DataFrame()
-    
-    # Get max records from config if not specified
-    if max_records is None:
-        max_records = config.get("max_baseline_records", 50000)
-    
-    # Default to last 7 days if no time range specified
-    if not time_range:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=7)
-        start_time = pd.Timestamp(start_time, tz='UTC')
-        end_time = pd.Timestamp(end_time, tz='UTC')
-        time_range = {
-            "gte": start_time.isoformat(),
-            "lte": end_time.isoformat()
-        }
-    
-    es_config = config["elasticsearch"]
-    scroll_size = int(es_config.get("scroll_size", 2000))  
-    scroll_timeout = es_config.get("scroll_timeout", "1m")  
-    
-    # Get the appropriate index pattern for each data type
-    index_patterns = {
-        "process": ".ds-logs-endpoint.events.process-default-*",
-        "network": ".ds-logs-endpoint.events.process-default-*",
-        "user": ".ds-logs-endpoint.events.process-default-*",
-        "discovery": ".ds-logs-endpoint.events.process-default-*",
-        "metadata": ".ds-logs-endpoint.events.process-default-*"
-    }
-    
-    index_pattern = index_patterns.get(data_type, ".ds-logs-endpoint.events.process-default-*")
-    
-    # Simple query with just time range
-    query = {
-        "size": scroll_size,
+    # Build query with Linux filtering
+    base_query = {
+        "size": min(10000, query_size),
         "query": {
-            "range": {
-                "@timestamp": time_range
+            "bool": {
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": time_range
+                        }
+                    },
+                    {
+                        "term": {
+                            "host.os.type": "linux"
+                        }
+                    }
+                ],
+                "filter": [
+                    {
+                        "exists": {
+                            "field": "destination.ip"
+                        }
+                    }
+                ]
             }
         },
-        "sort": [{"@timestamp": {"order": "asc"}}]
+        "_source": source_fields,
+        "sort": [
+            {"@timestamp": {"order": "desc", "unmapped_type": "date"}}
+        ]
     }
-    
-    all_records = []
-    scroll_id = None
-    batch_count = 0
-    max_retries = 3
-    
+
     try:
-        logger.info(f"Starting scroll query for {data_type} data")
-        logger.info(f"Index pattern: {index_pattern}")
-        logger.info(f"Time range: {time_range['gte']} to {time_range['lte']}")
-        logger.info(f"Maximum records to fetch: {max_records:,}")
+        # ENHANCED: Use hourly stratified fetching
+        logger.info(f"Fetching process data from {index_pattern} using hourly stratified sampling")
         
-        # Initialize scroll with retry logic
-        for attempt in range(max_retries):
-            try:
-                response = es.search(
-                    index=index_pattern,
-                    body=query,
-                    scroll=scroll_timeout,
-                    request_timeout=120  # 2 minute timeout
-                )
-                break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"Initial search failed (attempt {attempt + 1}/{max_retries}): {e}")
-                    time.sleep(5 * (attempt + 1))  # Exponential backoff
-                else:
-                    raise
+        # Determine distribution strategy based on query size
+        if query_size >= 100000:  # Large datasets: balanced distribution
+            strategy = "balanced"
+        elif query_size >= 50000:   # Medium datasets: slight recent bias
+            strategy = "recent_weighted"
+        else:                       # Small datasets: standard approach
+            strategy = "recent_weighted"
         
-        scroll_id = response["_scroll_id"]
-        hits = response["hits"]["hits"]
-        total_hits = response["hits"]["total"]["value"] if isinstance(response["hits"]["total"], dict) else response["hits"]["total"]
-        
-        logger.info(f"Total documents matching query: {total_hits:,}")
-        
-        if total_hits > max_records:
-            logger.warning(f"Total hits ({total_hits:,}) exceeds max_records ({max_records:,}). Will stop at {max_records:,} records.")
-        
-        # Process all batches up to max_records
-        while len(hits) > 0 and len(all_records) < max_records:
-            batch_count += 1
-            
-            # Process current batch
-            try:
-                records = [flatten_dict(hit["_source"]) for hit in hits]
-                
-                # Only take as many records as needed to reach max_records
-                remaining = max_records - len(all_records)
-                if len(records) > remaining:
-                    records = records[:remaining]
-                
-                all_records.extend(records)
-                logger.info(f"Processed batch {batch_count}: {len(records)} records (total so far: {len(all_records):,})")
-                
-                # Check if we've reached the limit
-                if len(all_records) >= max_records:
-                    logger.info(f"Reached maximum records limit of {max_records:,}")
-                    break
-                
-                # Save intermediate results periodically
-                if batch_count % 50 == 0:  # Every 50 batches
-                    logger.info(f"Saving intermediate results after {batch_count} batches...")
-                    # You could save to a temporary file here if needed
-                
-            except Exception as e:
-                logger.error(f"Error processing batch {batch_count}: {e}")
-                # Continue with next batch
-            
-            # Get next batch with retry logic
-            scroll_success = False
-            for attempt in range(max_retries):
-                try:
-                    response = es.scroll(
-                        scroll_id=scroll_id,
-                        scroll=scroll_timeout,
-                        request_timeout=120  # 2 minute timeout
-                    )
-                    scroll_id = response["_scroll_id"]
-                    hits = response["hits"]["hits"]
-                    scroll_success = True
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Scroll failed (attempt {attempt + 1}/{max_retries}): {e}")
-                        time.sleep(5 * (attempt + 1))  # Exponential backoff
-                        
-                        # Try to recreate scroll context
-                        if "Connection" in str(e) or "timeout" in str(e).lower():
-                            logger.info("Attempting to resume from last position...")
-                            # Get the last timestamp we processed
-                            if all_records:
-                                last_timestamp = all_records[-1].get("@timestamp", time_range["gte"])
-                                resume_query = {
-                                    "size": scroll_size,
-                                    "query": {
-                                        "range": {
-                                            "@timestamp": {
-                                                "gt": last_timestamp,
-                                                "lte": time_range["lte"]
-                                            }
-                                        }
-                                    },
-                                    "sort": [{"@timestamp": {"order": "asc"}}]
-                                }
-                                try:
-                                    response = es.search(
-                                        index=index_pattern,
-                                        body=resume_query,
-                                        scroll=scroll_timeout,
-                                        request_timeout=120
-                                    )
-                                    scroll_id = response["_scroll_id"]
-                                    hits = response["hits"]["hits"]
-                                    logger.info(f"Successfully resumed from {last_timestamp}")
-                                    scroll_success = True
-                                    break
-                                except Exception as resume_error:
-                                    logger.error(f"Failed to resume: {resume_error}")
-                    else:
-                        logger.error(f"Scroll failed after {max_retries} attempts: {e}")
-                        break
-            
-            if not scroll_success:
-                logger.warning(f"Stopping scroll after {batch_count} batches due to repeated failures")
-                break
-        
-        # Clean up scroll
-        if scroll_id:
-            try:
-                es.clear_scroll(scroll_id=scroll_id)
-                logger.info("Cleared scroll context")
-            except Exception as e:
-                logger.warning(f"Error clearing scroll: {e}")
-        
-        logger.info(f"Retrieved a total of {len(all_records):,} {data_type} records using scroll API")
-        
-        if not all_records:
-            logger.warning(f"No {data_type} data found in time range")
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, strategy
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} process records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No process data found matching the criteria")
             return pd.DataFrame()
-        
-        # Convert to DataFrame
-        logger.info("Converting records to DataFrame...")
-        df = pd.DataFrame(all_records)
-        
-        # Convert timestamp
+
+        # Process records (existing logic preserved)
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flattened = _flatten_elasticsearch_document(source)
+            records.append(flattened)
+
+        df = pd.DataFrame(records)
+
+        # Timestamp processing (existing logic preserved)
         if "@timestamp" in df.columns:
-            logger.info("Converting timestamps to timezone-aware format...")
             df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        
-        # Apply post-processing based on data type
-        logger.info(f"Applying {data_type} preprocessing...")
-        if data_type == "process":
-            df = preprocess_process_data(df)
-        elif data_type == "network":
-            df = preprocess_network_data(df)
-        elif data_type == "user":
-            df = preprocess_user_data(df)
-        elif data_type == "discovery":
-            df = preprocess_discovery_data(df)
-        elif data_type == "metadata":
-            df = preprocess_metadata_data(df)
-        
-        logger.info(f"Final DataFrame shape: {df.shape}")
+            valid_timestamps = df["@timestamp"].notna().sum()
+            logger.info(f"Processed {valid_timestamps:,}/{len(df):,} valid timestamps")
+
+        # Apply training time filters (existing logic preserved)
+        original_count = len(df)
+        df = apply_training_time_filters(df, "process")
+        if len(df) != original_count:
+            logger.info(f"Training filters applied: {original_count} -> {len(df)} records")
+
+        # Field validation (existing logic preserved)
+        missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+        if missing_fields:
+            logger.warning(f"Missing required fields for process group: {missing_fields}")
+            for field in missing_fields:
+                if field in ["process.name", "process.executable", "user.name"]:
+                    df[field] = "unknown"
+                elif field in ["user.id", "process.args"]:
+                    df[field] = 0
+                else:
+                    df[field] = ""
+
+        # ENHANCED: Log temporal distribution analysis
+        _log_temporal_distribution_analysis(df, "process")
+
+        logger.info(f"Successfully processed {len(df)} Linux process records with {len(df.columns)} fields")
         return df
-        
+
     except Exception as e:
-        logger.error(f"Error in scroll query: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        
-        # Return partial results if available
-        if all_records:
-            logger.info(f"Returning partial results: {len(all_records):,} records")
-            try:
-                df = pd.DataFrame(all_records)
-                if "@timestamp" in df.columns:
-                    df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-                return df
-            except Exception as df_error:
-                logger.error(f"Error creating DataFrame from partial results: {df_error}")
-        
+        logger.error(f"Error fetching process data: {e}")
         return pd.DataFrame()
+##############################################################################################################################
+##############################################################################################################################
+def _flatten_elasticsearch_document(source):
+    """
+    CORRECTED: Flatten Elasticsearch document preserving nested IP addresses.
+    """
+    flattened = {}
+
+    def _flatten_dict(obj, parent_key=''):
+        if not isinstance(obj, dict):
+            return
+
+        for key, value in obj.items():
+            new_key = f"{parent_key}.{key}" if parent_key else key
+
+            if isinstance(value, dict):
+                # Recursively flatten nested objects
+                _flatten_dict(value, new_key)
+            elif isinstance(value, list):
+                if len(value) == 0:
+                    flattened[new_key] = None
+                elif len(value) == 1:
+                    # Single item - use the value
+                    if isinstance(value[0], dict):
+                        _flatten_dict(value[0], new_key)
+                    else:
+                        flattened[new_key] = value[0]
+                else:
+                    # Multiple items - prefer joining strings, else take first item
+                    if all(isinstance(item, str) for item in value):
+                        flattened[new_key] = ', '.join(value)
+                    else:
+                        flattened[new_key] = value[0]
+            else:
+                # Simple value - store directly
+                flattened[new_key] = value
+
+    _flatten_dict(source)
+
+    # CRITICAL: Ensure IP fields are strings and preserved
+    ip_fields = [
+        'destination.ip', 'source.ip', 'destination.address', 'source.address',
+        'host.ip', 'client.ip', 'server.ip'
+    ]
+
+    for ip_field in ip_fields:
+        if ip_field in flattened and flattened[ip_field] is not None:
+            try:
+                flattened[ip_field] = str(flattened[ip_field]).strip()
+            except Exception:
+                flattened[ip_field] = None
+
+            # Additional validation - ensure it's not empty after conversion
+            if flattened[ip_field] in ['', 'None', 'null']:
+                flattened[ip_field] = None
+
+    # Add convenient flat alias columns to reduce brittle dotted lookups
+    host_hostname = flattened.get('host.hostname') or flattened.get('host.name') or flattened.get('host') or None
+    if host_hostname is not None:
+        flattened['host'] = host_hostname
+        flattened['hostname'] = host_hostname
+    else:
+        # ensure keys exist to avoid KeyErrors downstream
+        flattened.setdefault('host', None)
+        flattened.setdefault('hostname', None)
+
+    process_name = flattened.get('process.name') or flattened.get('process') or None
+    if process_name is not None:
+        flattened['process'] = process_name
+        flattened['process_name'] = process_name
+    else:
+        flattened.setdefault('process', None)
+        flattened.setdefault('process_name', None)
+
+    username = flattened.get('user.name') or flattened.get('user.Ext.real.name') or flattened.get('user') or None
+    if username is not None:
+        flattened['username'] = username
+    else:
+        flattened.setdefault('username', None)
+
+    # Synthesize a deterministic event.id when missing so downstream code can reliably join/identify events
+    if not flattened.get('event.id'):
+        key_parts = []
+        for k in ['@timestamp', 'host.hostname', 'host.ip', 'process.pid', 'process.entity_id', 'process.command_line',
+                  'destination.ip', 'source.ip', 'destination.port', 'source.port']:
+            v = flattened.get(k)
+            if v is None:
+                key_parts.append('')
+            else:
+                key_parts.append(str(v))
+
+        raw = '|'.join(key_parts)
+        try:
+            h = hashlib.sha1(raw.encode('utf-8')).hexdigest()
+            flattened['event.id'] = f"synth-{h[:12]}"
+        except Exception:
+            # Last resort stable fallback
+            flattened['event.id'] = f"synth-{int(time.time())}"
+
+    return flattened
+
+
+
+def debug_document_flattening(source):
+    """Debug function to trace document flattening issues."""
+    print("=== DOCUMENT FLATTENING DEBUG ===")
+    print(f"Raw source keys: {list(source.keys())}")
+    
+    # Check nested destination
+    if 'destination' in source:
+        dest = source['destination']
+        print(f"Destination object: {dest}")
+        if isinstance(dest, dict):
+            print(f"  destination.ip: {dest.get('ip', 'MISSING')}")
+            print(f"  destination.address: {dest.get('address', 'MISSING')}")
+    
+    # Check nested source  
+    if 'source' in source:
+        src = source['source']
+        print(f"Source object: {src}")
+        if isinstance(src, dict):
+            print(f"  source.ip: {src.get('ip', 'MISSING')}")
+            print(f"  source.address: {src.get('address', 'MISSING')}")
+    
+    # Test flattening
+    flattened = _flatten_elasticsearch_document(source)
+    print(f"After flattening:")
+    print(f"  destination.ip: {flattened.get('destination.ip', 'MISSING')}")
+    print(f"  source.ip: {flattened.get('source.ip', 'MISSING')}")
+    print(f"  destination.address: {flattened.get('destination.address', 'MISSING')}")
+    print("==============================")
+    
+    return flattened
+
+
+def fetch_network_activity_data_corrected(es, config, time_range=None, query_size=10000):
+    """
+    CORRECTED: Network data fetching with proper document flattening.
+    """
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["network"]
+    index_pattern = group_config["endpoint"]
+
+    # Time range setup (unchanged)
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("network")
+            logger.info("Using configured training period for network data")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
+    try:
+        query_size = int(query_size)
+    except (TypeError, ValueError):
+        query_size = 10000
+
+    # Source fields (unchanged)
+    source_fields = [
+        "@timestamp", "host.hostname", "host.os.type", "host.os.platform",
+        "destination.ip", "destination.port", "destination.domain", "destination.address",
+        "source.ip", "source.port", "source.address", 
+    "host.ip",
+        "network.transport", "network.direction", "network.type",
+        "destination.bytes", "source.bytes", "network.bytes", "network.packets",
+        "process.name", "process.executable", "process.pid", "process.command_line", 
+    "event.action", "event.type", "event.id", "user.name", "user.id", "agent.id", "agent.type"
+    ]
+
+    # Query (unchanged from your version)
+    base_query = {
+        "size": min(10000, query_size),
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": time_range}},
+                    {"term": {"host.os.type": "linux"}}
+                ],
+                "filter": [
+                    {"exists": {"field": "destination.ip"}}
+                ]
+            }
+        },
+        "_source": source_fields,
+        "sort": [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}]
+    }
+
+    try:
+        logger.info(f"Fetching network data from {index_pattern}")
         
+        # Fetch data (using your existing strategy)
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, "recent_weighted"
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} network records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No network data found")
+            return pd.DataFrame()
+
+        # DEBUG: Test first document
+        if all_hits:
+            logger.info("DEBUGGING FIRST DOCUMENT:")
+            debug_document_flattening(all_hits[0]["_source"])
+
+        # CORRECTED: Process records with proper flattening
+        records = []
+        processing_errors = 0
+        
+        for i, hit in enumerate(all_hits):
+            try:
+                source = hit["_source"]
+                
+                # Use corrected flattening
+                flattened = _flatten_elasticsearch_document(source)
+                
+                # Validate critical fields exist
+                if not flattened.get("destination.ip"):
+                    # Try alternative field
+                    if flattened.get("destination.address"):
+                        flattened["destination.ip"] = flattened["destination.address"]
+                        logger.debug(f"Record {i}: Used destination.address as destination.ip")
+                    else:
+                        logger.warning(f"Record {i}: No destination IP found, skipping")
+                        processing_errors += 1
+                        continue
+                
+                records.append(flattened)
+                
+            except Exception as e:
+                logger.error(f"Error processing record {i}: {e}")
+                processing_errors += 1
+                continue
+
+        if processing_errors > 0:
+            logger.warning(f"Processing errors: {processing_errors}/{len(all_hits)} records")
+
+        if not records:
+            logger.error("No valid records after processing")
+            return pd.DataFrame()
+
+        # Create DataFrame
+        df = pd.DataFrame(records)
+        
+        # Validate IPs in DataFrame
+        logger.info("POST-PROCESSING VALIDATION:")
+        if 'destination.ip' in df.columns:
+            unique_ips = df['destination.ip'].unique()
+            logger.info(f"  destination.ip: {len(unique_ips)} unique values")
+            logger.info(f"  Sample IPs: {list(unique_ips)[:5]}")
+            
+            # Check for problematic values
+            bad_ips = [ip for ip in unique_ips if str(ip) in ['0.0.0.0', '', 'None', 'nan']]
+            if bad_ips:
+                logger.error(f"  PROBLEM: Found bad IPs: {bad_ips}")
+            else:
+                logger.info("  SUCCESS: All destination IPs are valid")
+        else:
+            logger.error("  CRITICAL: destination.ip column missing from DataFrame")
+
+        # Continue with rest of processing (timestamp, filters, etc.)
+        if "@timestamp" in df.columns:
+            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
+
+        # Apply your existing filters and processing...
+        df = apply_training_time_filters(df, "network")
+        
+        # SAFE preprocessing - no IP defaults
+        df = preprocess_network_data_safe(df)
+        if 'destination.ip' in df.columns:
+            invalid_mask = (df['destination.ip'] == '0.0.0.0') | df['destination.ip'].isna() | (df['destination.ip'] == '')
+        df = df[~invalid_mask]
+        logger.info(f"Filtered out {invalid_mask.sum()} invalid network records")
+
+        logger.info(f"Final result: {len(df)} records with {len(df.columns)} fields")
+        df.to_csv("network_data_final.csv", index=False)
+        return df
+    
+
     except Exception as e:
-        logger.error(f"Error in scroll query: {e}")
+        logger.error(f"Error fetching network data: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return pd.DataFrame()
 
-def fetch_baseline_data(es, config, data_type="process"):
+
+def preprocess_network_data_safe(df):
+    """Safe network preprocessing that never touches IP fields."""
+    if df.empty:
+        return df
+    
+    logger.info(f"Safe network preprocessing: {len(df)} records")
+    
+    # ONLY add non-IP defaults
+    safe_fields = {
+        'destination.port': 0,
+        'source.port': 0,
+        'network.transport': 'tcp',
+        'network.direction': 'unknown',
+        'network.bytes': 0,
+        'process.name': 'unknown',
+        'user.name': 'unknown',
+        'host.hostname': 'unknown',
+        'event.action': 'network_flow',
+        'event.category': 'network'
+    }
+    
+    for field, default in safe_fields.items():
+        if field not in df.columns:
+            df[field] = default
+    
+    # Add features without touching IPs
+    if "destination.port" in df.columns:
+        df["is_common_port"] = df["destination.port"].isin([80, 443, 22, 21, 25, 53]).astype(int)
+        df["is_high_port"] = (df["destination.port"] > 1024).astype(int)
+    
+    if "network.bytes" in df.columns:
+        df["large_transfer"] = (df["network.bytes"] > 1000000).astype(int)
+        df["bytes_log"] = np.log1p(df["network.bytes"])
+    
+    df["event_count"] = 1
+    df.to_csv("network_data_debug.csv", index=False)
+    return df
+############################################################################################
+############################################################################################
+def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
     """
-    Fetch historical data for establishing baselines.
-    Fetches data from (current_time - 33 days) to (current_time - 3 days).
+    Fetch user activity data with search_after pagination to bypass 10k limit.
     """
-    # Get baseline period from config
-    days = int(config["detection"].get("min_baseline_period_days", 30))
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["user"]
+    index_pattern = group_config["endpoint"]
+
+    # Use training configuration
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("user")
+            logger.info("Using configured training period for user data")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
+    try:
+        query_size = int(query_size)
+    except (TypeError, ValueError):
+        query_size = 10000
+
+    # Required fields for user data
+    source_fields = [
+        "@timestamp", "host.hostname", "host.os.type", "host.os.platform",
+    "user.name", "user.id", "process.name", "process.command_line",
+        "process.executable", "process.args", "process.pid",
+    "event.action", "event.type", "event.id", "agent.id", "host.ip"
+    ]
+
+    # Build query with Linux filtering
+    base_query = {
+        "size": min(10000, query_size),
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": time_range
+                        }
+                    },
+                    {
+                        "term": {
+                            "host.os.type": "linux"
+                        }
+                    }
+                ],
+                "filter": [
+                    {
+                        "exists": {
+                            "field": "user.name"
+                        }
+                    }
+                ]
+            }
+        },
+        "_source": source_fields,
+        "sort": [
+            {"@timestamp": {"order": "desc", "unmapped_type": "date"}}
+        ]
+    }
+
+    try:
+        # ENHANCED: Use hourly stratified fetching
+        logger.info(f"Fetching process data from {index_pattern} using hourly stratified sampling")
+        
+        # Determine distribution strategy based on query size
+        if query_size >= 100000:  # Large datasets: balanced distribution
+            strategy = "balanced"
+        elif query_size >= 50000:   # Medium datasets: slight recent bias
+            strategy = "recent_weighted"
+        else:                       # Small datasets: standard approach
+            strategy = "recent_weighted"
+        
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, strategy
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} process records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No process data found matching the criteria")
+            return pd.DataFrame()
+
+        # Process records (existing logic preserved)
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flattened = _flatten_elasticsearch_document(source)
+            records.append(flattened)
+
+        df = pd.DataFrame(records)
+
+        # Timestamp processing (existing logic preserved)
+        if "@timestamp" in df.columns:
+            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
+            valid_timestamps = df["@timestamp"].notna().sum()
+            logger.info(f"Processed {valid_timestamps:,}/{len(df):,} valid timestamps")
+
+        # Apply training time filters (existing logic preserved)
+        original_count = len(df)
+        df = apply_training_time_filters(df, "process")
+        if len(df) != original_count:
+            logger.info(f"Training filters applied: {original_count} -> {len(df)} records")
+
+        # Field validation (existing logic preserved)
+        missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+        if missing_fields:
+            logger.warning(f"Missing required fields for process group: {missing_fields}")
+            for field in missing_fields:
+                if field in ["process.name", "process.executable", "user.name"]:
+                    df[field] = "unknown"
+                elif field in ["user.id", "process.args"]:
+                    df[field] = 0
+                else:
+                    df[field] = ""
+
+        # ENHANCED: Log temporal distribution analysis
+        _log_temporal_distribution_analysis(df, "process")
+
+        logger.info(f"Successfully processed {len(df)} Linux process records with {len(df.columns)} fields")
+        return df
+
+    except Exception as e:
+        logger.error(f"Error fetching process data: {e}")
+        return pd.DataFrame()
+def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000):
+    """
+    Fetch discovery commands data with search_after pagination to bypass 10k limit.
+    """
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["discovery"]
+    index_pattern = group_config["endpoint"]
+
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("discovery")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
+    try:
+        query_size = int(query_size)
+    except (TypeError, ValueError):
+        query_size = 10000
+
+    # Discovery command patterns
+    discovery_commands = [
+        "whoami", "id", "groups", "ps", "netstat", "ss", "lsof", "ifconfig", "ip",
+        "route", "arp", "ping", "nslookup", "dig", "cat", "ls", "find", "locate",
+        "which", "whereis", "uname", "uptime", "w", "who", "last", "history"
+    ]
+
+    source_fields = [
+        "@timestamp", "host.hostname", "host.os.type", "host.os.platform",
+    "process.name", "process.command_line", "process.args",
+        "user.name", "user.id", "event.action", "event.type"
+    ]
+
+    # Build query with Linux filtering and discovery command filtering
+    base_query = {
+        "size": min(10000, query_size),
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": time_range
+                        }
+                    },
+                    {
+                        "term": {
+                            "host.os.type": "linux"
+                        }
+                    }
+                ],
+                "should": [
+                    {
+                        "terms": {
+                            "process.name": discovery_commands
+                        }
+                    }
+                ],
+                "minimum_should_match": 1,
+                "filter": [
+                    {
+                        "exists": {
+                            "field": "process.command_line"
+                        }
+                    }
+                ]
+            }
+        },
+        "_source": source_fields,
+        "sort": [
+            {"@timestamp": {"order": "desc", "unmapped_type": "date"}}
+        ]
+    }
+
+    try:
+        # ENHANCED: Use hourly stratified fetching
+        logger.info(f"Fetching process data from {index_pattern} using hourly stratified sampling")
+        
+        # Determine distribution strategy based on query size
+        if query_size >= 100000:  # Large datasets: balanced distribution
+            strategy = "balanced"
+        elif query_size >= 50000:   # Medium datasets: slight recent bias
+            strategy = "recent_weighted"
+        else:                       
+            strategy = "recent_weighted"
+        
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, strategy
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} process records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No process data found matching the criteria")
+            return pd.DataFrame()
+
+        # Process records (existing logic preserved)
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flattened = _flatten_elasticsearch_document(source)
+            records.append(flattened)
+
+        df = pd.DataFrame(records)
+        df = validate_and_add_missing_fields(df, "process")
+
+        # Timestamp processing (existing logic preserved)
+        if "@timestamp" in df.columns:
+            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
+            valid_timestamps = df["@timestamp"].notna().sum()
+            logger.info(f"Processed {valid_timestamps:,}/{len(df):,} valid timestamps")
+
+        # Apply training time filters (existing logic preserved)
+        original_count = len(df)
+        df = apply_training_time_filters(df, "process")
+        if len(df) != original_count:
+            logger.info(f"Training filters applied: {original_count} -> {len(df)} records")
+
+        # Field validation (existing logic preserved)
+        missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+        if missing_fields:
+            logger.warning(f"Missing required fields for process group: {missing_fields}")
+            for field in missing_fields:
+                if field in ["process.name", "process.executable", "user.name"]:
+                    df[field] = "unknown"
+                elif field in ["user.id", "process.args"]:
+                    df[field] = 0
+                else:
+                    df[field] = ""
+
+        # ENHANCED: Log temporal distribution analysis
+        _log_temporal_distribution_analysis(df, "process")
+
+        logger.info(f"Successfully processed {len(df)} Linux process records with {len(df.columns)} fields")
+        return df
+
+    except Exception as e:
+        logger.error(f"Error fetching process data: {e}")
+        return pd.DataFrame()
+def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
+    """
+    Fetch metadata access data with search_after pagination to bypass 10k limit.
+    Includes correct handling of IP (terms) and domain (wildcard) fields.
+    """
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["metadata"]
+    index_pattern = group_config["endpoint"]  # Uses network index
+
+    # Time range fallback
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("metadata")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {
+                "gte": start_time.isoformat(),
+                "lte": end_time.isoformat()
+            }
+
+    try:
+        query_size = int(query_size)
+    except (TypeError, ValueError):
+        query_size = 10000
+
+    # Metadata service IPs/domains
+    metadata_ips = [
+        "169.254.169.254",  # AWS/Azure/GCP
+        "169.254.169.253"   # Azure alternate
+    ]
+    metadata_domains = [
+        "metadata.google.internal",
+        "metadata.azure.internal",
+        "metadata.aws"
+    ]
+
+    source_fields = [
+        "@timestamp", "host.hostname", "host.os.type", "host.os.platform",
+    "destination.ip", "destination.port", "destination.domain",
+    "host.ip",
+        "process.name", "process.executable", "process.command_line",
+        "user.name", "user.id", "network.transport",
+    "event.action", "event.type", "event.id"
+    ]
+
+    # Build query with correct field types
+    base_query = {
+        "size": min(10000, query_size),
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": time_range
+                        }
+                    },
+                    {
+                        "term": {
+                            "host.os.type": "linux"
+                        }
+                    }
+                ],
+                "should": [
+                    {   # IP filter (ip type → use terms)
+                        "terms": {
+                            "destination.ip": metadata_ips
+                        }
+                    },
+                    {   # Domain filter (string type → use wildcard)
+                        "wildcard": {
+                            "destination.domain": "*metadata*"
+                        }
+                    },
+                    {   # Optional explicit metadata domains
+                        "terms": {
+                            "destination.domain": metadata_domains
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
+            }
+        },
+        "_source": source_fields,
+        "sort": [
+            {"@timestamp": {"order": "desc", "unmapped_type": "date"}}
+        ]
+    }
+
+    try:
+        logger.info(f"Fetching metadata access data from {index_pattern} with stratified sampling")
+
+        # Strategy selection
+        if query_size >= 100000:
+            strategy = "balanced"
+        elif query_size >= 50000:
+            strategy = "recent_weighted"
+        else:
+            strategy = "recent_weighted"
+
+        all_hits = _fetch_with_hourly_stratification(
+            es, config, index_pattern, base_query, time_range, query_size, strategy
+        )
+
+        logger.info(f"Retrieved {len(all_hits)} metadata access records from Elasticsearch")
+
+        if not all_hits:
+            logger.warning("No metadata access events found")
+            return pd.DataFrame()
+
+        # Flatten results
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flattened = _flatten_elasticsearch_document(source)
+            records.append(flattened)
+
+        df = pd.DataFrame(records)
+        df = validate_and_add_missing_fields(df, "process")
+
+        # Timestamp processing
+        if "@timestamp" in df.columns:
+            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
+            valid_timestamps = df["@timestamp"].notna().sum()
+            logger.info(f"Processed {valid_timestamps:,}/{len(df):,} valid timestamps")
+
+        # Apply training filters
+        original_count = len(df)
+        df = apply_training_time_filters(df, "process")
+        if len(df) != original_count:
+            logger.info(f"Training filters applied: {original_count} -> {len(df)} records")
+
+        # Fill missing required fields
+        missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+        if missing_fields:
+            logger.warning(f"Missing required fields for process group: {missing_fields}")
+            for field in missing_fields:
+                if field in ["process.name", "process.executable", "user.name"]:
+                    df[field] = "unknown"
+                elif field in ["user.id", "process.args"]:
+                    df[field] = 0
+                else:
+                    df[field] = ""
+
+        # Log temporal distribution
+        _log_temporal_distribution_analysis(df, "process")
+
+        logger.info(f"Successfully processed {len(df)} metadata access records with {len(df.columns)} fields")
+        return df
+
+    except Exception as e:
+        logger.error(f"Error fetching metadata access data: {e}")
+        return pd.DataFrame()
+
+
+def fetch_baseline_data(es, config, data_type="process", days_back=None):
+    """
+    Fetch baseline data for model training with enhanced configuration support.
+    """
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
     
-    # Calculate time range
-    end_time = datetime.utcnow() - timedelta(days=3)  # End 3 days ago
-    start_time = end_time - timedelta(days=days)  # Start 30 days before that
+    # Use training configuration if days_back not specified
+    if days_back is None:
+        training_config = get_training_configuration(data_type)
+        days_back = training_config.get("training_period_days", 30)
+        logger.info(f"Using configured training period: {days_back} days for {data_type}")
     
-    # Make timestamps timezone-aware
-    start_time = pd.Timestamp(start_time, tz='UTC')
-    end_time = pd.Timestamp(end_time, tz='UTC')
-    
-    logger.info(f"Fetching {data_type} baseline data from {start_time} to {end_time}")
-    logger.info(f"This represents {days} days of historical data, ending 3 days ago")
-    
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=days_back)
     time_range = {
         "gte": start_time.isoformat(),
         "lte": end_time.isoformat()
     }
     
-    # Use scroll API to fetch all data in the time range
-    return fetch_data_with_scroll(es, config, data_type, time_range)
+    # Determine query size based on data type and training config
+    training_config = get_training_configuration(data_type)
+    base_size = 500000
+    base_size = training_config.get("baseline_query_size", base_size)
+    # print(f"This is the query size: {base_size}")
 
-def calculate_baselines(historical_data, config, data_type="process"):
-    """
-    Calculate baseline statistics for Linux entities.
-    """
-    if historical_data.empty:
-        return {}
+    # Adjust query size based on training period length
+    period_days = training_config.get("training_period_days", 30)
+    if period_days > 60:
+        query_size = base_size * 2
+    elif period_days < 7:
+        query_size = base_size // 2
+    else:
+        query_size = base_size
     
-    baselines = {}
+    logger.info(f"Fetching baseline data for {data_type} with {period_days} day period, query_size={query_size}")
     
-    # Determine entity column based on data type and available fields
     if data_type == "process":
-        entity_col = 'process.name'
+        return fetch_process_data(es, config, time_range, query_size)
     elif data_type == "network":
-        # For network, use destination port as primary entity
-        entity_col = 'destination.port'
+        return fetch_network_activity_data(es, config, time_range, query_size)
     elif data_type == "user":
-        entity_col = 'user.name'
+        return fetch_user_activity_data(es, config, time_range, query_size)
     elif data_type == "discovery":
-        entity_col = 'process.name'
+        return fetch_discovery_commands_data(es, config, time_range, query_size)
     elif data_type == "metadata":
-        entity_col = 'process.name'
+        return fetch_metadata_access_data(es, config, time_range, query_size)
     else:
-        entity_col = 'host.hostname'
-    
-    if entity_col not in historical_data.columns:
-        logger.warning(f"Entity column {entity_col} not found, using available columns")
-        # Fallback to any available identifying column
-        possible_cols = ['process.name', 'user.name', 'host.hostname', 'destination.port']
-        for col in possible_cols:
-            if col in historical_data.columns:
-                entity_col = col
-                break
-        else:
-            return {}
-    
-    # Ensure event_count exists
-    if "event_count" not in historical_data.columns:
-        logger.warning("event_count not found, creating default")
-        historical_data["event_count"] = 1
-    
-    # Group data by entity
-    entity_groups = historical_data.groupby(entity_col)
-    
-    for entity, group in entity_groups:
-        # Basic statistics
-        stats = {
-            "mean": group["event_count"].mean(),
-            "std": group["event_count"].std(),
-            "median": group["event_count"].median(),
-            "max": group["event_count"].max(),
-            "min": group["event_count"].min()
-        }
-        
-        # Handle very small standard deviations
-        if stats["std"] < 0.1 or pd.isna(stats["std"]):
-            stats["std"] = max(0.1, stats["mean"] * 0.1)
-        
-        # Calculate percentiles
-        percentiles = {
-            "p50": group["event_count"].quantile(0.5),
-            "p75": group["event_count"].quantile(0.75),
-            "p90": group["event_count"].quantile(0.9),
-            "p95": group["event_count"].quantile(0.95),
-            "p99": group["event_count"].quantile(0.99)
-        }
-        stats["percentiles"] = percentiles
-        
-        # Time-based patterns
-        if "hour_of_day" in group.columns:
-            hour_patterns = group.groupby("hour_of_day")["event_count"].mean().to_dict()
-            stats["hourly_patterns"] = hour_patterns
-        
-        if "day_of_week" in group.columns:
-            day_patterns = group.groupby("day_of_week")["event_count"].mean().to_dict()
-            stats["daily_patterns"] = day_patterns
-        
-        baselines[entity] = stats
-    
-    logger.info(f"Calculated baselines for {len(baselines)} entities")
-    return baselines
-def aggregate_data_for_baseline(df, config, data_type="process"):
+        logger.error(f"Unknown data type for baseline: {data_type}")
+        return pd.DataFrame()
+
+SYSTEM_PATHS = {
+    "system_binaries": [
+        "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", 
+        "/usr/local/bin/", "/usr/local/sbin/"
+    ],
+    "user_paths": ["/home/", "~/", "/Users/"],
+    "temp_paths": ["/tmp/", "/var/tmp/", "/dev/shm/"],
+    "script_paths": ["/opt/", "/usr/share/", "/etc/init.d/", "/etc/systemd/"],
+    "suspicious_paths": ["/var/www/", "/srv/", "/mnt/", "/media/", "/proc/self/", "/.hidden/"]
+}
+
+def ensure_process_fields(df):
     """
-    Aggregate data to create event counts for baseline training.
+    Ensure all critical fields exist in process data.
     """
-    if df.empty:
-        logger.warning("Empty dataframe for aggregation")
-        return df
+    # Define all fields that models might expect
+    required_fields = {
+        # Process fields
+        'process.pid': -1,
+        'process.parent.pid': -1,
+        'process.name': 'unknown',
+        'process.executable': '',
+        'process.command_line': '',
+        'process.args': [],
+        'process.working_directory': '',
+        'process.hash.sha256': '',
+        
+        # User fields
+        'user.name': 'unknown',
+        # 'user.id': -1,
+        'user.Ext.real.id': -1,
+        
+        # Group fields  
+        # 'group.id': -1,
+        'group.name': 'unknown',
+        'group.Ext.real.id': -1,
+        
+        # Host fields
+        'host.hostname': 'unknown',
+        'host.id': 'unknown',
+        
+        # Event fields
+        'event.category': 'process',
+        'event.type': 'start',
+        'event.action': 'process_started',
+        
+        # Timestamp
+        '@timestamp': pd.Timestamp.now(tz='UTC')
+    }
     
-    # Ensure timestamp column exists
-    if "@timestamp" not in df.columns:
-        logger.error("No @timestamp column found")
-        return df
+    for field, default_value in required_fields.items():
+        if field not in df.columns:
+            df[field] = default_value
+            logger.debug(f"Added missing field '{field}' with default value")
     
-    # Create time buckets (e.g., 5-minute intervals)
-    df["time_bucket"] = pd.to_datetime(df["@timestamp"]).dt.floor('5T')
-    
-    # Define aggregation columns based on data type and actual fields
-    if data_type == "process":
-        group_cols = ["time_bucket", "host.hostname", "process.name", "user.name"]
-    elif data_type == "network":
-        group_cols = ["time_bucket", "process.name", "destination.port", "network.direction"]
-        # Only add geo if it exists and has data
-        if "destination.geo.country_name" in df.columns and df["destination.geo.country_name"].notna().any():
-            group_cols.append("destination.geo.country_name")
-    elif data_type == "user":
-        group_cols = ["time_bucket", "host.hostname", "user.name"]
-    elif data_type == "discovery":
-        group_cols = ["time_bucket", "host.hostname", "process.name", "user.name"]
-    elif data_type == "metadata":
-        group_cols = ["time_bucket", "host.hostname", "process.name"]
-    else:
-        group_cols = ["time_bucket", "host.hostname"]
-    
-    # Filter to only existing columns
-    group_cols = [col for col in group_cols if col in df.columns]
-    
-    if not group_cols:
-        logger.error("No grouping columns found")
-        return df
-    
-    # Count events per group
-    event_counts = df.groupby(group_cols).size().reset_index(name='event_count')
-    
-    # Aggregate other features
-    agg_dict = {}
-    
-    # Keep first timestamp
-    if "@timestamp" in df.columns:
-        agg_dict["@timestamp"] = "first"
-    
-    # Aggregate numeric features
-    numeric_features = [
-        "is_root_user", "is_system_user", "is_compiler_activity",
-        "is_sudo_command", "has_pipes", "has_redirection",
-        "is_well_known_port", "is_ephemeral_port", "is_inbound", "is_outbound",
-        "hour_of_day", "day_of_week", "is_business_hours", "is_weekend"
-    ]
-    
-    for feature in numeric_features:
-        if feature in df.columns:
-            agg_dict[feature] = "mean"
-    
-    # Aggregate categorical features (take mode)
-    categorical_features = [
-        "event.type", "event.action", "network.transport", "network.type"
-    ]
-    
-    for feature in categorical_features:
-        if feature in df.columns:
-            agg_dict[feature] = lambda x: x.mode()[0] if len(x.mode()) > 0 else x.iloc[0]
-    
-    # Perform aggregation
-    if agg_dict:
-        aggregated_features = df.groupby(group_cols).agg(agg_dict).reset_index()
-        # Merge with event counts
-        aggregated = event_counts.merge(aggregated_features, on=group_cols, how='left')
-    else:
-        aggregated = event_counts
-    
-    logger.info(f"Aggregated {len(df)} records into {len(aggregated)} time buckets")
-    logger.info(f"Event count range: {aggregated['event_count'].min()} to {aggregated['event_count'].max()}")
-    
-    return aggregated
+    return df
 
 def preprocess_process_data(df):
     """
-    Preprocess process execution data for anomaly detection.
+    Enhanced preprocessing that ensures ALL features are calculated correctly.
     """
     if df.empty:
-        logger.warning("Empty dataframe received for process preprocessing.")
         return df
     
-    logger.info(f"Initial process dataframe shape: {df.shape}")
+    logger.info(f"Preprocessing process data: {len(df)} records with {len(df.columns)} fields")
     
-    # Convert timestamp
-    if "@timestamp" in df.columns:
-        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        df.dropna(subset=["@timestamp"], inplace=True)
-        df.sort_values("@timestamp", inplace=True)
+    # Ensure all required fields exist first
+    df = ensure_process_fields(df)
     
-    # Handle missing process names
-    if "process.name" in df.columns:
-        df["process.name"].fillna("unknown", inplace=True)
-        
-        # Add compiler detection
-        df["is_compiler_activity"] = df["process.name"].apply(
-            lambda x: 1 if any(compiler in str(x).lower() for compiler in [
-                "gcc", "g++", "clang", "make", "cmake", "javac", "rustc", 
-                "go", "python", "node", "npm", "pip", "cargo"
-            ]) else 0
-        )
-        
-        logger.info(f"Unique processes in data: {df['process.name'].nunique()}")
-        logger.info(f"Compiler activity detected in {df['is_compiler_activity'].sum()} events")
+    # Validate and fix field mappings
+    df = validate_and_fix_field_mappings(df)
     
-    # Create time-based features
-    if "@timestamp" in df.columns:
-        df["hour_of_day"] = df["@timestamp"].dt.hour
-        df["day_of_week"] = df["@timestamp"].dt.dayofweek
-        df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & 
-                                 (df["day_of_week"] <= 4)).astype(int)
-        df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
-    
-    # Process executable path analysis
-    if "process.executable" in df.columns:
-        df["process.executable"].fillna("", inplace=True)
-        df["is_system_path"] = df["process.executable"].apply(
-            lambda x: 1 if any(path in str(x) for path in ["/usr/bin", "/bin", "/sbin", "/usr/sbin"]) else 0
-        )
-        df["is_snap_process"] = df["process.executable"].apply(
-            lambda x: 1 if "/snap/" in str(x) else 0
-        )
-        df["is_tmp_execution"] = df["process.executable"].apply(
-            lambda x: 1 if any(path in str(x) for path in ["/tmp", "/var/tmp", "/dev/shm"]) else 0
-        )
-    
-    # Command line analysis
+    # === COMMAND LINE ANALYSIS ===
     if "process.command_line" in df.columns:
-        df["process.command_line"].fillna("", inplace=True)
-        df["command_length"] = df["process.command_line"].str.len()
+        cmd_line = df["process.command_line"].fillna("")
         
-        df["is_sudo_command"] = df["process.command_line"].str.contains(r'\bsudo\b', na=False, regex=True).astype(int)
-        df["has_pipes"] = df["process.command_line"].str.contains(r'\|', na=False, regex=True).astype(int)
-        df["has_redirection"] = df["process.command_line"].str.contains(r'[><]', na=False, regex=True).astype(int)
+        # Command length and word count
+        df["command_length"] = cmd_line.str.len()
+        df["command_word_count"] = cmd_line.str.split().apply(len)  # Fixed: use apply(len) instead of str.len()
         
-        df["has_suspicious_chars"] = df["process.command_line"].apply(
-            lambda x: 1 if any(char in str(x) for char in ["|", "&", ";", ">", "<", "`", "$("]) else 0
+        # Security indicators
+        df["has_pipe"] = cmd_line.str.contains('|', regex=False, na=False).astype(int)
+        df["has_redirection"] = cmd_line.str.contains('[<>]', regex=True, na=False).astype(int)
+        df["has_backtick"] = cmd_line.str.contains('`', regex=False, na=False).astype(int)
+        df["has_dollar_paren"] = cmd_line.str.contains(r'\$\(', regex=True, na=False).astype(int)
+        df["has_semicolon"] = cmd_line.str.contains(';', regex=False, na=False).astype(int)
+        df["has_ampersand"] = cmd_line.str.contains('&', regex=False, na=False).astype(int)
+        df["has_suspicious_chars"] = (
+            df["has_pipe"] | df["has_redirection"] | df["has_backtick"] | 
+            df["has_dollar_paren"] | df["has_semicolon"] | df["has_ampersand"]
+        ).astype(int)
+        
+        # Command risk score
+        df["command_risk_score"] = (
+            df["has_pipe"] * 2 +
+            df["has_redirection"] * 3 +
+            df["has_backtick"] * 4 +
+            df["has_dollar_paren"] * 4 +
+            df["has_semicolon"] * 2 +
+            df["has_ampersand"] * 2
         )
-        df["has_encoded_content"] = df["process.command_line"].apply(
-            lambda x: 1 if any(pattern in str(x).lower() for pattern in ["base64", "echo", "eval", "exec"]) else 0
-        )
-        
-        df["has_download_commands"] = df["process.command_line"].apply(
-            lambda x: 1 if any(cmd in str(x).lower() for cmd in ["wget", "curl", "nc ", "netcat"]) else 0
-        )
-        
-        logger.info(f"Sudo commands detected: {df['is_sudo_command'].sum()}")
-        logger.info(f"Commands with pipes: {df['has_pipes'].sum()}")
-        logger.info(f"Commands with redirection: {df['has_redirection'].sum()}")
-    
-    # Process arguments analysis - using args_count directly
-    if "process.args_count" in df.columns:
-        df["args_count"] = pd.to_numeric(df["process.args_count"], errors='coerce').fillna(0)
-    elif "process.args" in df.columns:
-        df["args_count"] = df["process.args"].apply(lambda x: len(x) if isinstance(x, list) else 0)
     else:
-        df["args_count"] = 0
+        # Ensure ALL command features exist with defaults
+        df["command_length"] = 0
+        df["command_word_count"] = 0
+        df["has_pipe"] = 0
+        df["has_redirection"] = 0
+        df["has_backtick"] = 0
+        df["has_dollar_paren"] = 0
+        df["has_semicolon"] = 0
+        df["has_ampersand"] = 0
+        df["has_suspicious_chars"] = 0
+        df["command_risk_score"] = 0
     
-    # User context analysis - updated with correct field names
+    # === PID RELATIONSHIP FEATURES ===
+    # Ensure PID fields are numeric
+    if "process.pid" in df.columns:
+        df["process.pid"] = pd.to_numeric(df["process.pid"], errors='coerce').fillna(-1)
+    else:
+        df["process.pid"] = -1
+    
+    if "process.parent.pid" in df.columns:
+        df["process.parent.pid"] = pd.to_numeric(df["process.parent.pid"], errors='coerce').fillna(-1)
+    else:
+        df["process.parent.pid"] = -1
+    
+    # Calculate PID difference
+    df["pid_difference"] = df["process.pid"] - df["process.parent.pid"]
+    df["unusual_pid_relationship"] = (df["pid_difference"] < 0).astype(int)
+    
+    # === PROCESS RELATIONSHIPS ===
+    if "process.parent.name" in df.columns and "process.name" in df.columns:
+        parent = df["process.parent.name"].fillna("")
+        child = df["process.name"].fillna("")
+        
+        # Define suspicious parent-child relationships
+        df["suspicious_parent"] = (
+            # Web servers spawning shells
+            ((parent.str.contains("apache|nginx|httpd", case=False, na=False)) & 
+             (child.str.contains("sh$|bash|cmd|nc|netcat", case=False, na=False))) |
+            # Databases spawning shells
+            ((parent.str.contains("mysql|postgres|mongo|oracle", case=False, na=False)) & 
+             (child.str.contains("sh$|bash|cmd", case=False, na=False))) |
+            # System processes spawning network tools
+            ((parent.isin(["systemd", "init"])) & 
+             (child.isin(["nc", "netcat", "nmap", "tcpdump", "wget", "curl"]))) |
+            # Office applications spawning shells
+            ((parent.str.contains("word|excel|powerpoint|acrobat", case=False, na=False)) & 
+             (child.str.contains("sh$|bash|cmd", case=False, na=False)))
+        ).astype(int)
+    else:
+        df["suspicious_parent"] = 0
+    
+    # === PROCESS CATEGORIZATION ===
+    if "process.name" in df.columns:
+        proc_name = df["process.name"].fillna("")
+        
+        # All process categories needed by models
+        df["is_sudo_command"] = (proc_name == "sudo").astype(int)
+        df["is_su_command"] = (proc_name == "su").astype(int)
+        df["is_compiler_activity"] = proc_name.isin([
+            'gcc', 'g++', 'cc', 'make', 'cmake', 'clang', 'javac'
+        ]).astype(int)
+        df["is_dev_tool"] = proc_name.isin([
+            'gdb', 'strace', 'ltrace', 'objdump', 'readelf', 'strings'
+        ]).astype(int)
+        df["is_network_tool"] = proc_name.isin([
+            'nc', 'netcat', 'nmap', 'tcpdump', 'wireshark', 'curl', 'wget'
+        ]).astype(int)
+    
+    # === PATH ANALYSIS ===
+    if "process.executable" in df.columns:
+        exe_path = df["process.executable"].fillna("")
+        df["is_system_path"] = exe_path.str.contains(
+            "/bin/|/sbin/|/usr/bin/|/usr/sbin/", na=False
+        ).astype(int)
+        df["is_temp_path"] = exe_path.str.contains(
+            "/tmp/|/var/tmp/|/dev/shm/", na=False
+        ).astype(int)
+        df["is_home_path"] = exe_path.str.contains("/home/", na=False).astype(int)
+    else:
+        df["is_system_path"] = 0
+        df["is_temp_path"] = 0
+        df["is_home_path"] = 0
+    
+    # === USER CONTEXT ===
     if "user.name" in df.columns:
-        df["user.name"].fillna("unknown", inplace=True)
         df["is_root_user"] = (df["user.name"] == "root").astype(int)
-        df["is_system_user"] = df["user.name"].apply(
-            lambda x: 1 if str(x) in [
-                "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", 
-                "news", "uucp", "proxy", "www-data", "backup", "list", "irc",
-                "nginx", "apache", "mysql", "postgres"
-            ] else 0
-        )
-    elif "user.id" in df.columns:
-        df["user.id"] = pd.to_numeric(df["user.id"], errors='coerce').fillna(-1)
-        df["is_root_user"] = (df["user.id"] == 0).astype(int)
-        df["is_system_user"] = ((df["user.id"] > 0) & (df["user.id"] < 1000)).astype(int)
-        if "user.name" not in df.columns:
-            df["user.name"] = df["user.id"].astype(str)
+        df["is_service_account"] = df["user.name"].str.match(
+            r'^(www-data|nginx|apache|mysql|postgres|mongodb|redis|elasticsearch|nobody|daemon)$',
+            na=False
+        ).astype(int)
     else:
-        df["user.name"] = "unknown"
         df["is_root_user"] = 0
-        df["is_system_user"] = 0
+        df["is_service_account"] = 0
     
-    # Hash-based features
-    if "process.hash.sha256" in df.columns:
-        df["has_hash"] = df["process.hash.sha256"].notna().astype(int)
-    else:
-        df["has_hash"] = 0
+    # Hash verification
+    df["has_hash"] = df["process.hash.sha256"].notna().astype(int)
     
-    # Parent process analysis
-    if "process.parent.name" in df.columns:
-        df["process.parent.name"].fillna("unknown", inplace=True)
-        df["has_suspicious_parent"] = df["process.parent.name"].apply(
-            lambda x: 1 if any(parent in str(x).lower() for parent in [
-                "bash", "sh", "cmd", "powershell", "python", "perl", "ruby"
-            ]) else 0
-        )
-    else:
-        df["has_suspicious_parent"] = 0
-    
-    # Environment variables count
-    if "process.env_vars" in df.columns:
-        df["env_vars_count"] = df["process.env_vars"].apply(lambda x: len(x) if isinstance(x, list) else 0)
-    else:
-        df["env_vars_count"] = 0
-    
-    # Event type analysis
-    if "event.type" in df.columns:
-        df["is_process_start"] = df["event.type"].apply(lambda x: 1 if "start" in x else 0)
-        df["is_process_end"] = df["event.type"].apply(lambda x: 1 if "end" in x else 0)
-    
-    # Add event_count for aggregation
+    # Event count
     df["event_count"] = 1
     
-    logger.info(f"Preprocessed process dataframe shape: {df.shape}")
-    logger.info(f"Root user events: {df['is_root_user'].sum()}")
-    logger.info(f"System user events: {df['is_system_user'].sum()}")
+    # Log feature creation
+    feature_list = [
+        "command_word_count", "pid_difference", "unusual_pid_relationship",
+        "suspicious_parent", "has_dollar_paren", "has_semicolon", "has_ampersand"
+    ]
+    logger.info(f"Created critical features: {feature_list}")
+    required_fields = {
+        'is_sudo_command': 0,
+        'is_su_command': 0,
+        'is_compiler_activity': 0,
+        'is_dev_tool': 0,
+        'hour_of_day': 12,
+        'is_business_hours': 1,
+        'command_length': 0,
+        'args_count': 0,
+        'has_suspicious_chars': 0
+    }
     
+    for field, default_value in required_fields.items():
+        if field not in df.columns:
+            df[field] = default_value
+    
+    # GENERATE COMPUTED FIELDS if base data exists:
+    if 'process.command_line' in df.columns:
+        cmd_line = df['process.command_line'].fillna('').astype(str)
+        
+        # Update fields that were set to defaults
+        if 'command_length' not in df.columns or df['command_length'].iloc[0] == 0:
+            df['command_length'] = cmd_line.str.len()
+        
+        if 'args_count' not in df.columns or df['args_count'].iloc[0] == 0:
+            df['args_count'] = cmd_line.str.split().str.len() - 1
+            df['args_count'] = df['args_count'].clip(lower=0)
+        
+        if 'has_suspicious_chars' not in df.columns or df['has_suspicious_chars'].iloc[0] == 0:
+            df['has_suspicious_chars'] = cmd_line.str.contains(r'[;&|`$<>()]', regex=True, na=False).astype(int)
+        
+        if 'is_sudo_command' not in df.columns or df['is_sudo_command'].iloc[0] == 0:
+            df['is_sudo_command'] = cmd_line.str.startswith('sudo', na=False).astype(int)
+        
+        if 'is_su_command' not in df.columns or df['is_su_command'].iloc[0] == 0:
+            df['is_su_command'] = cmd_line.str.startswith('su ', na=False).astype(int)
+    
+    # Generate temporal fields
+    if 'hour_of_day' not in df.columns and '@timestamp' in df.columns:
+        try:
+            timestamps = pd.to_datetime(df['@timestamp'], errors='coerce')
+            df['hour_of_day'] = timestamps.dt.hour.fillna(12)
+        except:
+            df['hour_of_day'] = 12
+    
+    if 'is_business_hours' not in df.columns and 'hour_of_day' in df.columns:
+        hour = pd.to_numeric(df['hour_of_day'], errors='coerce').fillna(12)
+        df['is_business_hours'] = ((hour >= 9) & (hour <= 17)).astype(int)
     return df
 
-import re
-import ipaddress
 
+
+# def preprocess_network_data(df):
+#     """
+#     Enhanced network data preprocessing that preserves all fields.
+#     """
+#     if df.empty:
+#         return df
+    
+#     logger.info(f"Preprocessing network data: {len(df)} records")
+    
+#     # Ensure network-specific fields exist
+#     network_fields = {
+#         'destination.ip': '0.0.0.0',
+#         'destination.port': 0,
+#         'source.ip': '0.0.0.0',
+#         'source.port': 0,
+#         'network.transport': 'unknown',
+#         'network.direction': 'unknown',
+#         'network.bytes': 0,
+#         'network.packets': 0,
+#         'destination.geo.country_name': 'unknown',
+#         'event.action': 'network_flow',
+#         'event.category': 'network',
+#         'process.name': 'unknown',
+#         'user.name': 'unknown',
+#         'host.hostname': 'unknown'
+#     }
+    
+#     for field, default in network_fields.items():
+#         if field not in df.columns:
+#             df[field] = default
+#             logger.debug(f"Added missing network field '{field}'")
+    
+#     # Network-specific features
+#     if "destination.port" in df.columns:
+#         df["is_common_port"] = df["destination.port"].isin([80, 443, 22, 21, 25, 53, 110, 143]).astype(int)
+#         df["is_high_port"] = (df["destination.port"] > 1024).astype(int)
+#         df["is_privileged_port"] = (df["destination.port"] < 1024).astype(int)
+#         df["is_ephemeral_port"] = ((df["destination.port"] >= 49152) & (df["destination.port"] <= 65535)).astype(int)
+    
+#     if "network.transport" in df.columns:
+#         df["is_tcp"] = (df["network.transport"].str.lower() == "tcp").astype(int)
+#         df["is_udp"] = (df["network.transport"].str.lower() == "udp").astype(int)
+#         df["is_icmp"] = (df["network.transport"].str.lower() == "icmp").astype(int)
+    
+#     if "network.bytes" in df.columns:
+#         df["large_transfer"] = (df["network.bytes"] > 1000000).astype(int)  # > 1MB
+#         df["bytes_log"] = np.log1p(df["network.bytes"])
+    
+#     df["event_count"] = 1
+    
+#     return df
 
 def preprocess_network_data(df):
     """
-    Comprehensive preprocessing of network activity data from endpoint events.
-    Extracts and calculates all required features for network anomaly detection
-    based on the actual data fields present.
+    FIXED: Enhanced network data preprocessing that preserves real IP addresses.
     """
     if df.empty:
-        logger.error("Empty dataframe received for network preprocessing.")
         return df
     
-    logger.info(f"Initial network dataframe shape: {df.shape}")
-    original_columns = set(df.columns)
-    logger.info(f"Original columns: {sorted(list(original_columns))}")
-    
-    # PART 1: BASIC PREPROCESSING
-    
-    # Convert timestamp if needed
-    if "@timestamp" in df.columns:
-        if not pd.api.types.is_datetime64_any_dtype(df["@timestamp"]):
-            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        df.dropna(subset=["@timestamp"], inplace=True)
-        df.sort_values("@timestamp", inplace=True)
-        logger.info(f"Timestamp range: {df['@timestamp'].min()} to {df['@timestamp'].max()}")
-    else:
-        logger.error("@timestamp field not found in data - this is a required field")
-        return df
-    
-    # PART 2: EVENT COUNT FEATURE
-    
-    # Check for existing event count fields
-    event_count_candidates = ['event_count', 'event.count', 'event.sequence', 'event.id']
-    event_count_field = None
-    
-    for field in event_count_candidates:
-        if field in df.columns:
-            logger.info(f"Found candidate event count field: {field}")
-            # Check if the field is numeric or can be converted to numeric
-            try:
-                if not pd.api.types.is_numeric_dtype(df[field]):
-                    df[field] = pd.to_numeric(df[field], errors='coerce')
-                
-                # Check if the field has valid values (not all NaN)
-                if not df[field].isna().all():
-                    event_count_field = field
-                    logger.info(f"Using {field} as event count field")
-                    # If this is a sequence number or ID, we count it as 1 event
-                    if field in ['event.sequence', 'event.id']:
-                        logger.info(f"Converting {field} to event_count (1 per event)")
-                        df['event_count'] = 1
-                    else:
-                        # Otherwise, copy the field
-                        df['event_count'] = df[field]
-                    break
-            except:
-                logger.warning(f"Could not convert {field} to numeric format")
-    
-    if event_count_field is None:
-        logger.info("No suitable event count field found, using default value of 1")
-        df['event_count'] = 1
-    
-    # PART 3: DOMAIN-SPECIFIC FEATURES
-    
-    # Feature: args_count - Count command line arguments
-    if "process.args_count" in df.columns:
-        logger.info("Using existing process.args_count field")
-        df["args_count"] = df["process.args_count"]
-    elif "process.args" in df.columns:
-        logger.info("Calculating args_count from process.args array")
-        df["args_count"] = df["process.args"].apply(
-            lambda args: len(args) if isinstance(args, list) else 0
-        )
-    elif "process.command_line" in df.columns:
-        logger.info("Calculating args_count from process.command_line")
-        df["args_count"] = df["process.command_line"].apply(
-            lambda cmd: len(str(cmd).split()) - 1 if pd.notna(cmd) else 0
-        )
-    else:
-        logger.warning("No fields available for args_count calculation")
-        df["args_count"] = 0
-    
-    # Feature: command_length - Length of command line
-    if "process.command_line" in df.columns:
-        logger.info("Calculating command_length from process.command_line")
-        df["command_length"] = df["process.command_line"].apply(
-            lambda cmd: len(str(cmd)) if pd.notna(cmd) else 0
-        )
-        logger.info(f"Command length statistics: min={df['command_length'].min()}, max={df['command_length'].max()}, mean={df['command_length'].mean():.2f}")
-    else:
-        logger.warning("process.command_line not found for command_length calculation")
-        df["command_length"] = 0
-    
-    # Feature: has_suspicious_chars - Check for suspicious characters in command line
-    suspicious_patterns = [
-        r'`', r'\$\(', r'\|\|', r'&&', r';', r'\${', r'\\x[0-9a-fA-F]{2}', 
-        r'%[0-9a-fA-F]{2}', r'\\u[0-9a-fA-F]{4}', r'eval\(', r'exec\('
-    ]
-    suspicious_regex = '|'.join(suspicious_patterns)
-    
-    if "process.command_line" in df.columns:
-        logger.info("Checking for suspicious characters in command lines")
-        df["has_suspicious_chars"] = df["process.command_line"].apply(
-            lambda cmd: 1 if pd.notna(cmd) and re.search(suspicious_regex, str(cmd)) else 0
-        )
-        suspicious_count = df["has_suspicious_chars"].sum()
-        logger.info(f"Found {suspicious_count} command lines with suspicious characters")
-    else:
-        logger.warning("process.command_line not found for has_suspicious_chars calculation")
-        df["has_suspicious_chars"] = 0
-    
-    # Feature: has_encoded_content - Check for base64 or hex-encoded content
-    encoded_patterns = [
-        r'base64 -d', r'base64 -decode', r'base64\.b64decode', 
-        r'[A-Za-z0-9+/]{20,}={0,2}', r'0x[0-9a-fA-F]{10,}'
-    ]
-    encoded_regex = '|'.join(encoded_patterns)
-    
-    if "process.command_line" in df.columns:
-        logger.info("Checking for encoded content in command lines")
-        df["has_encoded_content"] = df["process.command_line"].apply(
-            lambda cmd: 1 if pd.notna(cmd) and re.search(encoded_regex, str(cmd)) else 0
-        )
-        encoded_count = df["has_encoded_content"].sum()
-        logger.info(f"Found {encoded_count} command lines with encoded content")
-    else:
-        logger.warning("process.command_line not found for has_encoded_content calculation")
-        df["has_encoded_content"] = 0
-    
-    # Feature: is_system_path - Check if command is executed from system paths
-    system_paths = ['/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', '/usr/local/bin/', '/usr/local/sbin/']
-    
-    if "process.executable" in df.columns:
-        logger.info("Checking for system path executions")
-        df["is_system_path"] = df["process.executable"].apply(
-            lambda path: 1 if pd.notna(path) and any(str(path).startswith(sys_path) for sys_path in system_paths) else 0
-        )
-        system_path_count = df["is_system_path"].sum()
-        logger.info(f"Found {system_path_count} executions from system paths")
-    else:
-        logger.warning("process.executable not found for is_system_path calculation")
-        df["is_system_path"] = 0
-    
-    # Feature: is_tmp_execution - Check if command is executed from /tmp
-    tmp_paths = ['/tmp/', '/var/tmp/', '/dev/shm/']
-    
-    if "process.executable" in df.columns:
-        logger.info("Checking for temporary directory executions")
-        df["is_tmp_execution"] = df["process.executable"].apply(
-            lambda path: 1 if pd.notna(path) and any(str(path).startswith(tmp_path) for tmp_path in tmp_paths) else 0
-        )
-        tmp_execution_count = df["is_tmp_execution"].sum()
-        logger.info(f"Found {tmp_execution_count} executions from temporary directories")
-    else:
-        logger.warning("process.executable not found for is_tmp_execution calculation")
-        df["is_tmp_execution"] = 0
-    
-    # Feature: is_root_user - Check if the process is running as root
-    root_found = False
-    
-    if "user.id" in df.columns:
-        logger.info("Checking for root user via user.id")
-        df["is_root_user"] = df["user.id"].apply(
-            lambda uid: 1 if pd.notna(uid) and (str(uid) == "0" or str(uid).lower() == "root") else 0
-        )
-        root_found = True
-    
-    if not root_found and "user.Ext.real.id" in df.columns:
-        logger.info("Checking for root user via user.Ext.real.id")
-        df["is_root_user"] = df["user.Ext.real.id"].apply(
-            lambda uid: 1 if pd.notna(uid) and (uid == 0 or str(uid) == "0") else 0
-        )
-        root_found = True
-    
-    if not root_found and "user.name" in df.columns:
-        logger.info("Checking for root user via user.name")
-        df["is_root_user"] = df["user.name"].apply(
-            lambda name: 1 if pd.notna(name) and str(name).lower() == "root" else 0
-        )
-        root_found = True
-    
-    if not root_found and "user.Ext.real.name" in df.columns:
-        logger.info("Checking for root user via user.Ext.real.name")
-        df["is_root_user"] = df["user.Ext.real.name"].apply(
-            lambda name: 1 if pd.notna(name) and str(name).lower() == "root" else 0
-        )
-        root_found = True
-    
-    if not root_found:
-        logger.warning("No user fields found for is_root_user calculation")
-        df["is_root_user"] = 0
-    else:
-        root_user_count = df["is_root_user"].sum()
-        logger.info(f"Found {root_user_count} processes running as root")
-    
-    # Feature: has_hash - Check if command line contains hash-like strings
-    hash_patterns = [
-        r'[a-fA-F0-9]{32}', # MD5
-        r'[a-fA-F0-9]{40}', # SHA1
-        r'[a-fA-F0-9]{64}'  # SHA256
-    ]
-    hash_regex = '|'.join(hash_patterns)
-    
-    if "process.command_line" in df.columns:
-        logger.info("Checking for hash-like strings in command lines")
-        df["has_hash"] = df["process.command_line"].apply(
-            lambda cmd: 1 if pd.notna(cmd) and re.search(hash_regex, str(cmd)) else 0
-        )
-        hash_count = df["has_hash"].sum()
-        logger.info(f"Found {hash_count} command lines with hash-like strings")
-    else:
-        logger.warning("process.command_line not found for has_hash calculation")
-        df["has_hash"] = 0
-    
-    # Feature: env_vars_count - Count environment variables (approximation)
-    env_var_pattern = r'\$[A-Za-z_][A-Za-z0-9_]*|\${[A-Za-z_][A-Za-z0-9_]*}'
-    
-    if "process.command_line" in df.columns:
-        logger.info("Counting environment variables in command lines")
-        df["env_vars_count"] = df["process.command_line"].apply(
-            lambda cmd: len(re.findall(env_var_pattern, str(cmd))) if pd.notna(cmd) else 0
-        )
-        env_var_stats = df["env_vars_count"].describe()
-        logger.info(f"Environment variable count statistics: {env_var_stats.to_dict()}")
-    else:
-        logger.warning("process.command_line not found for env_vars_count calculation")
-        df["env_vars_count"] = 0
-    
-    # PART 4: VERIFY AND REPORT
-    
-    # Check for required features
-    required_features = [
-        'event_count', '@timestamp', 'process.name', 'args_count', 'command_length',
-        'has_suspicious_chars', 'has_encoded_content', 'is_system_path', 
-        'is_tmp_execution', 'is_root_user', 'has_hash', 'env_vars_count'
-    ]
-    
-    missing_features = [f for f in required_features if f not in df.columns]
-    if missing_features:
-        logger.error(f"Still missing required features after preprocessing: {missing_features}")
-    else:
-        logger.info("All required features are present in the preprocessed dataset")
-    
-    # Report on new features added
-    new_columns = set(df.columns) - original_columns
-    logger.info(f"Added {len(new_columns)} new features: {sorted(list(new_columns))}")
-    
-    # Check for any remaining NaN values in the required features
-    nan_counts = df[required_features].isna().sum()
-    if nan_counts.sum() > 0:
-        logger.warning(f"NaN values in required features: {nan_counts[nan_counts > 0].to_dict()}")
-        # Fill NaN values in required features
-        df[required_features] = df[required_features].fillna(0)
-    
-    logger.info(f"Final preprocessed dataframe shape: {df.shape}")
-    
-    return df
-
-
-def preprocess_user_data(df, expected_feature_count=32):
-    """
-    Comprehensive preprocessing of user activity data for anomaly detection.
-    Ensures all required features are present and properly formatted.
-    
-    Args:
-        df: DataFrame with raw user activity data
-        expected_feature_count: Number of features the model expects (default: 32)
-        
-    Returns:
-        DataFrame with all required features for anomaly detection
-    """
-    if df.empty:
-        logger.warning("Empty dataframe received for user activity preprocessing.")
-        return df
-    
-    # Log initial dataframe details
-    original_columns = sorted(list(df.columns))
-    logger.info(f"Initial user activity dataframe shape: {df.shape}")
-    logger.info(f"Original columns ({len(original_columns)}): {original_columns}")
-    
-    # Check for critical fields
-    critical_fields = ['@timestamp', 'user.name', 'process.name', 'process.command_line']
-    missing_critical = [f for f in critical_fields if f not in original_columns]
-    if missing_critical:
-        logger.warning(f"Missing critical fields: {missing_critical}")
-    
-    # PART 1: BASIC PREPROCESSING
-    
-    # Convert timestamp
-    if "@timestamp" in df.columns:
-        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        df.dropna(subset=["@timestamp"], inplace=True)
-        df.sort_values("@timestamp", inplace=True)
-        logger.info(f"Timestamp range: {df['@timestamp'].min()} to {df['@timestamp'].max()}")
-    else:
-        logger.warning("@timestamp field missing - adding placeholder")
-        df["@timestamp"] = pd.Timestamp.now(tz='UTC')
-    
-    # PART 2: USER ANALYSIS FEATURES
-    
-    # User context
-    if "user.name" in df.columns:
-        df["user.name"].fillna("unknown", inplace=True)
-        df["is_root_user"] = (df["user.name"] == "root").astype(int)
-        df["is_service_user"] = df["user.name"].apply(
-            lambda x: 1 if str(x).lower() in ["www-data", "nginx", "apache", "mysql", "postgres", "redis"] else 0
-        )
-    else:
-        logger.warning("user.name field missing - adding placeholder")
-        df["user.name"] = "unknown"
-        df["is_root_user"] = 0
-        df["is_service_user"] = 0
-    
-    # PART 3: PROCESS ACTIVITY FEATURES
-    
-    # Command line analysis
-    if "process.command_line" in df.columns:
-        df["process.command_line"].fillna("", inplace=True)
-        df["is_sudo_command"] = df["process.command_line"].str.contains("sudo", case=False, na=False).astype(int)
-        df["is_su_command"] = df["process.command_line"].str.contains(" su ", case=False, na=False).astype(int)
-    else:
-        logger.warning("process.command_line field missing - adding placeholder")
-        df["process.command_line"] = ""
-        df["is_sudo_command"] = 0
-        df["is_su_command"] = 0
-    
-    # Process name analysis
-    if "process.name" in df.columns:
-        df["process.name"].fillna("unknown", inplace=True)
-    else:
-        logger.warning("process.name field missing - adding placeholder")
-        df["process.name"] = "unknown"
-    
-    # PART 4: CHECK EXISTING DOMAIN-SPECIFIC FEATURES
-    # First check which domain features are already present
-    
-    domain_features = [
-        'args_count', 'command_length', 'has_suspicious_chars', 
-        'has_encoded_content', 'is_system_path', 'is_tmp_execution', 
-        'is_root_user', 'has_hash', 'env_vars_count'
-    ]
-    
-    existing_domain = [f for f in domain_features if f in df.columns]
-    missing_domain = [f for f in domain_features if f not in df.columns]
-    
-    logger.info(f"Domain-specific features - Present: {len(existing_domain)}/{len(domain_features)}")
-    if existing_domain:
-        logger.info(f"  Found: {existing_domain}")
-    if missing_domain:
-        logger.info(f"  Missing: {missing_domain}")
-    
-    # PART 5: ADD MISSING DOMAIN-SPECIFIC FEATURES
-    
-    # Feature: args_count - Count command line arguments
-    if "args_count" not in df.columns:
-        logger.warning("Adding missing required feature: args_count")
-        if "process.args_count" in df.columns:
-            logger.info("Calculating args_count from process.args_count")
-            df["args_count"] = df["process.args_count"]
-        elif "process.args" in df.columns:
-            logger.info("Calculating args_count from process.args array")
-            df["args_count"] = df["process.args"].apply(
-                lambda args: len(args) if isinstance(args, list) else 0
-            )
-        elif "process.command_line" in df.columns:
-            logger.info("Calculating args_count from process.command_line")
-            df["args_count"] = df["process.command_line"].apply(
-                lambda cmd: len(str(cmd).split()) - 1 if pd.notna(cmd) else 0
-            )
-        else:
-            df["args_count"] = 0
-    
-    # Feature: command_length - Length of command line
-    if "command_length" not in df.columns:
-        logger.warning("Adding missing required feature: command_length")
-        if "process.command_line" in df.columns:
-            logger.info("Calculating command_length from process.command_line")
-            df["command_length"] = df["process.command_line"].apply(
-                lambda cmd: len(str(cmd)) if pd.notna(cmd) else 0
-            )
-        else:
-            df["command_length"] = 0
-    
-    # Feature: has_suspicious_chars - Check for suspicious characters in command line
-    if "has_suspicious_chars" not in df.columns:
-        logger.warning("Adding missing required feature: has_suspicious_chars")
-        suspicious_patterns = [
-            r'`', r'\$\(', r'\|\|', r'&&', r';', r'\${', r'\\x[0-9a-fA-F]{2}', 
-            r'%[0-9a-fA-F]{2}', r'\\u[0-9a-fA-F]{4}', r'eval\(', r'exec\('
-        ]
-        suspicious_regex = '|'.join(suspicious_patterns)
-        
-        if "process.command_line" in df.columns:
-            df["has_suspicious_chars"] = df["process.command_line"].apply(
-                lambda cmd: 1 if pd.notna(cmd) and re.search(suspicious_regex, str(cmd)) else 0
-            )
-        else:
-            df["has_suspicious_chars"] = 0
-    
-    # Feature: has_encoded_content - Check for base64 or hex-encoded content
-    if "has_encoded_content" not in df.columns:
-        logger.warning("Adding missing required feature: has_encoded_content")
-        encoded_patterns = [
-            r'base64 -d', r'base64 -decode', r'base64\.b64decode', 
-            r'[A-Za-z0-9+/]{20,}={0,2}', r'0x[0-9a-fA-F]{10,}'
-        ]
-        encoded_regex = '|'.join(encoded_patterns)
-        
-        if "process.command_line" in df.columns:
-            df["has_encoded_content"] = df["process.command_line"].apply(
-                lambda cmd: 1 if pd.notna(cmd) and re.search(encoded_regex, str(cmd)) else 0
-            )
-        else:
-            df["has_encoded_content"] = 0
-    
-    # Feature: is_system_path - Check if command is executed from system paths
-    if "is_system_path" not in df.columns:
-        logger.warning("Adding missing required feature: is_system_path")
-        system_paths = ['/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', '/usr/local/bin/', '/usr/local/sbin/']
-        
-        if "process.executable" in df.columns:
-            df["is_system_path"] = df["process.executable"].apply(
-                lambda path: 1 if pd.notna(path) and any(str(path).startswith(sys_path) for sys_path in system_paths) else 0
-            )
-        else:
-            df["is_system_path"] = 0
-    
-    # Feature: is_tmp_execution - Check if command is executed from /tmp
-    if "is_tmp_execution" not in df.columns:
-        logger.warning("Adding missing required feature: is_tmp_execution")
-        tmp_paths = ['/tmp/', '/var/tmp/', '/dev/shm/']
-        
-        if "process.executable" in df.columns:
-            df["is_tmp_execution"] = df["process.executable"].apply(
-                lambda path: 1 if pd.notna(path) and any(str(path).startswith(tmp_path) for tmp_path in tmp_paths) else 0
-            )
-        else:
-            df["is_tmp_execution"] = 0
-    
-    # Feature: is_root_user - already added in user analysis section above
-    if "is_root_user" not in df.columns:
-        logger.warning("Adding missing required feature: is_root_user")
-        if "user.id" in df.columns:
-            df["is_root_user"] = df["user.id"].apply(
-                lambda uid: 1 if pd.notna(uid) and (str(uid) == "0" or str(uid).lower() == "root") else 0
-            )
-        elif "user.Ext.real.id" in df.columns:
-            df["is_root_user"] = df["user.Ext.real.id"].apply(
-                lambda uid: 1 if pd.notna(uid) and (uid == 0 or str(uid) == "0") else 0
-            )
-        elif "user.name" in df.columns:
-            df["is_root_user"] = df["user.name"].apply(
-                lambda name: 1 if pd.notna(name) and str(name).lower() == "root" else 0
-            )
-        else:
-            df["is_root_user"] = 0
-    
-    # Feature: has_hash - Check if command line contains hash-like strings
-    if "has_hash" not in df.columns:
-        logger.warning("Adding missing required feature: has_hash")
-        hash_patterns = [
-            r'[a-fA-F0-9]{32}', # MD5
-            r'[a-fA-F0-9]{40}', # SHA1
-            r'[a-fA-F0-9]{64}'  # SHA256
-        ]
-        hash_regex = '|'.join(hash_patterns)
-        
-        if "process.command_line" in df.columns:
-            df["has_hash"] = df["process.command_line"].apply(
-                lambda cmd: 1 if pd.notna(cmd) and re.search(hash_regex, str(cmd)) else 0
-            )
-        else:
-            df["has_hash"] = 0
-    
-    # Feature: env_vars_count - Count environment variables (approximation)
-    if "env_vars_count" not in df.columns:
-        logger.warning("Adding missing required feature: env_vars_count")
-        env_var_pattern = r'\$[A-Za-z_][A-Za-z0-9_]*|\${[A-Za-z_][A-Za-z0-9_]*}'
-        
-        if "process.command_line" in df.columns:
-            df["env_vars_count"] = df["process.command_line"].apply(
-                lambda cmd: len(re.findall(env_var_pattern, str(cmd))) if pd.notna(cmd) else 0
-            )
-        else:
-            df["env_vars_count"] = 0
-    
-    # PART 6: CHECK EXISTING ACTIVITY FEATURES
-    
-    activity_features = ['is_compiler_activity', 'is_dev_tool']
-    existing_activity = [f for f in activity_features if f in df.columns]
-    missing_activity = [f for f in activity_features if f not in df.columns]
-    
-    if missing_activity:
-        logger.info(f"Adding missing activity features: {missing_activity}")
-    
-    # Compiler activity detection
-    if "is_compiler_activity" not in df.columns:
-        compiler_patterns = ["gcc", "g++", "clang", "make", "cmake", "javac", "python", "pip", "npm"]
-        if "process.name" in df.columns:
-            df["is_compiler_activity"] = df["process.name"].apply(
-                lambda x: 1 if any(comp in str(x).lower() for comp in compiler_patterns) else 0
-            )
-        else:
-            df["is_compiler_activity"] = 0
-    
-    # Development tool detection
-    if "is_dev_tool" not in df.columns:
-        dev_tools = ["git", "svn", "vim", "nano", "emacs", "code", "atom"]
-        if "process.name" in df.columns:
-            df["is_dev_tool"] = df["process.name"].apply(
-                lambda x: 1 if any(tool in str(x).lower() for tool in dev_tools) else 0
-            )
-        else:
-            df["is_dev_tool"] = 0
-    
-    # PART 7: CHECK EXISTING TIME-BASED FEATURES
-    
-    time_features = ['hour_of_day', 'day_of_week', 'is_business_hours', 'is_weekend', 'is_after_hours']
-    existing_time = [f for f in time_features if f in df.columns]
-    missing_time = [f for f in time_features if f not in df.columns]
-    
-    if existing_time:
-        logger.info(f"Existing time features: {existing_time}")
-    if missing_time:
-        logger.info(f"Adding missing time features: {missing_time}")
-    
-    # Basic time features
-    if "@timestamp" in df.columns:
-        if "hour_of_day" not in df.columns:
-            df["hour_of_day"] = df["@timestamp"].dt.hour
-        if "day_of_week" not in df.columns:
-            df["day_of_week"] = df["@timestamp"].dt.dayofweek
-        if "is_business_hours" not in df.columns:
-            df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & 
-                                     (df["day_of_week"] <= 4)).astype(int)
-        if "is_weekend" not in df.columns:
-            df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
-        if "is_after_hours" not in df.columns:
-            df["is_after_hours"] = (1 - df["is_business_hours"]).astype(int)
-    else:
-        # Default time features if timestamp not available
-        for feature in missing_time:
-            df[feature] = 0
-    
-    # PART 8: ADD EVENT COUNT
-    
-    if "event_count" not in df.columns:
-        logger.info("Adding event_count feature")
-        df["event_count"] = 1
-    
-    # PART 9: CHECK FEATURE COUNT AND ADD TIME SERIES FEATURES IF NEEDED
-    
-    # Check current feature count against expected
-    current_feature_count = len(df.columns)
-    
-    if current_feature_count < expected_feature_count:
-        logger.info(f"Current feature count ({current_feature_count}) below expected ({expected_feature_count})")
-        logger.info(f"Adding advanced time series features to match model expectations")
-        
-        # Time series features to potentially add
-        ts_features = [
-            'hour_sin', 'hour_cos', 'day_sin', 'day_cos',
-            'rolling_mean_3h', 'rolling_std_3h', 'rolling_max_3h',
-            'rolling_mean_6h', 'rolling_std_6h', 'rolling_max_6h',
-            'rolling_mean_12h', 'rolling_std_12h', 'rolling_max_12h',
-            'rolling_mean_24h', 'rolling_std_24h', 'rolling_max_24h',
-            'event_count_lag_1', 'event_count_lag_3', 'event_count_lag_6',
-            'event_count_lag_12', 'event_count_lag_24',
-            'event_count_roc', 'event_count_day_roc',
-            'expected_count', 'pattern_deviation', 'relative_deviation'
-        ]
-        
-        existing_ts = [f for f in ts_features if f in df.columns]
-        missing_ts = [f for f in ts_features if f not in df.columns]
-        
-        if existing_ts:
-            logger.info(f"Existing time series features: {existing_ts}")
-        
-        # Prioritize adding features in a logical order until we reach the expected count
-        features_to_add = []
-        for feature in missing_ts:
-            features_to_add.append(feature)
-            if len(df.columns) + len(features_to_add) >= expected_feature_count:
-                break
-        
-        logger.info(f"Adding {len(features_to_add)} time series features: {features_to_add}")
-        
-        # Cyclic time encoding
-        if "hour_sin" in features_to_add and "hour_of_day" in df.columns:
-            df["hour_sin"] = np.sin(2 * np.pi * df["hour_of_day"] / 24)
-        if "hour_cos" in features_to_add and "hour_of_day" in df.columns:
-            df["hour_cos"] = np.cos(2 * np.pi * df["hour_of_day"] / 24)
-        if "day_sin" in features_to_add and "day_of_week" in df.columns:
-            df["day_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
-        if "day_cos" in features_to_add and "day_of_week" in df.columns:
-            df["day_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
-        
-        # Add the rest of the time series features with reasonable default values
-        for feature in features_to_add:
-            if feature not in df.columns:  # Skip already added features
-                if feature.startswith('rolling_mean'):
-                    # Rolling means should be close to event_count
-                    df[feature] = df['event_count'] * (1 + np.random.normal(0, 0.1, size=len(df)))
-                elif feature.startswith('rolling_std'):
-                    # Standard deviations are small positive values
-                    df[feature] = np.abs(np.random.normal(0.5, 0.1, size=len(df)))
-                elif feature.startswith('rolling_max'):
-                    # Max values should be higher than event_count
-                    df[feature] = df['event_count'] * (1.2 + np.random.normal(0, 0.1, size=len(df)))
-                elif feature.endswith('_lag_1'):
-                    # Most recent lag close to current value
-                    df[feature] = df['event_count'] * (1 + np.random.normal(0, 0.05, size=len(df)))
-                elif '_lag_' in feature:
-                    # Other lags similar to event_count with more variation
-                    df[feature] = df['event_count'] * (1 + np.random.normal(0, 0.2, size=len(df)))
-                elif feature == 'event_count_roc':
-                    # Rate of change usually close to zero
-                    df[feature] = np.random.normal(0, 0.1, size=len(df))
-                elif feature == 'event_count_day_roc':
-                    # Day rate of change close to zero
-                    df[feature] = np.random.normal(0, 0.15, size=len(df))
-                elif feature == 'expected_count':
-                    # Expected count close to actual count
-                    df[feature] = df['event_count'] * (1 + np.random.normal(0, 0.1, size=len(df)))
-                elif feature == 'pattern_deviation':
-                    # Pattern deviation small positive value
-                    df[feature] = np.abs(np.random.normal(0, 0.2, size=len(df)))
-                elif feature == 'relative_deviation':
-                    # Relative deviation small positive value
-                    df[feature] = np.abs(np.random.normal(0, 0.2, size=len(df)))
-    
-    
-    
-    # Check if we still need more features
-    final_feature_count = len(df.columns)
-    if final_feature_count < expected_feature_count:
-        logger.warning(f"Final feature count ({final_feature_count}) still below expected ({expected_feature_count})")
-        logger.warning("Model may fail due to feature count mismatch")
-    
-    # Log features added
-    new_columns = sorted(list(set(df.columns) - set(original_columns)))
-    if new_columns:
-        logger.info(f"Added {len(new_columns)} new features: {new_columns}")
-    
-    logger.info(f"Final preprocessed dataframe shape: {df.shape}")
-    return df
-def preprocess_discovery_data(df):
-    """
-    Preprocess discovery commands data for anomaly detection.
-    """
-    if df.empty:
-        logger.warning("Empty dataframe received for discovery preprocessing.")
-        return df
-    
-    logger.info(f"Initial discovery dataframe shape: {df.shape}")
-    
-    # Convert timestamp
-    if "@timestamp" in df.columns:
-        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        df.dropna(subset=["@timestamp"], inplace=True)
-        df.sort_values("@timestamp", inplace=True)
-    
-    # Discovery command categorization
-    discovery_categories = {
-        "network": ["netstat", "ss", "lsof", "nmap", "arp", "route", "ip", "ifconfig"],
-        "process": ["ps", "top", "htop", "pgrep", "pidof"],
-        "user": ["who", "w", "users", "last", "lastlog", "id", "groups"],
-        "system": ["uname", "hostname", "uptime", "lscpu", "df", "mount"],
-        "service": ["systemctl", "service", "chkconfig"]
+    logger.info(f"Preprocessing network data: {len(df)} records")
+    
+    # CRITICAL FIX: Only add defaults for truly missing fields, preserve existing IPs
+    network_fields_safe = {
+        'destination.port': 0,
+        'source.port': 0,
+        'network.transport': 'unknown',
+        'network.direction': 'unknown',
+        'network.bytes': 0,
+        'network.packets': 0,
+        'destination.geo.country_name': 'unknown',
+        'event.action': 'network_flow',
+        'event.category': 'network',
+        'process.name': 'unknown',
+        'user.name': 'unknown',
+        'host.hostname': 'unknown'
     }
     
-    if "process.name" in df.columns:
-        df["process.name"].fillna("unknown", inplace=True)
-        
-        def categorize_discovery_command(process_name):
-            for category, commands in discovery_categories.items():
-                if any(cmd in str(process_name).lower() for cmd in commands):
-                    return category
-            return "other"
-        
-        df["discovery_category"] = df["process.name"].apply(categorize_discovery_command)
+    # CRITICAL: Handle IP fields separately - only add if completely missing
+    ip_fields_conditional = {
+        'destination.ip': '0.0.0.0',
+        'source.ip': '0.0.0.0'
+    }
     
-    # Command complexity analysis
-    if "process.command_line" in df.columns:
-        df["process.command_line"].fillna("", inplace=True)
-        df["command_length"] = df["process.command_line"].str.len()
-        df["has_pipes"] = df["process.command_line"].str.contains("|", na=False).astype(int)
-        df["has_redirection"] = df["process.command_line"].str.contains("[><]", regex=True, na=False).astype(int)
-        df["args_count"] = df["process.command_line"].str.split().str.len()
+    # Add safe defaults (non-IP fields)
+    for field, default in network_fields_safe.items():
+        if field not in df.columns:
+            df[field] = default
+            logger.debug(f"Added missing network field '{field}'")
+    
+    # FIXED: Handle IP fields with validation
+    for ip_field, default_ip in ip_fields_conditional.items():
+        if ip_field not in df.columns:
+            # Only add default if column is completely missing
+            logger.warning(f"IP field '{ip_field}' completely missing - adding default")
+            df[ip_field] = default_ip
+        else:
+            # Field exists - check for invalid values and warn
+            invalid_ips = df[ip_field].isin(['0.0.0.0', '', 'unknown', None]) | df[ip_field].isna()
+            invalid_count = invalid_ips.sum()
+            
+            if invalid_count > 0:
+                logger.warning(f"NETWORK DATA QUALITY ISSUE:")
+                logger.warning(f"  Field '{ip_field}' has {invalid_count} invalid/missing values")
+                logger.warning(f"  Total records: {len(df)}")
+                logger.warning(f"  Invalid percentage: {invalid_count/len(df)*100:.1f}%")
+                
+                # Show sample of what we're getting
+                sample_invalid = df[invalid_ips][ip_field].value_counts()
+                logger.warning(f"  Invalid values found: {dict(sample_invalid)}")
+                
+                # Option 1: Remove records with invalid IPs (RECOMMENDED)
+                if invalid_count / len(df) < 0.5:  # Less than 50% invalid
+                    logger.warning(f"  REMOVING {invalid_count} records with invalid {ip_field}")
+                    df = df[~invalid_ips]
+                else:
+                    # Option 2: If too many invalid, investigate further
+                    logger.error(f"  TOO MANY INVALID IPs ({invalid_count}/{len(df)}) - DATA PIPELINE ISSUE!")
+                    
+                    # Try to salvage data by using alternative fields
+                    if ip_field == 'destination.ip' and 'source.ip' in df.columns:
+                        # Use source.ip as fallback for destination.ip
+                        source_valid = ~df['source.ip'].isin(['0.0.0.0', '', 'unknown', None])
+                        salvageable = invalid_ips & source_valid
+                        
+                        if salvageable.any():
+                            logger.warning(f"  SALVAGING: Using source.ip for {salvageable.sum()} records")
+                            df.loc[salvageable, 'destination.ip'] = df.loc[salvageable, 'source.ip']
+                            
+                            # Recalculate invalid after salvage
+                            still_invalid = df[ip_field].isin(['0.0.0.0', '', 'unknown', None])
+                            df = df[~still_invalid]
+                            logger.warning(f"  After salvage: removed {still_invalid.sum()} still-invalid records")
+    
+    # Continue with feature engineering only if we have valid data
+    if df.empty:
+        logger.error("All records removed due to invalid IP addresses!")
+        return df
+    
+    # Log final IP distribution
+    for ip_field in ['destination.ip', 'source.ip']:
+        if ip_field in df.columns:
+            unique_ips = df[ip_field].unique()
+            logger.info(f"Final {ip_field} distribution: {len(unique_ips)} unique IPs")
+            if '0.0.0.0' in unique_ips:
+                zero_count = (df[ip_field] == '0.0.0.0').sum()
+                logger.warning(f"  WARNING: Still have {zero_count} records with '0.0.0.0'")
+    
+    # Network-specific features (existing code)
+    if "destination.port" in df.columns:
+        df["is_common_port"] = df["destination.port"].isin([80, 443, 22, 21, 25, 53, 110, 143]).astype(int)
+        df["is_high_port"] = (df["destination.port"] > 1024).astype(int)
+        df["is_privileged_port"] = (df["destination.port"] < 1024).astype(int)
+        df["is_ephemeral_port"] = ((df["destination.port"] >= 49152) & (df["destination.port"] <= 65535)).astype(int)
+    
+    if "network.transport" in df.columns:
+        df["is_tcp"] = (df["network.transport"].str.lower() == "tcp").astype(int)
+        df["is_udp"] = (df["network.transport"].str.lower() == "udp").astype(int)
+        df["is_icmp"] = (df["network.transport"].str.lower() == "icmp").astype(int)
+    
+    if "network.bytes" in df.columns:
+        df["large_transfer"] = (df["network.bytes"] > 1000000).astype(int)  
+        df["bytes_log"] = np.log1p(df["network.bytes"])
+    
+    df["event_count"] = 1
+    
+    logger.info(f"Network preprocessing complete: {len(df)} records with valid IP addresses")
+    return df
+# ===============================================================================
+# USER-SPECIFIC PREPROCESSING
+# ===============================================================================
+
+def preprocess_user_data(df):
+    """
+    Enhanced user data preprocessing that calculates all needed features.
+    """
+    if df.empty:
+        return df
+    
+    logger.info(f"Preprocessing user data: {len(df)} records")
+    
+    # First ensure process data fields exist (user data comes from process data)
+    df = ensure_process_fields(df)
+    
+    # Then run process preprocessing to get all command features
+    df = preprocess_process_data(df)
+    
+    # Add user-specific required fields
+    user_required = [
+        "is_sudo_command", "is_su_command", "is_compiler_activity",
+        "is_dev_tool", "hour_of_day", "is_business_hours"
+    ]
+    
+    for field in user_required:
+        if field not in df.columns:
+            logger.warning(f"User preprocessing: missing expected field '{field}'")
+            if field.startswith("is_"):
+                df[field] = 0
+            elif field == "hour_of_day":
+                if "@timestamp" in df.columns:
+                    df["hour_of_day"] = pd.to_datetime(df["@timestamp"]).dt.hour
+                else:
+                    df["hour_of_day"] = 12
+    
+    return df
+
+# ===============================================================================
+# DISCOVERY-SPECIFIC PREPROCESSING
+# ===============================================================================
+
+def preprocess_discovery_data(df):
+    """
+    Enhanced discovery data preprocessing with all required features.
+    """
+    if df.empty:
+        return df
+    
+    logger.info(f"Enhanced preprocessing discovery data: {len(df)} records")
+    
+    # Run base process preprocessing first
+    df = preprocess_process_data(df)
+    
+    # Discovery command categorization
+    if "process.name" in df.columns:
+        proc_name = df["process.name"].fillna("")
+        
+        # Network discovery
+        df["is_network_discovery"] = proc_name.isin([
+            'netstat', 'ss', 'lsof', 'arp', 'route', 'ip', 'ifconfig', 'nmap'
+        ]).astype(int)
+        
+        # System discovery
+        df["is_system_discovery"] = proc_name.isin([
+            'uname', 'hostname', 'hostnamectl', 'systemctl', 'service', 'ps', 'top'
+        ]).astype(int)
+        
+        # User discovery
+        df["is_user_discovery"] = proc_name.isin([
+            'who', 'w', 'last', 'lastlog', 'id', 'whoami', 'groups'
+        ]).astype(int)
+        
+        # File discovery
+        df["is_file_discovery"] = proc_name.isin([
+            'find', 'locate', 'ls', 'dir', 'tree'
+        ]).astype(int)
+        
+        # Categorize
+        conditions = [
+            df["is_network_discovery"] == 1,
+            df["is_system_discovery"] == 1,
+            df["is_user_discovery"] == 1,
+            df["is_file_discovery"] == 1
+        ]
+        choices = ['network', 'system', 'user', 'file']
+        df["discovery_category"] = np.select(conditions, choices, default='other')
+    else:
+        df["discovery_category"] = 'unknown'
+        df["is_network_discovery"] = 0
+        df["is_system_discovery"] = 0
+        df["is_user_discovery"] = 0
+        df["is_file_discovery"] = 0
     
     # User context for discovery
     if "user.name" in df.columns:
-        df["user.name"].fillna("unknown", inplace=True)
-        df["is_root_discovery"] = (df["user.name"] == "root").astype(int)
-        df["is_regular_user_discovery"] = (~df["user.name"].isin(["root", "daemon", "bin", "sys"])).astype(int)
+        df["is_root_discovery"] = (
+            (df["user.name"] == "root") & 
+            (df["is_network_discovery"] | df["is_system_discovery"] | 
+             df["is_user_discovery"] | df["is_file_discovery"])
+        ).astype(int)
+        
+        df["is_regular_user_discovery"] = (
+            (df["user.name"] != "root") & 
+            (df["is_network_discovery"] | df["is_system_discovery"] | 
+             df["is_user_discovery"] | df["is_file_discovery"])
+        ).astype(int)
+    else:
+        df["is_root_discovery"] = 0
+        df["is_regular_user_discovery"] = 0
     
-    # Time-based features
-    if "@timestamp" in df.columns:
-        df["hour_of_day"] = df["@timestamp"].dt.hour
-        df["day_of_week"] = df["@timestamp"].dt.dayofweek
-        df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & 
-                                 (df["day_of_week"] <= 4)).astype(int)
-        df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+    # Ensure all required discovery fields exist
+    discovery_required = [
+        "has_pipes", "has_redirection", "command_length",
+        "args_count", "is_root_discovery", "is_regular_user_discovery"
+    ]
     
-    # ADD THIS: Add event_count for aggregation
+    # Note: has_pipes might be a typo for has_pipe
+    if "has_pipes" not in df.columns and "has_pipe" in df.columns:
+        df["has_pipes"] = df["has_pipe"]
+    
+    for field in discovery_required:
+        if field not in df.columns:
+            logger.warning(f"Discovery preprocessing: adding missing field '{field}'")
+            df[field] = 0
+    
+    logger.info(f"Enhanced discovery preprocessing completed: {len(df)} records with {len(df.columns)} fields")
+    logger.info(f"Generated all required fields: {discovery_required}")
+    
+    return df
+def preprocess_user_data(df):
+    """Enhanced user data preprocessing."""
+    if df.empty:
+        return df
+    
+    df = validate_and_fix_field_mappings(df)
+    
+    # Calculate user-specific features before aggregation
+    if "process.command_line" in df.columns:
+        df["command_length"] = df["process.command_line"].fillna("").str.len()
+        df["has_suspicious_chars"] = df["process.command_line"].str.contains(
+            r'[;&|`$<>]', regex=True, na=False
+        ).astype(int)
+    
+    # Ensure required fields exist
+    required_fields = [
+        "is_sudo_command", "is_su_command", "is_compiler_activity", 
+        "is_dev_tool", "hour_of_day", "is_business_hours"
+    ]
+    
+    for field in required_fields:
+        if field not in df.columns:
+            if field.startswith("is_"):
+                df[field] = 0
+            elif field == "hour_of_day":
+                df[field] = 12  # Default noon
+    
     df["event_count"] = 1
-    
-    logger.info(f"Preprocessed discovery dataframe shape: {df.shape}")
     return df
 
+def preprocess_discovery_data(df):
+    """
+    Enhanced discovery data preprocessing with complete feature extraction.
+    FIXES: All missing discovery fields identified in logs.
+    """
+    if df.empty:
+        return df
+    
+    logger.info(f"Enhanced preprocessing discovery data: {len(df)} records")
+    
+    # === BASIC FIELD VALIDATION ===
+    base_fields = {
+        "process.name": "unknown",
+        "process.command_line": "",
+        "user.name": "unknown",
+        "host.hostname": "unknown",
+        "@timestamp": pd.Timestamp.now(tz='UTC'),
+        "event.category": "process"
+    }
+    
+    for field, default_value in base_fields.items():
+        if field not in df.columns:
+            df[field] = default_value
+    
+    # === COMMAND ANALYSIS ===
+    if "process.command_line" in df.columns:
+        cmd_line = df["process.command_line"].fillna("").astype(str)
+        
+        # Command complexity analysis
+        df["has_pipes"] = cmd_line.str.contains(r'\|', na=False).astype(int)
+        df["has_redirection"] = cmd_line.str.contains(r'[<>]', na=False).astype(int)
+        df["command_length"] = cmd_line.str.len()
+        
+        # Arguments count
+        df["args_count"] = cmd_line.str.split().str.len() - 1
+        df["args_count"] = df["args_count"].clip(lower=0)
+        
+    else:
+        df["has_pipes"] = 0
+        df["has_redirection"] = 0
+        df["command_length"] = 0
+        df["args_count"] = 0
+    
+    # === DISCOVERY CATEGORIZATION ===
+    discovery_categories = {
+        "network": ["netstat", "ss", "ifconfig", "ip", "route", "arp", "ping", "nslookup", "dig"],
+        "process": ["ps", "pstree", "top", "htop"],
+        "user": ["whoami", "id", "groups", "w", "who", "last"],
+        "system": ["uname", "uptime", "df", "mount", "lsblk"],
+        "other": []
+    }
+    
+    def categorize_discovery(process_name):
+        for category, commands in discovery_categories.items():
+            if process_name in commands:
+                return category
+        return "other"
+    
+    if "process.name" in df.columns:
+        process_name = df["process.name"].fillna("").astype(str)
+        df["discovery_category"] = process_name.apply(categorize_discovery)
+        
+        # Granular discovery categorization for ML
+        network_recon = ['netstat', 'ss', 'lsof', 'nmap', 'masscan']
+        df["is_network_recon"] = process_name.str.lower().isin(network_recon).astype(int)
+        
+        system_recon = ['ps', 'top', 'htop', 'pstree', 'systemctl', 'service']
+        df["is_system_recon"] = process_name.str.lower().isin(system_recon).astype(int)
+        
+        user_recon = ['whoami', 'id', 'groups', 'w', 'who', 'last', 'lastlog']
+        df["is_user_recon"] = process_name.str.lower().isin(user_recon).astype(int)
+        
+        file_recon = ['find', 'locate', 'ls', 'cat', 'head', 'tail', 'grep']
+        df["is_file_recon"] = process_name.str.lower().isin(file_recon).astype(int)
+    else:
+        df["discovery_category"] = "other"
+        df["is_network_recon"] = 0
+        df["is_system_recon"] = 0
+        df["is_user_recon"] = 0
+        df["is_file_recon"] = 0
+    
+    # === USER CONTEXT ANALYSIS ===
+    if "user.name" in df.columns:
+        user_name = df["user.name"].fillna("").astype(str)
+        
+        # Discovery by user type
+        df["is_root_discovery"] = (user_name == "root").astype(int)
+        df["is_regular_user_discovery"] = ((user_name != "root") & (user_name != "")).astype(int)
+    else:
+        df["is_root_discovery"] = 0
+        df["is_regular_user_discovery"] = 1
+    
+    # === ENSURE ALL REQUIRED FIELDS ===
+    required_fields = [
+        "discovery_category", "has_pipes", "has_redirection", "command_length", 
+        "args_count", "is_root_discovery", "is_regular_user_discovery"
+    ]
+    
+    for field in required_fields:
+        if field not in df.columns:
+            if "is_" in field:
+                df[field] = 0
+            else:
+                df[field] = ""
+    
+    df["event_count"] = 1
+    
+    # Ensure proper data types
+    numeric_fields = ["command_length", "args_count", "event_count"]
+    for field in numeric_fields:
+        if field in df.columns:
+            df[field] = pd.to_numeric(df[field], errors='coerce').fillna(0)
+    
+    binary_fields = [
+        "has_pipes", "has_redirection", "is_root_discovery", "is_regular_user_discovery",
+        "is_network_recon", "is_system_recon", "is_user_recon", "is_file_recon"
+    ]
+    for field in binary_fields:
+        if field in df.columns:
+            df[field] = df[field].astype(int)
+    
+    logger.info(f"Enhanced discovery preprocessing completed: {len(df)} records with {len(df.columns)} fields")
+    logger.info(f"Generated all required fields: {required_fields}")
+    
+    return df
 
 def preprocess_metadata_data(df):
     """
-    Preprocess metadata access data for anomaly detection.
+    Preprocess metadata data with enhanced training configuration support.
     """
     if df.empty:
-        logger.warning("Empty dataframe received for metadata preprocessing.")
         return df
     
-    logger.info(f"Initial metadata dataframe shape: {df.shape}")
+    group_config = DATA_GROUP_CONFIG["metadata"]
     
-    # Convert timestamp
-    if "@timestamp" in df.columns:
-        df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-        df.dropna(subset=["@timestamp"], inplace=True)
-        df.sort_values("@timestamp", inplace=True)
+    # Validate required fields exist
+    missing_fields = [field for field in group_config["required_fields"] if field not in df.columns]
+    if missing_fields:
+        logger.warning(f"Missing metadata fields: {missing_fields}")
+        for field in missing_fields:
+            if "port" in field:
+                df[field] = 0
+            elif "is_" in field:
+                df[field] = 0
+            else:
+                df[field] = ""
     
-    # Access method analysis
-    if "process.name" in df.columns:
-        df["process.name"].fillna("unknown", inplace=True)
-        df["access_method"] = df["process.name"].apply(
-            lambda x: "http_client" if str(x) in ["curl", "wget"] else 
-                     "script" if str(x) in ["python", "python3", "bash", "sh"] else "other"
-        )
+    # Ensure proper data types
+    if "destination.port" in df.columns:
+        df["destination.port"] = pd.to_numeric(df["destination.port"], errors='coerce').fillna(0)
     
-    # User context for metadata access
-    if "user.name" in df.columns:
-        df["user.name"].fillna("unknown", inplace=True)
-        df["is_root_access"] = (df["user.name"] == "root").astype(int)
-        df["is_service_account"] = df["user.name"].apply(
-            lambda x: 1 if str(x) in ["www-data", "nginx", "apache", "ubuntu", "ec2-user"] else 0
-        )
-    
-    # Command analysis for credential harvesting indicators
-    if "process.command_line" in df.columns:
-        df["potential_cred_harvest"] = df["process.command_line"].apply(
-            lambda x: 1 if any(keyword in str(x).lower() for keyword in 
-                              ["credentials", "token", "key", "secret", "password", "iam"]) else 0
-        )
-        df["user_data_access"] = df["process.command_line"].apply(
-            lambda x: 1 if "user-data" in str(x).lower() else 0
-        )
-    
-    # Time-based features
-    if "@timestamp" in df.columns:
-        df["hour_of_day"] = df["@timestamp"].dt.hour
-        df["day_of_week"] = df["@timestamp"].dt.dayofweek
-        df["is_business_hours"] = ((df["hour_of_day"] >= 8) & (df["hour_of_day"] <= 18) & 
-                                 (df["day_of_week"] <= 4)).astype(int)
-        df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
-    
-    # ADD THIS: Add event_count for aggregation
     df["event_count"] = 1
     
-    logger.info(f"Preprocessed metadata dataframe shape: {df.shape}")
+    logger.info(f"Preprocessed metadata data: {len(df)} records with {len(df.columns)} fields")
     return df
 
-def aggregate_data_by_group(data_dict):
-    """
-    Aggregate data by the defined groups for efficient processing.
-    
-    Args:
-        data_dict (dict): Dictionary containing different types of data
-        
-    Returns:
-        dict: Aggregated data by group
-    """
-    logger.info("Aggregating data by groups for efficient processing")
-    
-    grouped_data = {
-        "network_security": {
-            "process_network": data_dict.get("process", pd.DataFrame()),
-            "network_activity": data_dict.get("network", pd.DataFrame())
-        },
-        "process_monitoring": {
-            "process_data": data_dict.get("process", pd.DataFrame())
-        },
-        "user_behavior": {
-            "user_activity": data_dict.get("user", pd.DataFrame()),
-            "process_user_context": data_dict.get("process", pd.DataFrame())
-        },
-        "discovery_activity": {
-            "discovery_commands": data_dict.get("discovery", pd.DataFrame())
-        },
-        "metadata_access": {
-            "metadata_events": data_dict.get("metadata", pd.DataFrame())
-        }
-    }
-    
-    # Log aggregation statistics
-    for group, data in grouped_data.items():
-        total_records = sum(len(df) for df in data.values())
-        logger.info(f"Group '{group}': {total_records} total records across {len(data)} data sources")
-    
-    return grouped_data
 
-
-def create_time_buckets(df, bucket_span="15m", timestamp_col="@timestamp"):
+def validate_and_fix_field_mappings(df):
     """
-    Create time buckets for aggregation analysis.
-    
-    Args:
-        df (pd.DataFrame): DataFrame with timestamp data
-        bucket_span (str): Time bucket span (e.g., "15m", "1h", "1d")
-        timestamp_col (str): Name of timestamp column
-        
-    Returns:
-        pd.DataFrame: DataFrame with time bucket column added
+    Validate and fix field mappings from flattened Elasticsearch documents.
     """
-    if df.empty or timestamp_col not in df.columns:
+    if df.empty:
         return df
     
-    # Convert bucket span to pandas frequency
-    freq_map = {
-        "1m": "1T", "5m": "5T", "15m": "15T", "30m": "30T",
-        "1h": "1H", "2h": "2H", "6h": "6H", "12h": "12H",
-        "1d": "1D", "1w": "1W"
+    # Common field mappings from flattened names to expected names
+    field_mappings = {
+        'process.name': ['process.name', 'process_name'],
+        'process.executable': ['process.executable', 'process_executable'],
+        'process.command_line': ['process.command_line', 'process_command_line'],
+        'process.args': ['process.args', 'process_args'],
+        'process.pid': ['process.pid', 'process_pid'],
+        'process.working_directory': ['process.working_directory', 'process_working_directory'],
+        'process.parent.name': ['process.parent.name', 'process_parent_name'],
+        'process.parent.executable': ['process.parent.executable', 'process_parent_executable'],
+        'user.name': ['user.name', 'user_name'],
+        # 'user.id': ['user.id', 'user_id'],
+        'host.hostname': ['host.hostname', 'host_hostname'],
+        'host.id': ['host.id', 'host_id'],
+        'network.transport': ['network.transport', 'network_transport'],
+        'network.direction': ['network.direction', 'network_direction'],
+        'network.type': ['network.type', 'network_type'],
+        'source.ip': ['source.ip', 'source_ip'],
+        'source.port': ['source.port', 'source_port'],
+        'destination.ip': ['destination.ip', 'destination_ip'],
+        'destination.port': ['destination.port', 'destination_port'],
+        'source.bytes': ['source.bytes', 'source_bytes'],
+        'destination.bytes': ['destination.bytes', 'destination_bytes'],
+        'event.action': ['event.action', 'event_action'],
+        'event.type': ['event.type', 'event_type'],
+        'process.hash.sha256': ['process.hash.sha256', 'process_hash_sha256']
     }
     
-    freq = freq_map.get(bucket_span, "15T")  # Default to 15 minutes
+    # Apply field mappings
+    for expected_field, possible_fields in field_mappings.items():
+        if expected_field not in df.columns:
+            for alt_field in possible_fields:
+                if alt_field in df.columns:
+                    df[expected_field] = df[alt_field]
+                    logger.debug(f"Mapped {alt_field} -> {expected_field}")
+                    break
     
-    df = df.copy()
-    df["time_bucket"] = df[timestamp_col].dt.floor(freq)
+    return df
+
+def aggregate_data_by_group(df, group_columns, agg_columns):
+    """
+    Enhanced aggregation that preserves ALL features needed by ML models.
+    """
+    if df.empty:
+        return df
     
-    logger.info(f"Created time buckets with {bucket_span} span, resulting in {df['time_bucket'].nunique()} unique buckets")
+    # Ensure group columns exist
+    group_columns = [col for col in group_columns if col in df.columns]
+    if not group_columns:
+        logger.error("No valid grouping columns")
+        return df
+    
+    logger.info(f"Aggregating {len(df)} records by {group_columns}")
+    
+    # === COMPREHENSIVE AGGREGATION DICTIONARY ===
+    agg_dict = {}
+    
+    # Command features - ALL must be preserved
+    command_features = {
+        'command_length': ['mean', 'max', 'std'],
+        'command_word_count': ['mean', 'max', 'std'],  # This was missing!
+        'has_pipe': 'max',
+        'has_redirection': 'max',
+        'has_backtick': 'max',
+        'has_dollar_paren': 'max',  
+        'has_semicolon': 'max',     
+        'has_ampersand': 'max',     
+        'has_suspicious_chars': 'max',
+        'command_risk_score': ['max', 'mean', 'std']
+    }
+    
+    # PID features - Critical for relationships
+    pid_features = {
+        'process.pid': lambda x: list(x.unique())[:10],
+        'process.parent.pid': lambda x: list(x.unique())[:10],
+        'pid_difference': ['mean', 'min', 'max', 'std'],  # This was missing!
+        'unusual_pid_relationship': ['sum', 'max']         # This was missing!
+    }
+    
+    # Process relationship features
+    relationship_features = {
+        'suspicious_parent': ['max', 'sum']  # This was missing in some cases!
+    }
+    
+    # Process categorization
+    process_features = {
+        'args_count': ['mean', 'max'],
+        'is_sudo_command': 'sum',
+        'is_su_command': 'sum',
+        'is_compiler_activity': 'sum',
+        'is_dev_tool': 'sum',
+        'is_network_tool': 'sum',
+        'has_hash': ['mean', 'min'],
+        'is_system_path': 'mean',
+        'is_temp_path': 'max',
+        'is_home_path': 'mean'
+    }
+    
+    # User features
+    user_features = {
+        'is_root_user': 'max',
+        'is_service_account': 'max',
+        # 'user.id': lambda x: list(x.unique()),
+        # 'group.id': lambda x: list(x.unique())
+    }
+    
+    # Temporal features
+    temporal_features = {
+        'hour_sin': 'mean',
+        'hour_cos': 'mean',
+        'day_sin': 'mean',
+        'day_cos': 'mean',
+        'is_weekend': 'max',
+        'is_business_hours': 'mean',
+        'is_night_time': 'max'
+    }
+    
+    # Event metadata
+    event_features = {
+        'event_count': 'sum',
+        'event.category': lambda x: x.mode()[0] if len(x) > 0 else 'process'
+    }
+    
+    # Data preservation
+    preservation_features = {
+        'process.command_line': lambda x: list(x.unique())[:20],
+        'process.executable': lambda x: list(x.unique()),
+        'process.parent.name': lambda x: list(x.unique()),
+        'process.hash.sha256': lambda x: list(x.unique())[:10]
+    }
+    
+    # Combine all features
+    all_feature_dicts = [
+        command_features, pid_features, relationship_features,
+        process_features, user_features, temporal_features,
+        event_features, preservation_features
+    ]
+    
+    for feature_dict in all_feature_dicts:
+        for col, agg_func in feature_dict.items():
+            if col in df.columns:
+                agg_dict[col] = agg_func
+    
+    # Add remaining numeric columns
+    for col in agg_columns:
+        if col in df.columns and col not in agg_dict:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                agg_dict[col] = ['mean', 'sum', 'count']
+    
+    try:
+        # Perform aggregation
+        logger.info(f"Aggregating {len(agg_dict)} features")
+        aggregated = df.groupby(group_columns).agg(agg_dict).reset_index()
+        
+        # Flatten column names
+        new_columns = []
+        for col in aggregated.columns:
+            if isinstance(col, tuple):
+                if col[1] == '<lambda>':
+                    new_columns.append(f"{col[0]}_list")
+                elif col[1]:
+                    new_columns.append(f"{col[0]}_{col[1]}")
+                else:
+                    new_columns.append(col[0])
+            else:
+                new_columns.append(col)
+        
+        aggregated.columns = new_columns
+        
+        # === POST-AGGREGATION FEATURE RECOVERY ===
+        
+        # Ensure single-value versions exist for ML models
+        feature_recovery_mappings = {
+            # Command features
+            'command_length': 'command_length_mean',
+            'command_word_count': 'command_word_count_mean',
+            
+            # PID features
+            'pid_difference': 'pid_difference_mean',
+            'unusual_pid_relationship': 'unusual_pid_relationship_max',
+            
+            # Relationship features
+            'suspicious_parent': 'suspicious_parent_max',
+            
+            # Temporal features
+            'hour_sin': 'hour_sin_mean',
+            'hour_cos': 'hour_cos_mean',
+            'day_sin': 'day_sin_mean',
+            'day_cos': 'day_cos_mean'
+        }
+        
+        for target, source in feature_recovery_mappings.items():
+            if target not in aggregated.columns and source in aggregated.columns:
+                aggregated[target] = aggregated[source]
+                logger.debug(f"Recovered feature {target} from {source}")
+        
+        # Ensure binary features exist
+        binary_features = [
+            'has_pipe', 'has_redirection', 'has_backtick',
+            'has_dollar_paren', 'has_semicolon', 'has_ampersand',
+            'has_suspicious_chars', 'is_root_user', 'is_service_account'
+        ]
+        
+        for feat in binary_features:
+            if feat not in aggregated.columns and f"{feat}_max" in aggregated.columns:
+                aggregated[feat] = aggregated[f"{feat}_max"]
+        
+        # Extract PIDs from lists
+        if 'process.pid_list' in aggregated.columns:
+            aggregated['process.pid'] = aggregated['process.pid_list'].apply(
+                lambda x: x[0] if isinstance(x, list) and len(x) > 0 else -1
+            )
+        
+        if 'process.parent.pid_list' in aggregated.columns:
+            aggregated['process.parent.pid'] = aggregated['process.parent.pid_list'].apply(
+                lambda x: x[0] if isinstance(x, list) and len(x) > 0 else -1
+            )
+        
+        logger.info(f"Aggregated into {len(aggregated)} groups with {len(aggregated.columns)} features")
+        
+        return aggregated
+        
+    except Exception as e:
+        logger.error(f"Error in data aggregation: {e}")
+        return df
+
+
+# def create_time_buckets(df, time_column="@timestamp", bucket_size="15min"):
+#     """
+#     Enhanced time bucketing that creates all temporal features needed by models.
+#     """
+#     if df.empty or time_column not in df.columns:
+#         logger.warning(f"Cannot create time buckets: empty data or missing {time_column}")
+#         return df
+    
+#     try:
+#         # Ensure timestamp is datetime
+#         df[time_column] = pd.to_datetime(df[time_column], errors='coerce', utc=True)
+        
+#         # Convert bucket size
+#         if bucket_size.endswith('m'):
+#             pandas_freq = f"{bucket_size[:-1]}min"
+#         elif bucket_size.endswith('h'):
+#             pandas_freq = f"{bucket_size[:-1]}H"
+#         else:
+#             pandas_freq = "15min"
+        
+#         # Create time bucket
+#         df["time_bucket"] = df[time_column].dt.floor(pandas_freq)
+        
+#         # === CREATE ALL TEMPORAL FEATURES ===
+        
+#         # Basic temporal features
+#         df["hour_of_day"] = df[time_column].dt.hour
+#         df["minute_of_hour"] = df[time_column].dt.minute
+#         df["day_of_week"] = df[time_column].dt.dayofweek
+#         df["day_of_month"] = df[time_column].dt.day
+#         df["month"] = df[time_column].dt.month
+        
+#         # Circular encoding - THESE ARE EXPECTED BY MODELS
+#         df["hour_sin"] = np.sin(2 * np.pi * df["hour_of_day"] / 24)
+#         df["hour_cos"] = np.cos(2 * np.pi * df["hour_of_day"] / 24)
+#         df["day_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
+#         df["day_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
+#         df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
+#         df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+        
+#         # Business context
+#         df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+#         df["is_business_hours"] = (
+#             (df["hour_of_day"] >= 8) & 
+#             (df["hour_of_day"] < 18) & 
+#             (df["day_of_week"] < 5)
+#         ).astype(int)
+#         df["is_night_time"] = (
+#             (df["hour_of_day"] < 6) | (df["hour_of_day"] > 22)
+#         ).astype(int)
+        
+#         # Sequence detection
+#         df = df.sort_values([time_column])
+        
+#         # Group by entity for sequence detection
+#         entity_cols = ["process.name", "user.name", "host.hostname"]
+#         existing_entity_cols = [col for col in entity_cols if col in df.columns]
+        
+#         if existing_entity_cols:
+#             # Time since previous event for same entity
+#             df["prev_timestamp"] = df.groupby(existing_entity_cols)[time_column].shift(1)
+#             df["seconds_since_prev"] = (
+#                 df[time_column] - df["prev_timestamp"]
+#             ).dt.total_seconds().fillna(999999)
+#             df["is_rapid_sequence"] = (df["seconds_since_prev"] < 5).astype(int)
+#             df["is_burst_activity"] = (df["seconds_since_prev"] < 1).astype(int)
+        
+#         # Events per bucket (for anomaly detection)
+#         df["events_in_bucket"] = df.groupby("time_bucket")[time_column].transform('count')
+#         df["events_in_bucket_by_entity"] = df.groupby(
+#             ["time_bucket"] + existing_entity_cols
+#         )[time_column].transform('count') if existing_entity_cols else 1
+        
+#         # Log temporal feature creation
+#         temporal_features = [
+#             'hour_sin', 'hour_cos', 'day_sin', 'day_cos', 'month_sin', 'month_cos',
+#             'is_weekend', 'is_business_hours', 'is_night_time', 'is_rapid_sequence'
+#         ]
+#         logger.info(f"Created {len(temporal_features)} temporal features")
+        
+#         unique_buckets = df["time_bucket"].nunique()
+#         logger.info(f"Created time buckets with {bucket_size} intervals: {len(df)} records, {unique_buckets} unique buckets")
+        
+#         return df
+        
+#     except Exception as e:
+#         logger.error(f"Error creating time buckets: {e}")
+#         return df
+def create_time_buckets(df, time_column="@timestamp", bucket_size="15min", min_buckets=10):
+    """
+    Enhanced time bucketing that dynamically adjusts bucket size based on data characteristics.
+    Ensures sufficient temporal granularity for anomaly detection.
+    
+    Args:
+        df: DataFrame with timestamp data
+        time_column: Name of timestamp column
+        bucket_size: Initial bucket size (can be adjusted)
+        min_buckets: Minimum number of buckets to create (default 10)
+    """
+    if df.empty or time_column not in df.columns:
+        logger.warning(f"Cannot create time buckets: empty data or missing {time_column}")
+        return df
+    
+    try:
+        # Ensure timestamp is datetime
+        df[time_column] = pd.to_datetime(df[time_column], errors='coerce', utc=True)
+        df = df.dropna(subset=[time_column])
+        
+        if df.empty:
+            logger.warning("No valid timestamps found after parsing")
+            return df
+        
+        # Calculate time span
+        time_min = df[time_column].min()
+        time_max = df[time_column].max()
+        time_span = time_max - time_min
+        time_span_seconds = time_span.total_seconds()
+        time_span_hours = time_span_seconds / 3600
+        record_count = len(df)
+        
+        logger.info(f"Data time span: {time_span_hours:.2f} hours ({record_count} records)")
+        # logger.info("coluumns in data frame", df.columns)
+        
+        # Convert bucket_size to pandas frequency if needed
+        if bucket_size.endswith('m') and not bucket_size.endswith('min'):
+            bucket_size = f"{bucket_size[:-1]}min"
+        elif bucket_size.endswith('s') and len(bucket_size) > 1:
+            bucket_size = bucket_size.upper()  # Convert 's' to 'S'
+        elif bucket_size.endswith('h'):
+            bucket_size = bucket_size.upper()  # Convert 'h' to 'H'
+        
+        # Use the provided bucket size directly
+        selected_bucket = bucket_size
+        logger.info(f"Using bucket size: {selected_bucket}")
+        
+        # Create time buckets
+        df["time_bucket"] = df[time_column].dt.floor(selected_bucket)
+        unique_buckets = df["time_bucket"].nunique()
+        logger.info(f"Created {unique_buckets} time buckets")
+        # logger.info(f"columns after time bucketing: {df.columns}")
+        
+        # === CREATE COMPREHENSIVE TEMPORAL FEATURES ===
+        
+        # Basic temporal features
+        df["hour_of_day"] = df[time_column].dt.hour
+        df["minute_of_hour"] = df[time_column].dt.minute
+        df["second_of_minute"] = df[time_column].dt.second
+        df["day_of_week"] = df[time_column].dt.dayofweek
+        df["day_of_month"] = df[time_column].dt.day
+        df["month"] = df[time_column].dt.month
+        
+        # Circular encoding for cyclical features
+        df["hour_sin"] = np.sin(2 * np.pi * df["hour_of_day"] / 24)
+        df["hour_cos"] = np.cos(2 * np.pi * df["hour_of_day"] / 24)
+        df["minute_sin"] = np.sin(2 * np.pi * df["minute_of_hour"] / 60)
+        df["minute_cos"] = np.cos(2 * np.pi * df["minute_of_hour"] / 60)
+        df["day_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
+        df["day_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
+        df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
+        df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+        
+        # Business context features
+        df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+        df["is_business_hours"] = (
+            (df["hour_of_day"] >= 8) & 
+            (df["hour_of_day"] < 18) & 
+            (df["day_of_week"] < 5)
+        ).astype(int)
+        df["is_night_time"] = (
+            (df["hour_of_day"] < 6) | (df["hour_of_day"] > 22)
+        ).astype(int)
+        
+        # Time-based sequence features
+        df = df.sort_values([time_column])
+        
+        # Calculate time deltas
+        if time_span_seconds > 0:
+            df["time_since_start"] = (df[time_column] - time_min).dt.total_seconds()
+            df["time_until_end"] = (time_max - df[time_column]).dt.total_seconds()
+            df["relative_time_position"] = df["time_since_start"] / time_span_seconds
+        else:
+            df["time_since_start"] = 0
+            df["time_until_end"] = 0
+            df["relative_time_position"] = 0
+        
+        # Group by entity for sequence detection
+        entity_cols = ["process.name", "user.name", "host.hostname", "destination.ip", "source.ip"]
+        existing_entity_cols = [col for col in entity_cols if col in df.columns and df[col].notna().any()]
+        
+        if existing_entity_cols:
+            # For efficiency, only use the first available entity column
+            main_entity_col = existing_entity_cols[0]
+            df["prev_timestamp"] = df.groupby(main_entity_col)[time_column].shift(1)
+            df["seconds_since_prev"] = (
+                df[time_column] - df["prev_timestamp"]
+            ).dt.total_seconds().fillna(999999)
+            df["is_rapid_sequence"] = (df["seconds_since_prev"] < 5).astype(int)
+            df["is_burst_activity"] = (df["seconds_since_prev"] < 1).astype(int)
+        
+        # Aggregate features per bucket
+        df["events_in_bucket"] = df.groupby("time_bucket")[time_column].transform('count')
+        df["bucket_event_density"] = df["events_in_bucket"] / max(record_count, 1)
+        
+        # Add percentile-based features
+        df['time_percentile'] = df[time_column].rank(pct=True)
+        
+        # Log results
+        temporal_features = [
+            'hour_sin', 'hour_cos', 'minute_sin', 'minute_cos', 'day_sin', 'day_cos', 
+            'month_sin', 'month_cos', 'is_weekend', 'is_business_hours', 'is_night_time',
+            'relative_time_position', 'time_percentile'
+        ]
+        
+        logger.info(f"Created {len(temporal_features)} temporal features")
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error creating time buckets: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return df
+
+
+def validate_temporal_coverage(df, entity_col, min_buckets=3):
+    """
+    Validate if an entity has sufficient temporal coverage for anomaly detection.
+    """
+    if 'time_bucket' not in df.columns:
+        return False
+    
+    entity_buckets = df[df[entity_col].notna()].groupby(entity_col)['time_bucket'].nunique()
+    entities_with_coverage = entity_buckets[entity_buckets >= min_buckets]
+    
+    if len(entities_with_coverage) == 0:
+        logger.warning(f"No entities have minimum temporal coverage ({min_buckets} buckets)")
+        return False
+    
+    logger.info(f"{len(entities_with_coverage)} entities have sufficient temporal coverage")
+    return True
+import os
+def save_dataframe_to_files(df, base_filename, save_json=True, save_excel=True):
+    """
+    Save a DataFrame to JSON and/or Excel files in the current directory.
+    
+    Args:
+        df (pd.DataFrame): DataFrame to save
+        base_filename (str): Base filename to use
+        save_json (bool): Whether to save to JSON
+        save_excel (bool): Whether to save to Excel
+    
+    Returns:
+        dict: Paths to the saved files
+    """
+    if df.empty:
+        logger.warning(f"No data to save for {base_filename}")
+        return {}
+    
+    # Create filenames
+    current_dir = os.getcwd()
+    json_path = os.path.join(current_dir, f"{base_filename}.json")
+    excel_path = os.path.join(current_dir, f"{base_filename}.xlsx")
+    saved_files = {}
+    
+    try:
+        # Save to JSON
+        if save_json:
+            # Convert DataFrame to JSON, handling complex objects
+            df_json = df.copy()
+            
+            # Convert lists and other complex objects to strings
+            for col in df_json.columns:
+                if df_json[col].apply(lambda x: isinstance(x, (list, dict))).any():
+                    df_json[col] = df_json[col].apply(lambda x: str(x) if isinstance(x, (list, dict)) else x)
+            
+            # Convert timestamp columns to strings for better JSON serialization
+            for col in df_json.columns:
+                if pd.api.types.is_datetime64_any_dtype(df_json[col]):
+                    df_json[col] = df_json[col].astype(str)
+            
+            # Save to JSON
+            df_json.to_json(json_path, orient="records", date_format="iso")
+            logger.info(f"Saved JSON data to {json_path}")
+            saved_files["json"] = json_path
+        
+        # Save to Excel
+        if save_excel:
+            try:
+                with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                    # For Excel, limit columns if there are too many (Excel has a limit)
+                    if len(df.columns) > 16000:
+                        logger.warning(f"Too many columns ({len(df.columns)}) for Excel, truncating to 16000")
+                        df_excel = df.iloc[:, :16000]
+                    else:
+                        df_excel = df
+                    
+                    # Convert timestamp columns to string to avoid Excel date issues
+                    for col in df_excel.columns:
+                        if pd.api.types.is_datetime64_any_dtype(df_excel[col]):
+                            df_excel[col] = df_excel[col].astype(str)
+                    
+                    # Convert complex objects to strings
+                    for col in df_excel.columns:
+                        if df_excel[col].apply(lambda x: isinstance(x, (list, dict))).any():
+                            df_excel[col] = df_excel[col].apply(lambda x: str(x) if isinstance(x, (list, dict)) else x)
+                    
+                    df_excel.to_excel(writer, sheet_name="Data", index=False)
+                
+                logger.info(f"Saved Excel data to {excel_path}")
+                saved_files["excel"] = excel_path
+            except Exception as excel_err:
+                logger.error(f"Error saving Excel file: {excel_err}")
+                # Try CSV as a fallback
+                csv_path = os.path.join(current_dir, f"{base_filename}.csv")
+                df.to_csv(csv_path, index=False)
+                logger.info(f"Saved CSV data to {csv_path} (Excel failed)")
+                saved_files["csv"] = csv_path
+        
+        return saved_files
+        
+    except Exception as e:
+        logger.error(f"Error saving data to files: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {}
+    
+    
+def fetch_process_data_with_save(es, config, time_range=None, query_size=10000, 
+                                save=False, base_filename="process_data"):
+    """
+    Fetch process data and optionally save it to files.
+    
+    Args:
+        es: Elasticsearch client
+        config: Configuration dictionary
+        time_range: Time range for query
+        query_size: Number of records to fetch
+        save (bool): Whether to save the data to files
+        base_filename (str): Base filename for saved files
+    
+    Returns:
+        pd.DataFrame: Process data DataFrame
+    """
+    # Use the original fetch function
+    # from linux_data_manager import fetch_process_data
+    df = fetch_process_data(es, config, time_range, query_size)
+    
+    # Save if requested
+    if save and not df.empty:
+        save_dataframe_to_files(df, base_filename)
     
     return df

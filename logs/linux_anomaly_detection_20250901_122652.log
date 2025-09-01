@@ -1,0 +1,674 @@
+2025-09-01 12:26:52,062 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 12:26:52,062 - linux_anomaly_detection - INFO - Detection mode: comprehensive
+2025-09-01 12:26:52,063 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 12:26:52,443 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.012s]
+2025-09-01 12:26:52,444 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 12:26:52,445 - linux_anomaly_detection - INFO - Running comprehensive Linux anomaly detection
+2025-09-01 12:26:52,446 - linux_anomaly_detection - INFO - Running comprehensive Linux anomaly detection
+2025-09-01 12:26:52,446 - linux_anomaly_detection - INFO - Processing process data group
+2025-09-01 12:26:52,446 - linux_anomaly_detection - INFO - Running process group detection
+2025-09-01 12:27:03,894 - linux_anomaly_detection - INFO -  Loaded 675 models for process
+2025-09-01 12:27:03,895 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_anomalous_process_all_hosts, v3_rare_process_by_host_linux_ctx, v3_rare_process_by_host_linux
+2025-09-01 12:27:03,895 - linux_anomaly_detection - INFO - Loaded existing models for process
+2025-09-01 12:27:03,895 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_process_all_hosts: 148 models
+2025-09-01 12:27:03,896 - linux_anomaly_detection - INFO -   Job v3_rare_process_by_host_linux: 379 models
+2025-09-01 12:27:03,896 - linux_anomaly_detection - INFO -   Job v3_rare_process_by_host_linux_ctx: 148 models
+2025-09-01 12:27:03,896 - linux_anomaly_detection - INFO - Using detection period: 0.042 days for process
+2025-09-01 12:27:03,896 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 12:27:03,896 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:27:03,898 - linux_anomaly_detection - INFO - Calculated hourly distribution: 2 hours, strategy=recent_weighted, avg_per_hour=5000
+2025-09-01 12:27:04,690 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.791s]
+2025-09-01 12:27:04,726 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.013s]
+2025-09-01 12:27:04,726 - linux_anomaly_detection - INFO - Hourly stratification yielded 2107/10000 records, applying backfill
+2025-09-01 12:27:04,726 - linux_anomaly_detection - INFO - Applying intelligent backfill for 7893 records
+2025-09-01 12:27:04,748 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.014s]
+2025-09-01 12:27:04,749 - linux_anomaly_detection - INFO - Backfill complete: added 3 records
+2025-09-01 12:27:04,750 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 2110 records from 2/2 hours
+2025-09-01 12:27:04,751 - linux_anomaly_detection - INFO - Retrieved 2110 process records from Elasticsearch
+2025-09-01 12:27:04,818 - linux_anomaly_detection - INFO - Processed 2,110/2,110 valid timestamps
+2025-09-01 12:27:04,826 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 2 hours covered, avg=1055 records/hour, balance_score=0.28
+2025-09-01 12:27:04,828 - linux_anomaly_detection - INFO - Successfully processed 2110 Linux process records with 51 fields
+2025-09-01 12:27:04,834 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_process_all_hosts
+2025-09-01 12:27:04,882 - linux_anomaly_detection - INFO - Using 148 job-specific models for v3_linux_anomalous_process_all_hosts
+2025-09-01 12:27:04,883 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_process_all_hosts
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_process_all_hosts
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO -   Type: process
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO -   Description: Detect anomalous processes across all hosts
+2025-09-01 12:27:04,884 - linux_anomaly_detection - INFO -   Input records: 2110
+2025-09-01 12:27:04,885 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:04,885 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:04,885 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_process_all_hosts, using fallback models
+2025-09-01 12:27:04,886 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:04,894 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_process_all_hosts (process)
+2025-09-01 12:27:04,934 - linux_anomaly_detection - INFO - Entity postgres: 0/432 anomalies (threshold=1.000)
+2025-09-01 12:27:04,943 - linux_anomaly_detection - INFO - Entity cron: 14/232 anomalies (threshold=0.910)
+2025-09-01 12:27:04,950 - linux_anomaly_detection - INFO - Entity debian-sa1: 0/76 anomalies (threshold=1.000)
+2025-09-01 12:27:04,962 - linux_anomaly_detection - INFO - Entity sh: 17/173 anomalies (threshold=0.800)
+2025-09-01 12:27:04,973 - linux_anomaly_detection - INFO - Entity falconctl: 6/194 anomalies (threshold=0.987)
+2025-09-01 12:27:04,984 - linux_anomaly_detection - INFO - Entity falcon-sensor-bpf: 3/85 anomalies (threshold=0.917)
+2025-09-01 12:27:04,992 - linux_anomaly_detection - INFO - Entity falcon-sensor-bpf17804: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,004 - linux_anomaly_detection - INFO - Entity systemd: 2/177 anomalies (threshold=0.998)
+2025-09-01 12:27:05,013 - linux_anomaly_detection - INFO - Entity sadc: 0/24 anomalies (threshold=1.000)
+2025-09-01 12:27:05,022 - linux_anomaly_detection - INFO - Entity sa1: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,034 - linux_anomaly_detection - INFO - Entity 9: 7/76 anomalies (threshold=0.824)
+2025-09-01 12:27:05,048 - linux_anomaly_detection - INFO - Entity run-parts: 1/32 anomalies (threshold=0.600)
+2025-09-01 12:27:05,054 - linux_anomaly_detection - INFO - Entity mandb: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:05,063 - linux_anomaly_detection - INFO - Entity install: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:05,070 - linux_anomaly_detection - INFO - Entity fwupdmgr: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:05,085 - linux_anomaly_detection - INFO - Entity 50-motd-news: 9/120 anomalies (threshold=0.854)
+2025-09-01 12:27:05,103 - linux_anomaly_detection - INFO - Entity rm: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:05,116 - linux_anomaly_detection - INFO - Entity wget: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:05,126 - linux_anomaly_detection - INFO - Entity tr: 0/10 anomalies (threshold=1.000)
+2025-09-01 12:27:05,136 - linux_anomaly_detection - INFO - Entity cut: 0/10 anomalies (threshold=1.000)
+2025-09-01 12:27:05,144 - linux_anomaly_detection - INFO - Entity cloud-id: 0/19 anomalies (threshold=1.000)
+2025-09-01 12:27:05,152 - linux_anomaly_detection - INFO - Entity systemctl: 0/16 anomalies (threshold=1.000)
+2025-09-01 12:27:05,160 - linux_anomaly_detection - INFO - Entity uname: 4/40 anomalies (threshold=0.790)
+2025-09-01 12:27:05,168 - linux_anomaly_detection - INFO - Entity systemd-detect-virt: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:05,178 - linux_anomaly_detection - INFO - Entity sed: 0/18 anomalies (threshold=1.000)
+2025-09-01 12:27:05,188 - linux_anomaly_detection - INFO - Entity grep: 0/14 anomalies (threshold=1.000)
+2025-09-01 12:27:05,198 - linux_anomaly_detection - INFO - Entity awk: 0/10 anomalies (threshold=1.000)
+2025-09-01 12:27:05,206 - linux_anomaly_detection - INFO - Entity dpkg: 2/34 anomalies (threshold=0.905)
+2025-09-01 12:27:05,216 - linux_anomaly_detection - INFO - Entity mktemp: 2/24 anomalies (threshold=0.997)
+2025-09-01 12:27:05,224 - linux_anomaly_detection - INFO - Entity checkOpenVPN.sh: 2/12 anomalies (threshold=0.875)
+2025-09-01 12:27:05,233 - linux_anomaly_detection - INFO - Entity basename: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:05,235 - linux_anomaly_detection - ERROR - Missing model for entity service
+2025-09-01 12:27:05,247 - linux_anomaly_detection - INFO - Entity ip: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,258 - linux_anomaly_detection - INFO - Entity rotate_logs_with_reboot.sh: 1/7 anomalies (threshold=0.902)
+2025-09-01 12:27:05,270 - linux_anomaly_detection - INFO - Entity df: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:05,279 - linux_anomaly_detection - INFO - Entity fwupd: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:05,287 - linux_anomaly_detection - INFO - Entity stat: 0/4 anomalies (threshold=0.600)
+2025-09-01 12:27:05,296 - linux_anomaly_detection - INFO - Entity date: 0/22 anomalies (threshold=1.000)
+2025-09-01 12:27:05,302 - linux_anomaly_detection - INFO - Entity iperf3: 0/10 anomalies (threshold=0.600)
+2025-09-01 12:27:05,311 - linux_anomaly_detection - INFO - Entity python3: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,319 - linux_anomaly_detection - INFO - Entity apt-esm-hook: 1/4 anomalies (threshold=0.874)
+2025-09-01 12:27:05,326 - linux_anomaly_detection - INFO - Entity ubuntu-distro-info: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,334 - linux_anomaly_detection - INFO - Entity sshd: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,342 - linux_anomaly_detection - INFO - Entity head: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,351 - linux_anomaly_detection - INFO - Entity cat: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,359 - linux_anomaly_detection - INFO - Entity apt.systemd.daily: 3/29 anomalies (threshold=0.752)
+2025-09-01 12:27:05,369 - linux_anomaly_detection - INFO - Entity unattended-upgrade: 1/5 anomalies (threshold=0.980)
+2025-09-01 12:27:05,376 - linux_anomaly_detection - INFO - Entity lsb_release: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,383 - linux_anomaly_detection - INFO - Entity apt-config: 2/30 anomalies (threshold=0.926)
+2025-09-01 12:27:05,391 - linux_anomaly_detection - INFO - Entity apt-get: 1/4 anomalies (threshold=0.913)
+2025-09-01 12:27:05,399 - linux_anomaly_detection - INFO - Entity cmp: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:05,405 - linux_anomaly_detection - INFO - Entity apt-helper: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,421 - linux_anomaly_detection - INFO - Applied safety limits: 3.8% -> 0.4%
+2025-09-01 12:27:05,428 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:05,429 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:05,429 - linux_anomaly_detection - INFO -   Total records: 2,056
+2025-09-01 12:27:05,429 - linux_anomaly_detection - INFO -   Anomalies detected: 8
+2025-09-01 12:27:05,430 - linux_anomaly_detection - INFO -   Anomaly rate: 0.39%
+2025-09-01 12:27:05,430 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:05,431 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_process_all_hosts complete
+2025-09-01 12:27:05,433 - linux_anomaly_detection - INFO - Running job: v3_rare_process_by_host_linux
+2025-09-01 12:27:05,477 - linux_anomaly_detection - INFO - Using 379 job-specific models for v3_rare_process_by_host_linux
+2025-09-01 12:27:05,478 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:05,478 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_rare_process_by_host_linux
+2025-09-01 12:27:05,478 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:05,478 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:05,478 - linux_anomaly_detection - INFO -   Job: v3_rare_process_by_host_linux
+2025-09-01 12:27:05,479 - linux_anomaly_detection - INFO -   Type: process
+2025-09-01 12:27:05,479 - linux_anomaly_detection - INFO -   Description: Detect rare processes specific to each host
+2025-09-01 12:27:05,479 - linux_anomaly_detection - INFO -   Input records: 2110
+2025-09-01 12:27:05,479 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:05,480 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:05,480 - linux_anomaly_detection - WARNING - No models found for job v3_rare_process_by_host_linux, using fallback models
+2025-09-01 12:27:05,480 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:05,484 - linux_anomaly_detection - INFO - Feature extraction for job v3_rare_process_by_host_linux (process)
+2025-09-01 12:27:05,502 - linux_anomaly_detection - INFO - Created composite entity for v3_rare_process_by_host_linux: entity_host_process
+2025-09-01 12:27:05,515 - linux_anomaly_detection - INFO - Entity dataportability1:postgres: 0/183 anomalies (threshold=1.000)
+2025-09-01 12:27:05,525 - linux_anomaly_detection - INFO - Entity inji-certify:postgres: 0/249 anomalies (threshold=1.000)
+2025-09-01 12:27:05,533 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:cron: 0/28 anomalies (threshold=1.000)
+2025-09-01 12:27:05,544 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:debian-sa1: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,554 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sh: 0/21 anomalies (threshold=1.000)
+2025-09-01 12:27:05,566 - linux_anomaly_detection - INFO - Entity fleetserver:cron: 0/32 anomalies (threshold=1.000)
+2025-09-01 12:27:05,576 - linux_anomaly_detection - INFO - Entity fleetserver:debian-sa1: 0/14 anomalies (threshold=1.000)
+2025-09-01 12:27:05,585 - linux_anomaly_detection - INFO - Entity fleetserver:sh: 0/24 anomalies (threshold=1.000)
+2025-09-01 12:27:05,593 - linux_anomaly_detection - INFO - Entity socsensor:cron: 0/36 anomalies (threshold=1.000)
+2025-09-01 12:27:05,601 - linux_anomaly_detection - INFO - Entity socsensor:debian-sa1: 0/14 anomalies (threshold=1.000)
+2025-09-01 12:27:05,609 - linux_anomaly_detection - INFO - Entity socsensor:sh: 2/27 anomalies (threshold=0.920)
+2025-09-01 12:27:05,617 - linux_anomaly_detection - INFO - Entity dataportability1:cron: 0/28 anomalies (threshold=1.000)
+2025-09-01 12:27:05,624 - linux_anomaly_detection - INFO - Entity dataportability1:sh: 0/21 anomalies (threshold=1.000)
+2025-09-01 12:27:05,632 - linux_anomaly_detection - INFO - Entity dataportability1:debian-sa1: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,639 - linux_anomaly_detection - INFO - Entity africa-int-obs:cron: 0/28 anomalies (threshold=1.000)
+2025-09-01 12:27:05,650 - linux_anomaly_detection - INFO - Entity africa-int-obs:sh: 0/21 anomalies (threshold=1.000)
+2025-09-01 12:27:05,655 - linux_anomaly_detection - INFO - Entity africa-int-obs:debian-sa1: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,666 - linux_anomaly_detection - INFO - Entity mira-ai:falconctl: 0/14 anomalies (threshold=1.000)
+2025-09-01 12:27:05,672 - linux_anomaly_detection - INFO - Entity mira-ai:falcon-sensor-bpf: 0/7 anomalies (threshold=1.000)
+2025-09-01 12:27:05,683 - linux_anomaly_detection - INFO - Entity sftp:cron: 0/28 anomalies (threshold=1.000)
+2025-09-01 12:27:05,689 - linux_anomaly_detection - INFO - Entity sftp:debian-sa1: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,699 - linux_anomaly_detection - INFO - Entity sftp:sh: 0/21 anomalies (threshold=1.000)
+2025-09-01 12:27:05,705 - linux_anomaly_detection - INFO - Entity fleetserver:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,716 - linux_anomaly_detection - INFO - Entity fleetserver:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,725 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,733 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,741 - linux_anomaly_detection - INFO - Entity socsensor:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,751 - linux_anomaly_detection - INFO - Entity socsensor:falcon-sensor-bpf17804: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,759 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:systemd: 0/44 anomalies (threshold=1.000)
+2025-09-01 12:27:05,770 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sadc: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,781 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:sa1: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,796 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:9: 3/48 anomalies (threshold=0.917)
+2025-09-01 12:27:05,816 - linux_anomaly_detection - INFO - Entity llm-vapt:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,824 - linux_anomaly_detection - INFO - Entity llm-vapt:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,835 - linux_anomaly_detection - INFO - Entity sftp:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,845 - linux_anomaly_detection - INFO - Entity sftp:systemd: 0/24 anomalies (threshold=1.000)
+2025-09-01 12:27:05,854 - linux_anomaly_detection - INFO - Entity sftp:sadc: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,864 - linux_anomaly_detection - INFO - Entity sftp:9: 3/26 anomalies (threshold=0.814)
+2025-09-01 12:27:05,872 - linux_anomaly_detection - INFO - Entity mira-server:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,883 - linux_anomaly_detection - INFO - Entity mira-server:falcon-sensor-bpf17804: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,892 - linux_anomaly_detection - INFO - Entity humeka-server:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,900 - linux_anomaly_detection - INFO - Entity humeka-server:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,907 - linux_anomaly_detection - INFO - Entity inji-certify:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,918 - linux_anomaly_detection - INFO - Entity africa-int-obs:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,928 - linux_anomaly_detection - INFO - Entity dataportability2:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,938 - linux_anomaly_detection - INFO - Entity dataportability2:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,948 - linux_anomaly_detection - INFO - Entity senegal-soc:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,960 - linux_anomaly_detection - INFO - Entity aiops:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:05,970 - linux_anomaly_detection - INFO - Entity aiops:falcon-sensor-bpf: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:05,978 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:05,987 - linux_anomaly_detection - INFO - Entity llm-vapt:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:05,994 - linux_anomaly_detection - INFO - Entity llm-vapt:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,002 - linux_anomaly_detection - INFO - Entity llm-vapt:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,010 - linux_anomaly_detection - INFO - Entity dataportability2:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,018 - linux_anomaly_detection - INFO - Entity dataportability2:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,026 - linux_anomaly_detection - INFO - Entity dataportability2:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,034 - linux_anomaly_detection - INFO - Entity reverseProxy:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,040 - linux_anomaly_detection - INFO - Entity reverseProxy:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,055 - linux_anomaly_detection - INFO - Entity reverseProxy:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,065 - linux_anomaly_detection - INFO - Entity senegal-soc:cron: 0/16 anomalies (threshold=1.000)
+2025-09-01 12:27:06,071 - linux_anomaly_detection - INFO - Entity senegal-soc:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,081 - linux_anomaly_detection - INFO - Entity senegal-soc:sh: 2/11 anomalies (threshold=0.931)
+2025-09-01 12:27:06,087 - linux_anomaly_detection - INFO - Entity fleetserver:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,096 - linux_anomaly_detection - INFO - Entity inji-certify:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,103 - linux_anomaly_detection - INFO - Entity inji-certify:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,112 - linux_anomaly_detection - INFO - Entity inji-certify:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,119 - linux_anomaly_detection - INFO - Entity aiops:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,131 - linux_anomaly_detection - INFO - Entity aiops:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,139 - linux_anomaly_detection - INFO - Entity aiops:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,149 - linux_anomaly_detection - INFO - Entity mira-ai:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,160 - linux_anomaly_detection - INFO - Entity mira-ai:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,168 - linux_anomaly_detection - INFO - Entity mira-ai:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,175 - linux_anomaly_detection - INFO - Entity humeka-server:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,184 - linux_anomaly_detection - INFO - Entity humeka-server:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,190 - linux_anomaly_detection - INFO - Entity humeka-server:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,198 - linux_anomaly_detection - INFO - Entity mira-server:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,204 - linux_anomaly_detection - INFO - Entity mira-server:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,210 - linux_anomaly_detection - INFO - Entity mira-server:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,218 - linux_anomaly_detection - INFO - Entity socsensor:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,223 - linux_anomaly_detection - INFO - Entity dataportability1:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,230 - linux_anomaly_detection - INFO - Entity africa-int-obs:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,237 - linux_anomaly_detection - INFO - Entity pdp-analyzer:cron: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,243 - linux_anomaly_detection - INFO - Entity pdp-analyzer:sh: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,251 - linux_anomaly_detection - INFO - Entity pdp-analyzer:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,258 - linux_anomaly_detection - INFO - Entity sftp:run-parts: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,266 - linux_anomaly_detection - INFO - Entity pdp-analyzer:falconctl: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:06,273 - linux_anomaly_detection - INFO - Entity fleetserver:dpkg: 0/1 anomalies (threshold=0.600)
+2025-09-01 12:27:06,281 - linux_anomaly_detection - INFO - Entity senegal-soc:systemd: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:06,287 - linux_anomaly_detection - INFO - Entity senegal-soc:checkOpenVPN.sh: 1/12 anomalies (threshold=0.875)
+2025-09-01 12:27:06,298 - linux_anomaly_detection - INFO - Entity senegal-soc:systemctl: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,303 - linux_anomaly_detection - INFO - Entity senegal-soc:basename: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:06,316 - linux_anomaly_detection - INFO - Entity senegal-soc:grep: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,321 - linux_anomaly_detection - INFO - Entity socsensor:rotate_logs_with_reboot.sh: 1/7 anomalies (threshold=0.902)
+2025-09-01 12:27:06,331 - linux_anomaly_detection - INFO - Entity upanzi-infra-cancerproject:fwupd: 0/3 anomalies (threshold=0.600)
+2025-09-01 12:27:06,338 - linux_anomaly_detection - INFO - Entity llm-vapt:systemd: 0/8 anomalies (threshold=0.600)
+2025-09-01 12:27:06,346 - linux_anomaly_detection - INFO - Entity llm-vapt:50-motd-news: 3/29 anomalies (threshold=0.768)
+2025-09-01 12:27:06,351 - linux_anomaly_detection - INFO - Entity sftp:dpkg: 0/1 anomalies (threshold=0.600)
+2025-09-01 12:27:06,361 - linux_anomaly_detection - INFO - Entity mira-server:iperf3: 0/10 anomalies (threshold=0.600)
+2025-09-01 12:27:06,376 - linux_anomaly_detection - INFO - Entity mira-server:systemd: 0/60 anomalies (threshold=1.000)
+2025-09-01 12:27:06,384 - linux_anomaly_detection - INFO - Entity humeka-server:systemd: 0/12 anomalies (threshold=1.000)
+2025-09-01 12:27:06,392 - linux_anomaly_detection - INFO - Entity llm-vapt:dpkg: 1/7 anomalies (threshold=0.894)
+2025-09-01 12:27:06,399 - linux_anomaly_detection - INFO - Entity mira-ai:rm: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,404 - linux_anomaly_detection - INFO - Entity mira-ai:50-motd-news: 3/37 anomalies (threshold=0.600)
+2025-09-01 12:27:06,412 - linux_anomaly_detection - INFO - Entity mira-ai:cut: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:06,419 - linux_anomaly_detection - INFO - Entity mira-ai:head: 0/4 anomalies (threshold=0.600)
+2025-09-01 12:27:06,426 - linux_anomaly_detection - INFO - Entity mira-ai:tr: 0/6 anomalies (threshold=1.000)
+2025-09-01 12:27:06,432 - linux_anomaly_detection - INFO - Entity mira-ai:cat: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,437 - linux_anomaly_detection - INFO - Entity mira-ai:cloud-id: 0/5 anomalies (threshold=1.000)
+2025-09-01 12:27:06,444 - linux_anomaly_detection - INFO - Entity mira-ai:uname: 0/10 anomalies (threshold=1.000)
+2025-09-01 12:27:06,454 - linux_anomaly_detection - INFO - Entity mira-ai:sed: 0/4 anomalies (threshold=1.000)
+2025-09-01 12:27:06,464 - linux_anomaly_detection - INFO - Entity mira-ai:dpkg: 0/1 anomalies (threshold=0.600)
+2025-09-01 12:27:06,472 - linux_anomaly_detection - INFO - Entity mira-ai:systemd: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:06,482 - linux_anomaly_detection - INFO - Entity africa-int-obs:apt.systemd.daily: 3/29 anomalies (threshold=0.890)
+2025-09-01 12:27:06,489 - linux_anomaly_detection - INFO - Entity africa-int-obs:apt-config: 1/30 anomalies (threshold=0.877)
+2025-09-01 12:27:06,499 - linux_anomaly_detection - INFO - Entity africa-int-obs:dpkg: 3/24 anomalies (threshold=0.850)
+2025-09-01 12:27:06,530 - linux_anomaly_detection - INFO - Applied safety limits: 1.5% -> 0.4%
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO -   Total records: 1,680
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO -   Anomalies detected: 6
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO -   Anomaly rate: 0.36%
+2025-09-01 12:27:06,537 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:06,538 - linux_anomaly_detection - INFO - Job v3_rare_process_by_host_linux complete
+2025-09-01 12:27:06,628 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_process_all_hosts: 2056 rows
+2025-09-01 12:27:06,671 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_rare_process_by_host_linux: 1680 rows
+2025-09-01 12:27:06,693 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 12:27:06,699 - linux_anomaly_detection - INFO - Completed process group: 0 total anomalies detected
+2025-09-01 12:27:06,699 - linux_anomaly_detection - INFO - Processing network data group
+2025-09-01 12:27:06,700 - linux_anomaly_detection - INFO - Running network group detection
+2025-09-01 12:27:09,592 - linux_anomaly_detection - INFO -  Loaded 179 models for network
+2025-09-01 12:27:09,592 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_anomalous_network_activity, v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:09,593 - linux_anomaly_detection - INFO - Loaded existing models for network
+2025-09-01 12:27:09,593 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_network_activity: 72 models
+2025-09-01 12:27:09,593 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_network_port_activity: 107 models
+2025-09-01 12:27:09,594 - linux_anomaly_detection - INFO - Using detection period: 0.083 days for network
+2025-09-01 12:27:09,594 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.network-default-* using hourly stratified sampling
+2025-09-01 12:27:09,594 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:27:09,595 - linux_anomaly_detection - INFO - Calculated hourly distribution: 2 hours, strategy=recent_weighted, avg_per_hour=5000
+2025-09-01 12:27:15,706 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:6.110s]
+2025-09-01 12:27:17,300 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:1.536s]
+2025-09-01 12:27:17,330 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 9193 records from 2/2 hours
+2025-09-01 12:27:17,330 - linux_anomaly_detection - INFO - Retrieved 9193 process records from Elasticsearch
+2025-09-01 12:27:17,482 - linux_anomaly_detection - INFO - Processed 9,193/9,193 valid timestamps
+2025-09-01 12:27:17,501 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 3 hours covered, avg=3064 records/hour, balance_score=0.09
+2025-09-01 12:27:17,505 - linux_anomaly_detection - INFO - Successfully processed 9193 Linux process records with 25 fields
+2025-09-01 12:27:17,528 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_network_activity
+2025-09-01 12:27:17,534 - linux_anomaly_detection - INFO - Using 72 job-specific models for v3_linux_anomalous_network_activity
+2025-09-01 12:27:17,534 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:17,534 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_network_activity
+2025-09-01 12:27:17,534 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:17,535 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:17,535 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_network_activity
+2025-09-01 12:27:17,536 - linux_anomaly_detection - INFO -   Type: network
+2025-09-01 12:27:17,536 - linux_anomaly_detection - INFO -   Description: Detect anomalous network connections by IP
+2025-09-01 12:27:17,537 - linux_anomaly_detection - INFO -   Input records: 9193
+2025-09-01 12:27:17,537 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:17,538 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:17,539 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_network_activity, using fallback models
+2025-09-01 12:27:17,539 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:17,548 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_network_activity (network)
+2025-09-01 12:27:17,596 - linux_anomaly_detection - INFO - Entity 172.29.108.120: 21/254 anomalies (threshold=0.600)
+2025-09-01 12:27:17,634 - linux_anomaly_detection - INFO - Entity ***REMOVED_INTERNAL_IP***: 266/4380 anomalies (threshold=0.600)
+2025-09-01 12:27:17,670 - linux_anomaly_detection - INFO - Entity 172.29.108.57: 179/3429 anomalies (threshold=0.600)
+2025-09-01 12:27:17,679 - linux_anomaly_detection - INFO - Entity 172.29.108.112: 9/135 anomalies (threshold=0.600)
+2025-09-01 12:27:17,691 - linux_anomaly_detection - INFO - Entity 172.29.108.113: 13/185 anomalies (threshold=0.600)
+2025-09-01 12:27:17,701 - linux_anomaly_detection - INFO - Entity 172.29.108.35: 20/288 anomalies (threshold=0.600)
+2025-09-01 12:27:17,712 - linux_anomaly_detection - INFO - Entity 172.29.108.200: 13/175 anomalies (threshold=0.600)
+2025-09-01 12:27:17,720 - linux_anomaly_detection - INFO - Entity 3.175.179.56: 1/8 anomalies (threshold=0.959)
+2025-09-01 12:27:17,731 - linux_anomaly_detection - INFO - Entity 172.18.0.3: 6/81 anomalies (threshold=0.832)
+2025-09-01 12:27:17,741 - linux_anomaly_detection - INFO - Entity 172.29.108.95: 2/29 anomalies (threshold=0.955)
+2025-09-01 12:27:17,751 - linux_anomaly_detection - INFO - Entity 127.0.0.1: 2/16 anomalies (threshold=0.830)
+2025-09-01 12:27:17,760 - linux_anomaly_detection - INFO - Entity 172.29.108.116: 7/74 anomalies (threshold=0.819)
+2025-09-01 12:27:17,768 - linux_anomaly_detection - INFO - Entity 3.175.179.41: 1/12 anomalies (threshold=0.993)
+2025-09-01 12:27:17,779 - linux_anomaly_detection - INFO - Entity 172.29.108.49: 1/21 anomalies (threshold=0.922)
+2025-09-01 12:27:17,789 - linux_anomaly_detection - INFO - Entity 172.29.108.64: 5/54 anomalies (threshold=0.691)
+2025-09-01 12:27:17,798 - linux_anomaly_detection - INFO - Entity 172.29.108.50: 2/20 anomalies (threshold=0.754)
+2025-09-01 12:27:17,807 - linux_anomaly_detection - INFO - Entity 3.175.179.28: 1/8 anomalies (threshold=0.963)
+2025-09-01 12:27:17,816 - linux_anomaly_detection - INFO - Entity 3.175.179.15: 0/8 anomalies (threshold=1.000)
+2025-09-01 12:27:17,826 - linux_anomaly_detection - INFO - Applied safety limits: 6.0% -> 0.4%
+2025-09-01 12:27:17,831 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:17,832 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:17,832 - linux_anomaly_detection - INFO -   Total records: 9,177
+2025-09-01 12:27:17,832 - linux_anomaly_detection - INFO -   Anomalies detected: 36
+2025-09-01 12:27:17,833 - linux_anomaly_detection - INFO -   Anomaly rate: 0.39%
+2025-09-01 12:27:17,833 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:17,833 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_network_activity complete
+2025-09-01 12:27:17,834 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:17,841 - linux_anomaly_detection - INFO - Using 107 job-specific models for v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:17,842 - linux_anomaly_detection - INFO -   Type: network
+2025-09-01 12:27:17,843 - linux_anomaly_detection - INFO -   Description: Detect anomalous port usage patterns
+2025-09-01 12:27:17,843 - linux_anomaly_detection - INFO -   Input records: 9193
+2025-09-01 12:27:17,843 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:17,844 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:17,844 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_network_port_activity, using fallback models
+2025-09-01 12:27:17,844 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:17,852 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_network_port_activity (network)
+2025-09-01 12:27:17,886 - linux_anomaly_detection - WARNING - No data for entity 27017
+2025-09-01 12:27:17,888 - linux_anomaly_detection - WARNING - No data for entity 21
+2025-09-01 12:27:17,889 - linux_anomaly_detection - WARNING - No data for entity 22
+2025-09-01 12:27:17,890 - linux_anomaly_detection - WARNING - No data for entity 23
+2025-09-01 12:27:17,891 - linux_anomaly_detection - WARNING - No data for entity 25
+2025-09-01 12:27:17,893 - linux_anomaly_detection - WARNING - No data for entity 8220
+2025-09-01 12:27:17,894 - linux_anomaly_detection - WARNING - No data for entity 53
+2025-09-01 12:27:17,894 - linux_anomaly_detection - WARNING - No data for entity 443
+2025-09-01 12:27:17,895 - linux_anomaly_detection - WARNING - No data for entity 5055
+2025-09-01 12:27:17,896 - linux_anomaly_detection - WARNING - No data for entity 80
+2025-09-01 12:27:17,897 - linux_anomaly_detection - WARNING - No data for entity 3306
+2025-09-01 12:27:17,899 - linux_anomaly_detection - WARNING - No data for entity 6379
+2025-09-01 12:27:17,900 - linux_anomaly_detection - WARNING - No data for entity 110
+2025-09-01 12:27:17,900 - linux_anomaly_detection - WARNING - No data for entity 9200
+2025-09-01 12:27:17,901 - linux_anomaly_detection - WARNING - No data for entity 61695
+2025-09-01 12:27:17,902 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_anomalous_network_port_activity
+2025-09-01 12:27:17,914 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:27:17,919 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:17,920 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:17,920 - linux_anomaly_detection - INFO -   Total records: 9,193
+2025-09-01 12:27:17,920 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:17,921 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:17,921 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:17,922 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_network_port_activity complete
+2025-09-01 12:27:18,009 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_network_activity: 9177 rows
+2025-09-01 12:27:18,090 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_network_port_activity: 9193 rows
+2025-09-01 12:27:18,104 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 12:27:18,114 - linux_anomaly_detection - INFO - Completed network group: 0 total anomalies detected
+2025-09-01 12:27:18,115 - linux_anomaly_detection - INFO - Processing user data group
+2025-09-01 12:27:18,115 - linux_anomaly_detection - INFO - Running user group detection
+2025-09-01 12:27:18,851 - linux_anomaly_detection - INFO -  Loaded 20 models for user
+2025-09-01 12:27:18,852 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_anomalous_user_name
+2025-09-01 12:27:18,852 - linux_anomaly_detection - INFO - Loaded existing models for user
+2025-09-01 12:27:18,852 - linux_anomaly_detection - INFO -   Job v3_linux_anomalous_user_name: 20 models
+2025-09-01 12:27:18,853 - linux_anomaly_detection - INFO - Using detection period: 0.167 days for user
+2025-09-01 12:27:18,853 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 12:27:18,853 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:27:18,854 - linux_anomaly_detection - INFO - Calculated hourly distribution: 5 hours, strategy=recent_weighted, avg_per_hour=2000
+2025-09-01 12:27:19,789 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.934s]
+2025-09-01 12:27:20,472 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.664s]
+2025-09-01 12:27:20,976 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.491s]
+2025-09-01 12:27:21,278 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.287s]
+2025-09-01 12:27:21,298 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.013s]
+2025-09-01 12:27:21,298 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 9331 records from 4/5 hours
+2025-09-01 12:27:21,298 - linux_anomaly_detection - INFO - Retrieved 9331 process records from Elasticsearch
+2025-09-01 12:27:21,405 - linux_anomaly_detection - INFO - Processed 9,331/9,331 valid timestamps
+2025-09-01 12:27:21,405 - linux_anomaly_detection - WARNING - Missing required fields for process group: ['is_sudo_command', 'is_su_command', 'is_compiler_activity', 'is_dev_tool', 'hour_of_day', 'is_business_hours', 'command_length', 'args_count', 'has_suspicious_chars']
+2025-09-01 12:27:21,418 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 4 hours covered, avg=2333 records/hour, balance_score=0.86
+2025-09-01 12:27:21,422 - linux_anomaly_detection - INFO - Successfully processed 9331 Linux process records with 23 fields
+2025-09-01 12:27:21,432 - linux_anomaly_detection - INFO - Running job: v3_linux_anomalous_user_name
+2025-09-01 12:27:21,459 - linux_anomaly_detection - INFO - Using 20 job-specific models for v3_linux_anomalous_user_name
+2025-09-01 12:27:21,459 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:21,459 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_anomalous_user_name
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO -   Job: v3_linux_anomalous_user_name
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO -   Type: user
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO -   Description: Detect anomalous user behavior
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO -   Input records: 9331
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,460 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:21,460 - linux_anomaly_detection - WARNING - No models found for job v3_linux_anomalous_user_name, using fallback models
+2025-09-01 12:27:21,461 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:21,469 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_anomalous_user_name (user)
+2025-09-01 12:27:21,549 - linux_anomaly_detection - INFO - Entity root: 0/7285 anomalies (threshold=1.000)
+2025-09-01 12:27:21,556 - linux_anomaly_detection - INFO - Entity man: 0/32 anomalies (threshold=1.000)
+2025-09-01 12:27:21,564 - linux_anomaly_detection - INFO - Entity postgres: 0/450 anomalies (threshold=1.000)
+2025-09-01 12:27:21,575 - linux_anomaly_detection - INFO - Entity lxd: 0/603 anomalies (threshold=1.000)
+2025-09-01 12:27:21,582 - linux_anomaly_detection - INFO - Entity iperf: 0/60 anomalies (threshold=1.000)
+2025-09-01 12:27:21,592 - linux_anomaly_detection - INFO - Entity postfix: 0/2 anomalies (threshold=0.600)
+2025-09-01 12:27:21,602 - linux_anomaly_detection - INFO - Entity _apt: 44/889 anomalies (threshold=0.600)
+2025-09-01 12:27:21,610 - linux_anomaly_detection - INFO - Entity fwupd-refresh: 0/10 anomalies (threshold=1.000)
+2025-09-01 12:27:21,615 - linux_anomaly_detection - INFO - Applied safety limits: 0.5% -> 0.4%
+2025-09-01 12:27:21,620 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,621 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:21,621 - linux_anomaly_detection - INFO -   Total records: 9,331
+2025-09-01 12:27:21,621 - linux_anomaly_detection - INFO -   Anomalies detected: 107
+2025-09-01 12:27:21,622 - linux_anomaly_detection - INFO -   Anomaly rate: 1.15%
+2025-09-01 12:27:21,622 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,624 - linux_anomaly_detection - INFO - Job v3_linux_anomalous_user_name complete
+2025-09-01 12:27:21,625 - linux_anomaly_detection - INFO - Running job: v3_linux_rare_sudo_user
+2025-09-01 12:27:21,631 - linux_anomaly_detection - INFO - Using 20 general models for v3_linux_rare_sudo_user
+2025-09-01 12:27:21,631 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:21,631 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_rare_sudo_user
+2025-09-01 12:27:21,631 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,631 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:21,632 - linux_anomaly_detection - INFO -   Job: v3_linux_rare_sudo_user
+2025-09-01 12:27:21,632 - linux_anomaly_detection - INFO -   Type: user
+2025-09-01 12:27:21,632 - linux_anomaly_detection - INFO -   Description: Detect rare sudo usage by users
+2025-09-01 12:27:21,632 - linux_anomaly_detection - INFO -   Input records: 9331
+2025-09-01 12:27:21,632 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,633 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:21,633 - linux_anomaly_detection - WARNING - No models found for job v3_linux_rare_sudo_user, using fallback models
+2025-09-01 12:27:21,633 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:21,645 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_rare_sudo_user (user)
+2025-09-01 12:27:21,684 - linux_anomaly_detection - ERROR - Missing model for entity root
+2025-09-01 12:27:21,689 - linux_anomaly_detection - ERROR - Missing model for entity man
+2025-09-01 12:27:21,692 - linux_anomaly_detection - ERROR - Missing model for entity postgres
+2025-09-01 12:27:21,696 - linux_anomaly_detection - ERROR - Missing model for entity lxd
+2025-09-01 12:27:21,698 - linux_anomaly_detection - ERROR - Missing model for entity iperf
+2025-09-01 12:27:21,699 - linux_anomaly_detection - ERROR - Missing model for entity postfix
+2025-09-01 12:27:21,705 - linux_anomaly_detection - ERROR - Missing model for entity _apt
+2025-09-01 12:27:21,708 - linux_anomaly_detection - ERROR - Missing model for entity fwupd-refresh
+2025-09-01 12:27:21,709 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_rare_sudo_user
+2025-09-01 12:27:21,715 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:27:21,719 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,720 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:21,720 - linux_anomaly_detection - INFO -   Total records: 9,331
+2025-09-01 12:27:21,720 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:21,720 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:21,721 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,722 - linux_anomaly_detection - INFO - Job v3_linux_rare_sudo_user complete
+2025-09-01 12:27:21,724 - linux_anomaly_detection - INFO - Running job: v3_linux_rare_user_compiler
+2025-09-01 12:27:21,729 - linux_anomaly_detection - INFO - Using 20 general models for v3_linux_rare_user_compiler
+2025-09-01 12:27:21,730 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:21,730 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_rare_user_compiler
+2025-09-01 12:27:21,730 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,730 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:21,730 - linux_anomaly_detection - INFO -   Job: v3_linux_rare_user_compiler
+2025-09-01 12:27:21,731 - linux_anomaly_detection - INFO -   Type: user
+2025-09-01 12:27:21,731 - linux_anomaly_detection - INFO -   Description: Detect rare compiler usage by users
+2025-09-01 12:27:21,731 - linux_anomaly_detection - INFO -   Input records: 9331
+2025-09-01 12:27:21,731 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:21,732 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:21,732 - linux_anomaly_detection - WARNING - No models found for job v3_linux_rare_user_compiler, using fallback models
+2025-09-01 12:27:21,732 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:21,740 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_rare_user_compiler (user)
+2025-09-01 12:27:21,778 - linux_anomaly_detection - ERROR - Missing model for entity root
+2025-09-01 12:27:21,781 - linux_anomaly_detection - ERROR - Missing model for entity man
+2025-09-01 12:27:21,783 - linux_anomaly_detection - ERROR - Missing model for entity postgres
+2025-09-01 12:27:21,788 - linux_anomaly_detection - ERROR - Missing model for entity lxd
+2025-09-01 12:27:21,790 - linux_anomaly_detection - ERROR - Missing model for entity iperf
+2025-09-01 12:27:21,791 - linux_anomaly_detection - ERROR - Missing model for entity postfix
+2025-09-01 12:27:21,793 - linux_anomaly_detection - ERROR - Missing model for entity _apt
+2025-09-01 12:27:21,795 - linux_anomaly_detection - ERROR - Missing model for entity fwupd-refresh
+2025-09-01 12:27:21,796 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_rare_user_compiler
+2025-09-01 12:27:21,803 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:27:21,808 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,808 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:21,808 - linux_anomaly_detection - INFO -   Total records: 9,331
+2025-09-01 12:27:21,809 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:21,809 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:21,809 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:21,810 - linux_anomaly_detection - INFO - Job v3_linux_rare_user_compiler complete
+2025-09-01 12:27:21,877 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_anomalous_user_name: 9331 rows
+2025-09-01 12:27:21,936 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_rare_sudo_user: 9331 rows
+2025-09-01 12:27:21,999 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_rare_user_compiler: 9331 rows
+2025-09-01 12:27:22,020 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 12:27:22,028 - linux_anomaly_detection - INFO - Completed user group: 0 total anomalies detected
+2025-09-01 12:27:22,029 - linux_anomaly_detection - INFO - Processing discovery data group
+2025-09-01 12:27:22,029 - linux_anomaly_detection - INFO - Running discovery group detection
+2025-09-01 12:27:22,287 - linux_anomaly_detection - INFO -  Loaded 17 models for discovery
+2025-09-01 12:27:22,287 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_system_information_discovery, v3_linux_system_process_discovery, v3_linux_network_configuration_discovery, v3_linux_system_information_discovery_ctx, v3_linux_network_connection_discovery_ctx, v3_linux_system_process_discovery_ctx, v3_linux_network_connection_discovery, v3_linux_system_user_discovery_ctx, v3_linux_system_user_discovery, v3_linux_network_configuration_discovery_ctx
+2025-09-01 12:27:22,287 - linux_anomaly_detection - INFO - Loaded existing models for discovery
+2025-09-01 12:27:22,287 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery: 2 models
+2025-09-01 12:27:22,288 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery_ctx: 1 models
+2025-09-01 12:27:22,288 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery: 1 models
+2025-09-01 12:27:22,288 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery_ctx: 1 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery: 2 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery_ctx: 4 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery: 1 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery_ctx: 2 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery: 2 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery_ctx: 1 models
+2025-09-01 12:27:22,289 - linux_anomaly_detection - INFO - Using detection period: 0.167 days for discovery
+2025-09-01 12:27:22,290 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 12:27:22,290 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:27:22,291 - linux_anomaly_detection - INFO - Calculated hourly distribution: 5 hours, strategy=recent_weighted, avg_per_hour=2000
+2025-09-01 12:27:22,385 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.094s]
+2025-09-01 12:27:22,421 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.034s]
+2025-09-01 12:27:22,458 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.035s]
+2025-09-01 12:27:22,491 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.032s]
+2025-09-01 12:27:22,504 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.012s]
+2025-09-01 12:27:22,504 - linux_anomaly_detection - INFO - Hourly stratification yielded 434/10000 records, applying backfill
+2025-09-01 12:27:22,504 - linux_anomaly_detection - INFO - Applying intelligent backfill for 9566 records
+2025-09-01 12:27:22,519 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.011s]
+2025-09-01 12:27:22,520 - linux_anomaly_detection - INFO - Backfill complete: added 0 records
+2025-09-01 12:27:22,520 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 434 records from 4/5 hours
+2025-09-01 12:27:22,520 - linux_anomaly_detection - INFO - Retrieved 434 process records from Elasticsearch
+2025-09-01 12:27:22,528 - linux_anomaly_detection - INFO - Processed 434/434 valid timestamps
+2025-09-01 12:27:22,537 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 5 hours covered, avg=87 records/hour, balance_score=0.83
+2025-09-01 12:27:22,538 - linux_anomaly_detection - INFO - Successfully processed 434 Linux process records with 25 fields
+2025-09-01 12:27:22,540 - linux_anomaly_detection - INFO - Running job: v3_linux_network_configuration_discovery
+2025-09-01 12:27:22,545 - linux_anomaly_detection - INFO - Using 2 job-specific models for v3_linux_network_configuration_discovery
+2025-09-01 12:27:22,546 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:22,546 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_network_configuration_discovery
+2025-09-01 12:27:22,546 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO -   Job: v3_linux_network_configuration_discovery
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO -   Description: Detect network configuration discovery
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO -   Input records: 434
+2025-09-01 12:27:22,547 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,548 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:22,548 - linux_anomaly_detection - WARNING - No models found for job v3_linux_network_configuration_discovery, using fallback models
+2025-09-01 12:27:22,548 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:22,549 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_network_configuration_discovery (discovery)
+2025-09-01 12:27:22,566 - linux_anomaly_detection - INFO - Entity ip: 0/46 anomalies (threshold=1.000)
+2025-09-01 12:27:22,569 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,569 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:22,570 - linux_anomaly_detection - INFO -   Total records: 46
+2025-09-01 12:27:22,570 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:22,570 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:22,571 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,571 - linux_anomaly_detection - INFO - Job v3_linux_network_configuration_discovery complete
+2025-09-01 12:27:22,572 - linux_anomaly_detection - INFO - Running job: v3_linux_network_connection_discovery
+2025-09-01 12:27:22,575 - linux_anomaly_detection - INFO - Using 1 job-specific models for v3_linux_network_connection_discovery
+2025-09-01 12:27:22,575 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:22,576 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_network_connection_discovery
+2025-09-01 12:27:22,576 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,577 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:22,577 - linux_anomaly_detection - INFO -   Job: v3_linux_network_connection_discovery
+2025-09-01 12:27:22,577 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 12:27:22,577 - linux_anomaly_detection - INFO -   Description: Detect network connection discovery
+2025-09-01 12:27:22,577 - linux_anomaly_detection - INFO -   Input records: 434
+2025-09-01 12:27:22,578 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,578 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:22,579 - linux_anomaly_detection - WARNING - No models found for job v3_linux_network_connection_discovery, using fallback models
+2025-09-01 12:27:22,579 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:22,580 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_network_connection_discovery (discovery)
+2025-09-01 12:27:22,587 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_network_connection_discovery, attempting fallback
+2025-09-01 12:27:22,588 - linux_anomaly_detection - WARNING - No data for entity netstat
+2025-09-01 12:27:22,588 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_network_connection_discovery
+2025-09-01 12:27:22,589 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:27:22,591 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,591 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:22,591 - linux_anomaly_detection - INFO -   Total records: 434
+2025-09-01 12:27:22,592 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:22,592 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:22,592 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,593 - linux_anomaly_detection - INFO - Job v3_linux_network_connection_discovery complete
+2025-09-01 12:27:22,594 - linux_anomaly_detection - INFO - Running job: v3_linux_system_information_discovery
+2025-09-01 12:27:22,596 - linux_anomaly_detection - INFO - Using 2 job-specific models for v3_linux_system_information_discovery
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_information_discovery
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO -   Job: v3_linux_system_information_discovery
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 12:27:22,597 - linux_anomaly_detection - INFO -   Description: Detect system information discovery
+2025-09-01 12:27:22,598 - linux_anomaly_detection - INFO -   Input records: 434
+2025-09-01 12:27:22,598 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,598 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:22,598 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_information_discovery, using fallback models
+2025-09-01 12:27:22,599 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:22,599 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_information_discovery (discovery)
+2025-09-01 12:27:22,617 - linux_anomaly_detection - INFO - Entity uname: 0/136 anomalies (threshold=1.000)
+2025-09-01 12:27:22,628 - linux_anomaly_detection - INFO - Entity cat: 15/160 anomalies (threshold=0.729)
+2025-09-01 12:27:22,630 - linux_anomaly_detection - INFO - Applied safety limits: 5.1% -> 0.4%
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO -   Total records: 296
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO -   Anomalies detected: 47
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO -   Anomaly rate: 15.88%
+2025-09-01 12:27:22,632 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,633 - linux_anomaly_detection - INFO - Job v3_linux_system_information_discovery complete
+2025-09-01 12:27:22,634 - linux_anomaly_detection - INFO - Running job: v3_linux_system_process_discovery
+2025-09-01 12:27:22,640 - linux_anomaly_detection - INFO - Using 1 job-specific models for v3_linux_system_process_discovery
+2025-09-01 12:27:22,640 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:22,640 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_process_discovery
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO -   Job: v3_linux_system_process_discovery
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO -   Description: Detect process discovery
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO -   Input records: 434
+2025-09-01 12:27:22,641 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,642 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:22,642 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_process_discovery, using fallback models
+2025-09-01 12:27:22,642 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:22,643 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_process_discovery (discovery)
+2025-09-01 12:27:22,650 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_system_process_discovery, attempting fallback
+2025-09-01 12:27:22,653 - linux_anomaly_detection - WARNING - No data for entity ps
+2025-09-01 12:27:22,653 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_system_process_discovery
+2025-09-01 12:27:22,655 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 12:27:22,656 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,657 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:22,657 - linux_anomaly_detection - INFO -   Total records: 434
+2025-09-01 12:27:22,657 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:22,657 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:22,658 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,659 - linux_anomaly_detection - INFO - Job v3_linux_system_process_discovery complete
+2025-09-01 12:27:22,660 - linux_anomaly_detection - INFO - Running job: v3_linux_system_user_discovery
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO - Using 2 job-specific models for v3_linux_system_user_discovery
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_user_discovery
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 12:27:22,663 - linux_anomaly_detection - INFO -   Job: v3_linux_system_user_discovery
+2025-09-01 12:27:22,664 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 12:27:22,664 - linux_anomaly_detection - INFO -   Description: Detect user discovery
+2025-09-01 12:27:22,664 - linux_anomaly_detection - INFO -   Input records: 434
+2025-09-01 12:27:22,664 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 12:27:22,664 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 12:27:22,665 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_user_discovery, using fallback models
+2025-09-01 12:27:22,665 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 12:27:22,666 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_user_discovery (discovery)
+2025-09-01 12:27:22,681 - linux_anomaly_detection - INFO - Entity id: 0/4 anomalies (threshold=0.600)
+2025-09-01 12:27:22,683 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,683 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 12:27:22,683 - linux_anomaly_detection - INFO -   Total records: 4
+2025-09-01 12:27:22,683 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 12:27:22,684 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 12:27:22,684 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 12:27:22,684 - linux_anomaly_detection - INFO - Job v3_linux_system_user_discovery complete
+2025-09-01 12:27:22,711 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_network_configuration_discovery: 46 rows
+2025-09-01 12:27:22,746 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_network_connection_discovery: 434 rows
+2025-09-01 12:27:22,788 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_information_discovery: 296 rows
+2025-09-01 12:27:22,823 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_process_discovery: 434 rows
+2025-09-01 12:27:22,885 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_user_discovery: 4 rows
+2025-09-01 12:27:22,899 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 12:27:22,901 - linux_anomaly_detection - INFO - Completed discovery group: 0 total anomalies detected
+2025-09-01 12:27:22,901 - linux_anomaly_detection - INFO - Processing metadata data group
+2025-09-01 12:27:22,902 - linux_anomaly_detection - INFO - Running metadata group detection
+2025-09-01 12:27:22,902 - linux_anomaly_detection - WARNING - Model files not found for metadata in /tmp/linux_anomaly_models
+2025-09-01 12:27:22,902 - linux_anomaly_detection - WARNING - No existing models found for metadata
+2025-09-01 12:27:22,903 - linux_anomaly_detection - INFO - Using detection period: 1 days for metadata
+2025-09-01 12:27:22,903 - linux_anomaly_detection - INFO - Fetching metadata access data from .ds-logs-endpoint.events.network-default-* with stratified sampling
+2025-09-01 12:27:22,903 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 12:27:22,905 - linux_anomaly_detection - INFO - Calculated hourly distribution: 24 hours, strategy=recent_weighted, avg_per_hour=416
+2025-09-01 12:27:22,929 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 12:27:22,948 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.018s]
+2025-09-01 12:27:22,965 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.017s]
+2025-09-01 12:27:22,987 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 12:27:23,007 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.018s]
+2025-09-01 12:27:23,022 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.015s]
+2025-09-01 12:27:23,046 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 12:27:23,063 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.017s]
+2025-09-01 12:27:23,081 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.017s]
+2025-09-01 12:27:23,101 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.019s]
+2025-09-01 12:27:23,120 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.018s]
+2025-09-01 12:27:23,140 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.019s]
+2025-09-01 12:27:23,158 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.017s]
+2025-09-01 12:27:23,173 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.015s]
+2025-09-01 12:27:23,190 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.016s]
+2025-09-01 12:27:23,206 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.015s]
+2025-09-01 12:27:23,226 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.020s]
+2025-09-01 12:27:23,248 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 12:27:23,270 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.021s]
+2025-09-01 12:27:23,294 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.023s]
+2025-09-01 12:27:23,309 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.015s]
+2025-09-01 12:27:23,329 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.018s]
+2025-09-01 12:27:23,349 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.019s]
+2025-09-01 12:27:23,366 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.network-default-*/_search [status:200 duration:0.016s]
+2025-09-01 12:27:23,367 - linux_anomaly_detection - INFO - Hourly stratification yielded 0/10000 records, applying backfill
+2025-09-01 12:27:23,367 - linux_anomaly_detection - INFO - Applying intelligent backfill for 10000 records
+2025-09-01 12:27:23,369 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 0 records from 0/24 hours
+2025-09-01 12:27:23,370 - linux_anomaly_detection - INFO - Retrieved 0 metadata access records from Elasticsearch
+2025-09-01 12:27:23,370 - linux_anomaly_detection - WARNING - No metadata access events found
+2025-09-01 12:27:23,371 - linux_anomaly_detection - WARNING - No data available for metadata group
+2025-09-01 12:27:23,371 - linux_anomaly_detection - INFO - Completed metadata group: 0 total anomalies detected
+2025-09-01 12:27:23,371 - linux_anomaly_detection - ERROR - Error in detection process: 'LinuxAnomalyDetector' object has no attribute '_generate_comprehensive_outputs'

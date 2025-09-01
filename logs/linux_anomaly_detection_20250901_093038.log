@@ -1,0 +1,42 @@
+2025-09-01 09:30:38,519 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 09:30:38,520 - linux_anomaly_detection - INFO - Detection mode: group
+2025-09-01 09:30:38,520 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 09:30:38,922 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.051s]
+2025-09-01 09:30:38,923 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 09:30:38,925 - linux_anomaly_detection - INFO - Running group detection for: discovery
+2025-09-01 09:30:38,928 - linux_anomaly_detection - INFO - Running discovery group detection
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO -  Loaded 15 models for discovery
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_system_user_discovery_ctx, v3_linux_system_process_discovery_ctx, v3_linux_system_information_discovery, v3_linux_network_configuration_discovery, v3_linux_system_user_discovery, v3_linux_network_connection_discovery_ctx, v3_linux_network_configuration_discovery_ctx, v3_linux_system_process_discovery, v3_linux_network_connection_discovery, v3_linux_system_information_discovery_ctx
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO - Loaded existing models for discovery
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery: 2 models
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery_ctx: 1 models
+2025-09-01 09:30:39,173 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery: 1 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery_ctx: 1 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery: 2 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery_ctx: 3 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery: 1 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery_ctx: 2 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery: 1 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery_ctx: 1 models
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO - Using detection period: 0.167 days for discovery
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 09:30:39,174 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 09:30:39,176 - linux_anomaly_detection - INFO - Calculated hourly distribution: 5 hours, strategy=recent_weighted, avg_per_hour=2000
+2025-09-01 09:30:43,461 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:4.284s]
+2025-09-01 09:30:43,487 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.026s]
+2025-09-01 09:30:43,513 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.025s]
+2025-09-01 09:30:43,535 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.021s]
+2025-09-01 09:30:43,554 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.019s]
+2025-09-01 09:30:43,555 - linux_anomaly_detection - INFO - Hourly stratification yielded 0/10000 records, applying backfill
+2025-09-01 09:30:43,555 - linux_anomaly_detection - INFO - Applying intelligent backfill for 10000 records
+2025-09-01 09:30:43,557 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 0 records from 0/5 hours
+2025-09-01 09:30:43,557 - linux_anomaly_detection - INFO - Retrieved 0 process records from Elasticsearch
+2025-09-01 09:30:43,557 - linux_anomaly_detection - WARNING - No process data found matching the criteria
+2025-09-01 09:30:43,558 - linux_anomaly_detection - WARNING - No data available for discovery group
+2025-09-01 09:30:43,559 - linux_anomaly_detection - INFO - Total anomalies detected in group discovery: 0
+2025-09-01 09:30:43,560 - linux_anomaly_detection - INFO - Generating report for group: discovery
+2025-09-01 09:30:43,561 - linux_anomaly_detection - INFO - Generating ML-only comprehensive report for discovery anomalies
+2025-09-01 09:30:43,562 - linux_anomaly_detection - WARNING - No ML anomalies found for discovery - generating empty report
+2025-09-01 09:30:43,565 - linux_anomaly_detection - INFO - Generated no-anomalies report: ./results\discovery_anomaly_report_20250901_093043.md
+2025-09-01 09:30:43,566 - linux_anomaly_detection - INFO - Generated 1 reports
+2025-09-01 09:30:43,566 - linux_anomaly_detection - INFO - Linux anomaly detection completed successfully

@@ -1,0 +1,186 @@
+2025-09-01 02:17:26,173 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
+2025-09-01 02:17:26,173 - linux_anomaly_detection - INFO - Detection mode: group
+2025-09-01 02:17:26,173 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
+2025-09-01 02:17:28,045 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:1.518s]
+2025-09-01 02:17:28,045 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
+2025-09-01 02:17:28,047 - linux_anomaly_detection - INFO - Running group detection for: discovery
+2025-09-01 02:17:28,050 - linux_anomaly_detection - INFO - Running discovery group detection
+2025-09-01 02:17:28,323 - linux_anomaly_detection - INFO -  Loaded 15 models for discovery
+2025-09-01 02:17:28,323 - linux_anomaly_detection - INFO -   Jobs covered: v3_linux_network_connection_discovery_ctx, v3_linux_system_process_discovery, v3_linux_system_user_discovery_ctx, v3_linux_network_configuration_discovery, v3_linux_system_user_discovery, v3_linux_system_process_discovery_ctx, v3_linux_network_connection_discovery, v3_linux_system_information_discovery_ctx, v3_linux_network_configuration_discovery_ctx, v3_linux_system_information_discovery
+2025-09-01 02:17:28,323 - linux_anomaly_detection - INFO - Loaded existing models for discovery
+2025-09-01 02:17:28,323 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery: 2 models
+2025-09-01 02:17:28,323 - linux_anomaly_detection - INFO -   Job v3_linux_network_configuration_discovery_ctx: 1 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery: 1 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_network_connection_discovery_ctx: 1 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery: 2 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_system_information_discovery_ctx: 3 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery: 1 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_system_process_discovery_ctx: 2 models
+2025-09-01 02:17:28,324 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery: 1 models
+2025-09-01 02:17:28,325 - linux_anomaly_detection - INFO -   Job v3_linux_system_user_discovery_ctx: 1 models
+2025-09-01 02:17:28,325 - linux_anomaly_detection - INFO - Using detection period: 0.167 days for discovery
+2025-09-01 02:17:28,325 - linux_anomaly_detection - INFO - Fetching process data from .ds-logs-endpoint.events.process-default-* using hourly stratified sampling
+2025-09-01 02:17:28,325 - linux_anomaly_detection - INFO - Starting hourly stratified fetch: 10000 records across time range
+2025-09-01 02:17:28,328 - linux_anomaly_detection - INFO - Calculated hourly distribution: 5 hours, strategy=recent_weighted, avg_per_hour=2000
+2025-09-01 02:17:28,847 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.519s]
+2025-09-01 02:17:29,356 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.508s]
+2025-09-01 02:17:29,859 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.502s]
+2025-09-01 02:17:30,352 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.492s]
+2025-09-01 02:17:30,850 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.496s]
+2025-09-01 02:17:30,851 - linux_anomaly_detection - INFO - Hourly stratification yielded 8/10000 records, applying backfill
+2025-09-01 02:17:30,852 - linux_anomaly_detection - INFO - Applying intelligent backfill for 9992 records
+2025-09-01 02:17:31,376 - elastic_transport.transport - INFO - POST https://***REMOVED_INTERNAL_IP***:9200/.ds-logs-endpoint.events.process-default-*/_search [status:200 duration:0.515s]
+2025-09-01 02:17:31,377 - linux_anomaly_detection - INFO - Backfill complete: added 0 records
+2025-09-01 02:17:31,379 - linux_anomaly_detection - INFO - Hourly stratified fetch complete: 8 records from 1/5 hours
+2025-09-01 02:17:31,379 - linux_anomaly_detection - INFO - Retrieved 8 process records from Elasticsearch
+2025-09-01 02:17:31,388 - linux_anomaly_detection - INFO - Processed 8/8 valid timestamps
+2025-09-01 02:17:31,391 - linux_anomaly_detection - INFO - Temporal distribution analysis for process: 1 hours covered, avg=8 records/hour, balance_score=nan
+2025-09-01 02:17:31,392 - linux_anomaly_detection - INFO - Successfully processed 8 Linux process records with 25 fields
+2025-09-01 02:17:31,392 - linux_anomaly_detection - INFO - Running job: v3_linux_network_configuration_discovery
+2025-09-01 02:17:31,392 - linux_anomaly_detection - WARNING - Job v3_linux_network_configuration_discovery warning: Small dataset (8 records)
+2025-09-01 02:17:31,397 - linux_anomaly_detection - INFO - Using 2 job-specific models for v3_linux_network_configuration_discovery
+2025-09-01 02:17:31,397 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_network_configuration_discovery
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO -   Job: v3_linux_network_configuration_discovery
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO -   Description: Detect network configuration discovery
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO -   Input records: 8
+2025-09-01 02:17:31,398 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,399 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 02:17:31,399 - linux_anomaly_detection - WARNING - No models found for job v3_linux_network_configuration_discovery, using fallback models
+2025-09-01 02:17:31,399 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 02:17:31,400 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_network_configuration_discovery (discovery)
+2025-09-01 02:17:31,414 - linux_anomaly_detection - INFO - Entity ip: 0/8 anomalies (threshold=0.600)
+2025-09-01 02:17:31,415 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,416 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 02:17:31,416 - linux_anomaly_detection - INFO -   Total records: 8
+2025-09-01 02:17:31,417 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 02:17:31,417 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 02:17:31,417 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,418 - linux_anomaly_detection - INFO - Job v3_linux_network_configuration_discovery complete
+2025-09-01 02:17:31,420 - linux_anomaly_detection - INFO - Running job: v3_linux_network_connection_discovery
+2025-09-01 02:17:31,420 - linux_anomaly_detection - WARNING - Job v3_linux_network_connection_discovery warning: Small dataset (8 records)
+2025-09-01 02:17:31,423 - linux_anomaly_detection - INFO - Using 1 job-specific models for v3_linux_network_connection_discovery
+2025-09-01 02:17:31,424 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 02:17:31,424 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_network_connection_discovery
+2025-09-01 02:17:31,424 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,425 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 02:17:31,425 - linux_anomaly_detection - INFO -   Job: v3_linux_network_connection_discovery
+2025-09-01 02:17:31,425 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 02:17:31,425 - linux_anomaly_detection - INFO -   Description: Detect network connection discovery
+2025-09-01 02:17:31,425 - linux_anomaly_detection - INFO -   Input records: 8
+2025-09-01 02:17:31,426 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,426 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 02:17:31,426 - linux_anomaly_detection - WARNING - No models found for job v3_linux_network_connection_discovery, using fallback models
+2025-09-01 02:17:31,427 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 02:17:31,427 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_network_connection_discovery (discovery)
+2025-09-01 02:17:31,433 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_network_connection_discovery, attempting fallback
+2025-09-01 02:17:31,435 - linux_anomaly_detection - WARNING - No data for entity netstat
+2025-09-01 02:17:31,437 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_network_connection_discovery
+2025-09-01 02:17:31,438 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 02:17:31,439 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,439 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 02:17:31,439 - linux_anomaly_detection - INFO -   Total records: 8
+2025-09-01 02:17:31,440 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 02:17:31,440 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 02:17:31,440 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,441 - linux_anomaly_detection - INFO - Job v3_linux_network_connection_discovery complete
+2025-09-01 02:17:31,442 - linux_anomaly_detection - INFO - Running job: v3_linux_system_information_discovery
+2025-09-01 02:17:31,442 - linux_anomaly_detection - WARNING - Job v3_linux_system_information_discovery warning: Small dataset (8 records)
+2025-09-01 02:17:31,444 - linux_anomaly_detection - INFO - Using 2 job-specific models for v3_linux_system_information_discovery
+2025-09-01 02:17:31,445 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 02:17:31,445 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_information_discovery
+2025-09-01 02:17:31,445 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,445 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 02:17:31,446 - linux_anomaly_detection - INFO -   Job: v3_linux_system_information_discovery
+2025-09-01 02:17:31,446 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 02:17:31,446 - linux_anomaly_detection - INFO -   Description: Detect system information discovery
+2025-09-01 02:17:31,446 - linux_anomaly_detection - INFO -   Input records: 8
+2025-09-01 02:17:31,446 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,447 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 02:17:31,447 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_information_discovery, using fallback models
+2025-09-01 02:17:31,447 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 02:17:31,448 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_information_discovery (discovery)
+2025-09-01 02:17:31,456 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_system_information_discovery, attempting fallback
+2025-09-01 02:17:31,457 - linux_anomaly_detection - WARNING - No data for entity cat
+2025-09-01 02:17:31,458 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_system_information_discovery
+2025-09-01 02:17:31,459 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 02:17:31,460 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,460 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 02:17:31,460 - linux_anomaly_detection - INFO -   Total records: 8
+2025-09-01 02:17:31,461 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 02:17:31,461 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 02:17:31,461 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,461 - linux_anomaly_detection - INFO - Job v3_linux_system_information_discovery complete
+2025-09-01 02:17:31,462 - linux_anomaly_detection - INFO - Running job: v3_linux_system_process_discovery
+2025-09-01 02:17:31,462 - linux_anomaly_detection - WARNING - Job v3_linux_system_process_discovery warning: Small dataset (8 records)
+2025-09-01 02:17:31,464 - linux_anomaly_detection - INFO - Using 1 job-specific models for v3_linux_system_process_discovery
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_process_discovery
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO -   Job: v3_linux_system_process_discovery
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 02:17:31,465 - linux_anomaly_detection - INFO -   Description: Detect process discovery
+2025-09-01 02:17:31,466 - linux_anomaly_detection - INFO -   Input records: 8
+2025-09-01 02:17:31,466 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,466 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 02:17:31,466 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_process_discovery, using fallback models
+2025-09-01 02:17:31,467 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 02:17:31,467 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_process_discovery (discovery)
+2025-09-01 02:17:31,476 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_system_process_discovery, attempting fallback
+2025-09-01 02:17:31,477 - linux_anomaly_detection - WARNING - No data for entity ps
+2025-09-01 02:17:31,478 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_system_process_discovery
+2025-09-01 02:17:31,479 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 02:17:31,479 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO -   Total records: 8
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,480 - linux_anomaly_detection - INFO - Job v3_linux_system_process_discovery complete
+2025-09-01 02:17:31,481 - linux_anomaly_detection - INFO - Running job: v3_linux_system_user_discovery
+2025-09-01 02:17:31,481 - linux_anomaly_detection - WARNING - Job v3_linux_system_user_discovery warning: Small dataset (8 records)
+2025-09-01 02:17:31,484 - linux_anomaly_detection - INFO - Using 1 job-specific models for v3_linux_system_user_discovery
+2025-09-01 02:17:31,484 - linux_anomaly_detection - INFO - ================================================================================
+2025-09-01 02:17:31,485 - linux_anomaly_detection - INFO - Starting job anomaly detection for: v3_linux_system_user_discovery
+2025-09-01 02:17:31,486 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,486 - linux_anomaly_detection - INFO - Job Configuration:
+2025-09-01 02:17:31,487 - linux_anomaly_detection - INFO -   Job: v3_linux_system_user_discovery
+2025-09-01 02:17:31,487 - linux_anomaly_detection - INFO -   Type: discovery
+2025-09-01 02:17:31,487 - linux_anomaly_detection - INFO -   Description: Detect user discovery
+2025-09-01 02:17:31,487 - linux_anomaly_detection - INFO -   Input records: 8
+2025-09-01 02:17:31,487 - linux_anomaly_detection - INFO - ----------------------------------------
+2025-09-01 02:17:31,488 - linux_anomaly_detection - INFO - Loading models and scalers...
+2025-09-01 02:17:31,488 - linux_anomaly_detection - WARNING - No models found for job v3_linux_system_user_discovery, using fallback models
+2025-09-01 02:17:31,488 - linux_anomaly_detection - INFO - Starting ML detection...
+2025-09-01 02:17:31,489 - linux_anomaly_detection - INFO - Feature extraction for job v3_linux_system_user_discovery (discovery)
+2025-09-01 02:17:31,494 - linux_anomaly_detection - WARNING - process_detection: no valid entities for v3_linux_system_user_discovery, attempting fallback
+2025-09-01 02:17:31,495 - linux_anomaly_detection - WARNING - No data for entity last
+2025-09-01 02:17:31,495 - linux_anomaly_detection - ERROR - process_detection: no results produced for v3_linux_system_user_discovery
+2025-09-01 02:17:31,496 - linux_anomaly_detection - WARNING - Using fallback results: no_results
+2025-09-01 02:17:31,497 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,497 - linux_anomaly_detection - INFO - Detection Summary:
+2025-09-01 02:17:31,497 - linux_anomaly_detection - INFO -   Total records: 8
+2025-09-01 02:17:31,497 - linux_anomaly_detection - INFO -   Anomalies detected: 0
+2025-09-01 02:17:31,497 - linux_anomaly_detection - INFO -   Anomaly rate: 0.00%
+2025-09-01 02:17:31,498 - linux_anomaly_detection - INFO - ========================================
+2025-09-01 02:17:31,498 - linux_anomaly_detection - INFO - Job v3_linux_system_user_discovery complete
+2025-09-01 02:17:31,556 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_network_configuration_discovery: 8 rows
+2025-09-01 02:17:31,570 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_network_connection_discovery: 8 rows
+2025-09-01 02:17:31,597 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_information_discovery: 8 rows
+2025-09-01 02:17:31,622 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_process_discovery: 8 rows
+2025-09-01 02:17:31,647 - linux_anomaly_detection - INFO - Persisted and reloaded job v3_linux_system_user_discovery: 8 rows
+2025-09-01 02:17:31,648 - linux_anomaly_detection - INFO - Saved persistence diagnostics to ./results\persisted_results\persisted_results_diagnostics.json
+2025-09-01 02:17:31,648 - linux_anomaly_detection - INFO - Total anomalies detected in group discovery: 0
+2025-09-01 02:17:31,649 - linux_anomaly_detection - INFO - Extracting ONLY ML anomalies from detection results
+2025-09-01 02:17:31,652 - linux_anomaly_detection - WARNING - No ML anomalies found in any data type - check ML detection thresholds
+2025-09-01 02:17:31,654 - linux_anomaly_detection - INFO - Saved anomalies to: ./results\ml_only_anomalies_20250901_001731.json
+2025-09-01 02:17:31,655 - linux_anomaly_detection - INFO - Generating report for group: discovery
+2025-09-01 02:17:31,671 - linux_anomaly_detection - INFO - Generating ML-only comprehensive report for discovery anomalies
+2025-09-01 02:17:31,671 - linux_anomaly_detection - WARNING - No ML anomalies found for discovery - generating empty report
+2025-09-01 02:17:31,674 - linux_anomaly_detection - INFO - Generated no-anomalies report: ./results\discovery_anomaly_report_20250901_021731.md
+2025-09-01 02:17:31,674 - linux_anomaly_detection - INFO - Generated 1 reports
+2025-09-01 02:17:31,674 - linux_anomaly_detection - INFO - Linux anomaly detection completed successfully

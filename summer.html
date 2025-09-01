@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Summer Objectives Review</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c5aa0 0%, #1e3d72 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+        }
+        
+        .section-header {
+            color: white;
+            padding: 20px 30px;
+            font-size: 1.4em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+        
+        .section-header .icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-size: 1.2em;
+        }
+        
+        .planned { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .completed { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); }
+        .pending-august { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); }
+        .deferred { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); }
+        .unplanned { background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); }
+        
+        .section-content {
+            background: white;
+            padding: 30px;
+        }
+        
+        .item {
+            background: #f8f9fa;
+            border-left: 4px solid #2c5aa0;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            transition: transform 0.2s ease;
+        }
+        
+        .item:hover {
+            transform: translateX(5px);
+        }
+        
+        .item h4 {
+            margin: 0 0 10px 0;
+            color: #2c5aa0;
+            font-size: 1.3em;
+        }
+        
+        .item p {
+            margin: 0;
+            color: #555;
+            line-height: 1.6;
+            font-size: 1.1em;
+        }
+        
+        .responsible {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            color: #1976d2;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        
+        .reason {
+            background: #fff3e0;
+            border: 1px solid #ff9800;
+            color: #f57c00;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-style: italic;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Summer Objectives Review</h1>
+            <p style="font-size: 1.5em; font-weight: 500;">Machine Learning for SOC Project</p>
+        </div>
+        
+        <div class="content">
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-number">3</div>
+                    <div class="stat-label">Planned Tasks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">3</div>
+                    <div class="stat-label">Completed Tasks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">7</div>
+                    <div class="stat-label">Pending (Aug 30)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">6</div>
+                    <div class="stat-label">Deferred to Fall</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header planned">
+                    <div class="icon">📋</div>
+                    Work Planned
+                </div>
+                <div class="section-content">
+                    <div class="item">
+                        <h4>Task 1: Machine Learning Replication</h4>
+                        <p>Replicate the Machine Learning jobs on the Elastic SIEM on 3 use cases (Network, Linux Process, and Host)</p>
+                    </div>
+                    <div class="item">
+                        <h4>Task 2: Modular ML Pipelines</h4>
+                        <p>Build modular, parallel ML pipelines for easy integration and maintenance</p>
+                    </div>
+                    <div class="item">
+                        <h4>Task 3: Results Integration</h4>
+                        <p>Send processed results back to Elastic for alerting and visualization</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header completed">
+                    <div class="icon">✅</div>
+                    Work Completed
+                </div>
+                <div class="section-content">
+                    <div class="item">
+                        <h4>Network Use Case Implementation</h4>
+                        <p>Successfully identified use cases and built Machine learning models under Network Use Case (5 machine learning jobs)</p>
+                    </div>
+                    <div class="item">
+                        <h4>Linux Process Implementation</h4>
+                        <p>Identified and built Machine learning models under Linux Process (14 machine learning jobs)</p>
+                    </div>
+                    <div class="item">
+                        <h4>Elastic Search Integration</h4>
+                        <p>Created an integration pipeline to send alerts to Elastic Search</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header pending-august">
+                    <div class="icon">⏰</div>
+                    Work Pending (Completion by August 30th)
+                </div>
+                <div class="section-content">
+                    <div class="item">
+                        <h4>Anomaly Detection Extension</h4>
+                        <p>Extension of Anomaly detection to Identifying Alerts</p>
+                        <div class="responsible">Responsible: Noah</div>
+                    </div>
+                    <div class="item">
+                        <h4>Alert Push Implementation</h4>
+                        <p>Pushing of Alerts on the completed use cases to Elastic SIEM</p>
+                        <div class="responsible">Responsible: Noah</div>
+                    </div>
+                    <div class="item">
+                        <h4>Notification System</h4>
+                        <p>Creating a filtered alert system for notifications, either Slack or Email</p>
+                        <div class="responsible">Responsible: Noah</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header deferred">
+                    <div class="icon">🍂</div>
+                    Work Deferred to Fall
+                </div>
+                <div class="section-content">
+                    <div class="item">
+                        <h4>Host Use Case Implementation</h4>
+                        <p>The Host use case implementation was deferred due to data retrieval issues</p>
+                        <div class="reason">Reason: Data retrieval issue that took time to fix - Noah</div>
+                        <div class="responsible">Responsible: Noah</div>
+                    </div>
+                    <div class="item">
+                        <h4>Supervised Machine Learning</h4>
+                        <p>Advanced ML techniques including FP and TP tagging and Red team exercises</p>
+                        <div class="reason">Reason: Delayed FP and TP tagging and Red team exercises - Sabine/Noah/SOC team</div>
+                        <div class="responsible">Responsible: Sabine, Noah, SOC team</div>
+                    </div>
+                    <div class="item">
+                        <h4>Research Paper & Documentation</h4>
+                        <p>Paper writing integrating the architecture with Honey net, completing 4 use cases and adoption of secure open-source</p>
+                        <div class="reason">Reason: Integration with Honey net architecture, completing 4 use cases and adoption of secure open-source recently released gpt-oss into report generation</div>
+                        <div class="responsible">Responsible: Noah</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header unplanned">
+                    <div class="icon">🌟</div>
+                    Unplanned Work Completed
+                </div>
+                <div class="section-content">
+                    <div class="item">
+                        <h4>Additional Machine Learning Jobs</h4>
+                        <p>Exceeded planned ML job implementations - delivered 19 total jobs (5 Network + 14 Linux Process) versus the originally planned scope</p>
+                    </div>
+                    <div class="item">
+                        <h4>Enhanced Integration Pipeline</h4>
+                        <p>Developed more robust integration capabilities than initially scoped for Elastic Search connectivity</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header" style="background: linear-gradient(135deg, #8e44ad 0%, #3498db 100%);">
+                    <div class="icon">🎓</div>
+                    Academic SOC
+                </div>
+                <div class="section-content">
+                    <h3 style="color: #2c5aa0; margin-bottom: 20px; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; font-size: 1.4em;">Work Done</h3>
+                    
+                    <div class="item">
+                        <h4>Manuscript Submission & Collaboration Kick-off</h4>
+                        <p>• Submitted manuscript & poster to ACM CompEd (Never got feedback)<br>
+                        • Kickoff meeting with Botswana stakeholders completed</p>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Honeynet Integration Setup</h4>
+                        <p>• Integrated Honeynet with SIEM via MISP (core functionality working)</p>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Documentation Refinement & Stability Testing</h4>
+                        <p>• Created SIEM maintenance guide (actively expanding)<br>
+                        • Stabilising the SIEM<br>
+                        • Worked on fixing the SIEM if there were any issues or crashing</p>
+                    </div>
+                    
+                    <h3 style="color: #fa709a; margin: 30px 0 20px 0; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; font-size: 1.4em;">🕒 Pending Work (by 30th August)</h3>
+                    
+                    <div class="item">
+                        <h4>Finish Honeynet Integration</h4>
+                        <p>• Add SOC MISP to the internet by giving it a URL and a port</p>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Documentation Refinement</h4>
+                        <p>• Continue expanding SIEM maintenance guide</p>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Custom Detection Rules</h4>
+                        <p>• Complete tagging for Honeynet alerts</p>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>SecOps Class Materials</h4>
+                        <p>• Prepare lab exercises, scenarios, and resources</p>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <h3 style="color: #a8edea; margin: 30px 0 20px 0; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; font-size: 1.4em;">📅 Deferred to Fall</h3>
+                    
+                    <div class="item">
+                        <h4>Pilot Deployment & Training in Botswana</h4>
+                        <p>Deferred due to lack of response from Botswana team</p>
+                        <div class="reason">Reason: Lack of response from Botswana team</div>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Infrastructure & Rule Refinement</h4>
+                        <p>Full refinement work after stability phase</p>
+                        <div class="reason">Reason: Dependent on completion of stability phase</div>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                    
+                    <div class="item">
+                        <h4>Machine Learning Integration</h4>
+                        <p>Continue work in Fall to complete full ML pipeline</p>
+                        <div class="reason">Reason: Alignment with main ML project timeline</div>
+                        <div class="responsible">Responsible: Sabine</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

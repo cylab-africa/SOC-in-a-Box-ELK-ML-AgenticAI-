@@ -160,6 +160,14 @@ ml:
     iterated_power: "auto"
     random_state: 42
 
+# Models storage configuration (where joblib/scaler manifests live)
+models:
+  storage:
+    # Prefer local results directory where audit tooling and joblib artifacts were discovered
+    base_path: "./results"
+    # Optional: set to absolute path if needed, e.g. C:/path/to/models
+    # manifest_prefix: ""  # unused by loader but reserved for future
+
 # Output and storage configuration
 output:
   save_results: true
