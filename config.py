@@ -998,6 +998,47 @@ class DebugConfig:
     enable_testing_mode: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Agent 4 — Adaptive Threshold Configuration
+# Replaces static MIN_PUSH_ML_SCORE with per-job, time-aware thresholds.
+#
+# ATT&CK alignment: threshold tuning reduces FN for T1059, T1046, T1548.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AdaptiveThreshold:
+    """Per-job and context-aware push threshold for anomaly scoring.
+
+    The effective threshold for a given alert is:
+        effective = base_score
+                    * off_hours_multiplier   (if outside 06:00-18:00 local)
+                    * high_value_host_multiplier (if host in high_value_hosts)
+        Then optionally overridden by per_job_overrides.
+
+    All multipliers < 1.0 lower the threshold (make detection more sensitive).
+    """
+
+    base_score: float = 0.65
+    per_job_overrides: dict[str, float] = field(default_factory=lambda: {
+        # Network anomalies benefit from a lower bar — attackers move laterally fast
+        "v3_linux_anomalous_network_activity": 0.55,
+        # Sudo events produce many FPs — require higher confidence
+        "v3_linux_rare_sudo_activity": 0.70,
+        # Rare process on a single host — moderate sensitivity
+        "v3_linux_anomalous_process_all_hosts": 0.65,
+        # Discovery commands are high-signal for recon
+        "v3_linux_rare_discovery_activity": 0.60,
+    })
+    # Outside 06:00–18:00 attackers are more likely to be active
+    off_hours_multiplier: float = 0.85
+    # Critical / high-value hosts warrant lower thresholds
+    high_value_host_multiplier: float = 0.80
+    high_value_hosts: list[str] = field(default_factory=list)
+    # Hour boundaries for off-hours detection (24-h clock, local time)
+    business_hours_start: int = 6
+    business_hours_end: int = 18
+
+
 class ConfigManager:
     """Enhanced Configuration Manager with Dictionary Conversion"""
     
