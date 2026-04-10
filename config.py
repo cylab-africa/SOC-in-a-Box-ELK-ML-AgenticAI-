@@ -778,6 +778,7 @@ class DagshubConfig:
     
     @property
     def mlflow_uri(self) -> str:
+        """Build the MLflow tracking URI from DagsHub coordinates."""
         return f"https://dagshub.com/{self.username}/{self.repo_name}.mlflow"
 
 

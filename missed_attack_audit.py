@@ -170,10 +170,121 @@ def _generate_recommendations(flagged: list[dict]) -> list[str]:
     return recommendations
 
 
+def format_markdown_report(report: dict[str, Any]) -> str:
+    """Format the audit report as a Markdown document.
+
+    Args:
+        report: Audit report dict from audit_filtered_anomalies().
+
+    Returns:
+        Markdown-formatted string.
+    """
+    lines: list[str] = [
+        "# Missed Attack Audit Report",
+        "",
+        f"**Generated**: {report.get('generated_at', 'N/A')}",
+        f"**Lookback**: {report.get('lookback_hours', 'N/A')} hours",
+        f"**Total scanned**: {report.get('total_scanned', 0)}",
+        f"**Total flagged**: {report.get('total_flagged', 0)}",
+        "",
+    ]
+
+    if report.get("status") == "no_data":
+        lines.append("No filtered anomaly data found.")
+        return "\n".join(lines)
+
+    # Recommendations
+    lines.append("## Recommendations")
+    lines.append("")
+    for rec in report.get("recommendations", []):
+        lines.append(f"- {rec}")
+    lines.append("")
+
+    # Flagged items
+    flagged = report.get("flagged", [])
+    if flagged:
+        lines.append("## Flagged Anomalies")
+        lines.append("")
+        lines.append("| # | Severity | Flags | Process | Score | IOC Match |")
+        lines.append("|---|----------|-------|---------|-------|-----------|")
+        for i, item in enumerate(flagged, 1):
+            record = item.get("record", {})
+            severity = item.get("severity", "medium")
+            flags = ", ".join(item.get("flags", []))
+            proc = record.get("process_name", "N/A")
+            score = record.get("record_score", 0.0)
+            ioc = ", ".join(item.get("ioc_matches", [])) or "N/A"
+            lines.append(f"| {i} | {severity} | {flags} | {proc} | {score:.2f} | {ioc} |")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
-    import sys
-    hours = int(sys.argv[1]) if len(sys.argv) > 1 else 24
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Scan filtered anomalies for potential missed attacks"
+    )
+    parser.add_argument(
+        "--timerange",
+        type=str,
+        default="24h",
+        help="Lookback window, e.g. '24h', '48h', '7d' (default: 24h)",
+    )
+    parser.add_argument(
+        "--iocs",
+        type=str,
+        default=None,
+        help="Path to JSON file with IOCs to cross-reference",
+    )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Output report in Markdown format",
+    )
+    args = parser.parse_args()
+
+    # Parse timerange to hours
+    tr = args.timerange.strip().lower()
+    if tr.endswith("d"):
+        hours = int(tr[:-1]) * 24
+    elif tr.endswith("h"):
+        hours = int(tr[:-1])
+    else:
+        hours = int(tr)
+
+    # Load IOCs if provided
+    ioc_list: list[str] = []
+    if args.iocs:
+        iocs_path = Path(args.iocs)
+        if iocs_path.exists():
+            ioc_data = json.loads(iocs_path.read_text())
+            if isinstance(ioc_data, list):
+                ioc_list = [str(i) for i in ioc_data]
+            elif isinstance(ioc_data, dict):
+                for v in ioc_data.values():
+                    if isinstance(v, list):
+                        ioc_list.extend(str(i) for i in v)
+
     report = audit_filtered_anomalies(lookback_hours=hours)
-    print(f"Audit complete: {report['total_flagged']}/{report['total_scanned']} flagged")
-    for rec in report["recommendations"]:
-        print(f"  - {rec}")
+
+    # Cross-reference IOCs if provided
+    if ioc_list and report.get("flagged"):
+        ioc_matches: list[dict] = []
+        for item in report["flagged"]:
+            record = item.get("record", {})
+            record_str = json.dumps(record).lower()
+            matched_iocs = [ioc for ioc in ioc_list if ioc.lower() in record_str]
+            if matched_iocs:
+                item["ioc_matches"] = matched_iocs
+                item["severity"] = "critical"
+                ioc_matches.append(item)
+        report["ioc_matches"] = len(ioc_matches)
+
+    if args.markdown:
+        print(format_markdown_report(report))
+    else:
+        print(f"Audit complete: {report['total_flagged']}/{report['total_scanned']} flagged")
+        for rec in report["recommendations"]:
+            print(f"  - {rec}")
