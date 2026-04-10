@@ -137,8 +137,73 @@ class RobustnessTest:
         results = [
             self.test_perturbation_stability(model, X),
             self.test_temporal_stability(model, X),
+            self.test_feature_importance_attack(model, X),
         ]
         for r in results:
             status = "PASS" if r.passed else "FAIL"
             logger.info("%s: [%s] %s", r.test_name, status, r.detail)
         return results
+
+    def test_feature_importance_attack(
+        self,
+        model,
+        X: np.ndarray,
+        top_k: int = 3,
+    ) -> RobustnessResult:
+        """Test if zeroing top-influence features causes excessive score drop.
+
+        An adversary who knows which features matter most could selectively
+        suppress them.  This test zeros the top-k most influential features
+        and checks that scores do not collapse entirely.
+
+        Args:
+            model: Model with decision_function(X) -> np.ndarray.
+            X: Feature matrix.
+            top_k: Number of most influential features to zero out.
+
+        Returns:
+            RobustnessResult with pass/fail.
+        """
+        base_scores = model.decision_function(X)
+        n_features = X.shape[1]
+        top_k = min(top_k, n_features)
+
+        # Estimate feature importance by mean absolute score change
+        importances = np.zeros(n_features, dtype=np.float64)
+        for f_idx in range(n_features):
+            X_zeroed = X.copy()
+            X_zeroed[:, f_idx] = 0.0
+            zeroed_scores = model.decision_function(X_zeroed)
+            importances[f_idx] = float(np.mean(np.abs(zeroed_scores - base_scores)))
+
+        # Zero out the top-k features simultaneously
+        top_features = np.argsort(importances)[-top_k:]
+        X_attacked = X.copy()
+        for f_idx in top_features:
+            X_attacked[:, f_idx] = 0.0
+
+        attacked_scores = model.decision_function(X_attacked)
+        delta = np.abs(attacked_scores - base_scores)
+        max_delta = float(np.max(delta))
+        mean_delta = float(np.mean(delta))
+
+        # Model should not lose more than 80% of its score on average
+        mean_base = float(np.mean(base_scores))
+        mean_attacked = float(np.mean(attacked_scores))
+        if mean_base > 0.01:
+            score_retention = mean_attacked / mean_base
+        else:
+            score_retention = 1.0
+
+        passed = score_retention >= 0.2  # retain at least 20% of scoring power
+
+        return RobustnessResult(
+            test_name="feature_importance_attack",
+            passed=passed,
+            max_score_delta=max_delta,
+            mean_score_delta=mean_delta,
+            detail=(
+                f"top_{top_k}_features={top_features.tolist()}, "
+                f"score_retention={score_retention:.2%}"
+            ),
+        )
