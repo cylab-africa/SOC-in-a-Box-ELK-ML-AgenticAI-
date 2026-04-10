@@ -8,7 +8,7 @@ All models normalize anomaly scores to [0.0, 1.0].
 """
 
 from models.base_model import AnomalyModel
-from models.pyod_models import ECODModel, COPODModel, AutoEncoderModel
+from models.pyod_models import ECODModel, COPODModel, AutoEncoderModel, IForestModel
 from models.ensemble import EnsembleModel
 from models.registry import MODEL_REGISTRY, get_models_for_job
 
@@ -17,6 +17,7 @@ __all__ = [
     "ECODModel",
     "COPODModel",
     "AutoEncoderModel",
+    "IForestModel",
     "EnsembleModel",
     "MODEL_REGISTRY",
     "get_models_for_job",

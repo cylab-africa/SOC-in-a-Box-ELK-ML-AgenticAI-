@@ -1,13 +1,14 @@
 """
-PyOD-backed anomaly detection models: ECOD, COPOD, AutoEncoder.
+PyOD-backed anomaly detection models: ECOD, COPOD, AutoEncoder, IForest.
 
-These wrap pyod algorithms with the AnomalyModel interface, adding
+These wrap pyod/sklearn algorithms with the AnomalyModel interface, adding
 score normalization, save/load, and ATT&CK technique declarations.
 
 ATT&CK alignment:
   ECOD  - T1059 (scripting), T1071 (network), broad outlier detection
   COPOD - T1036 (masquerading), T1078 (valid accounts), copula outliers
   AutoEncoder - T1055 (injection), T1048 (exfiltration), reconstruction error
+  IForest - T1059, T1036, T1078 - baseline isolation-based outlier detection
 """
 
 from __future__ import annotations
@@ -292,5 +293,104 @@ class AutoEncoderModel(AnomalyModel):
             self._epochs = config.get("epochs", self._DEFAULT_EPOCHS)
             self._batch = config.get("batch_size", self._DEFAULT_BATCH)
         self._model = joblib.load(path / "autoencoder.joblib")
+        self._is_fitted = True
+        return self
+
+
+class IForestModel(AnomalyModel):
+    """Isolation Forest anomaly detection (sklearn baseline).
+
+    Wrapped to conform to AnomalyModel interface. Kept as baseline for
+    backward compatibility and ensemble diversity.
+
+    ATT&CK: T1059, T1036, T1078 — general-purpose isolation-based detection.
+    """
+
+    attack_techniques: list[str] = ["T1059", "T1036", "T1078"]
+    model_name: str = "iforest"
+
+    _DEFAULT_N_ESTIMATORS: int = 200
+    _DEFAULT_CONTAMINATION: float = 0.05
+
+    def __init__(
+        self,
+        n_estimators: int | None = None,
+        contamination: float | None = None,
+    ) -> None:
+        """Initialize Isolation Forest model wrapper.
+
+        Args:
+            n_estimators: Number of isolation trees. Default 200.
+            contamination: Expected proportion of outliers. Default 0.05.
+        """
+        from sklearn.ensemble import IsolationForest
+
+        self._n_estimators = n_estimators or self._DEFAULT_N_ESTIMATORS
+        self._contamination = contamination or self._DEFAULT_CONTAMINATION
+        self._model = IsolationForest(
+            n_estimators=self._n_estimators,
+            contamination=self._contamination,
+            random_state=42,
+            n_jobs=1,
+        )
+        self._is_fitted: bool = False
+
+    def fit(self, X: np.ndarray) -> "IForestModel":
+        """Train Isolation Forest on feature matrix.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            self
+        """
+        X_clean = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        self._model.fit(X_clean)
+        self._is_fitted = True
+        logger.info(
+            "IForest model fitted on %d samples, %d features, %d trees",
+            X.shape[0], X.shape[1], self._n_estimators,
+        )
+        return self
+
+    def decision_function(self, X: np.ndarray) -> np.ndarray:
+        """Compute normalized anomaly scores via Isolation Forest.
+
+        sklearn IForest returns negative scores (more negative = more anomalous),
+        so we negate before normalizing to [0.0, 1.0].
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            1-D array of scores in [0.0, 1.0].
+        """
+        X_clean = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        raw_scores = -self._model.decision_function(X_clean)
+        return self._normalize_scores(raw_scores)
+
+    def save(self, path: Path) -> None:
+        """Persist Isolation Forest model to disk.
+
+        Args:
+            path: Directory for model files.
+        """
+        import joblib
+
+        super().save(path)
+        joblib.dump(self._model, path / "iforest.joblib")
+
+    def load(self, path: Path) -> "IForestModel":
+        """Load Isolation Forest model from disk.
+
+        Args:
+            path: Directory with saved model files.
+
+        Returns:
+            self
+        """
+        import joblib
+
+        self._model = joblib.load(path / "iforest.joblib")
         self._is_fitted = True
         return self

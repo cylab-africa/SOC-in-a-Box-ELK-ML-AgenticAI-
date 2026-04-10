@@ -1,6 +1,6 @@
 
 
-def train_process_anomaly_models(historical_data, config):
+def train_process_anomaly_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
     """
     Train specialized models for process anomaly detection.
     Supports: v3_linux_anomalous_process_all_hosts, v3_rare_process_by_host_linux

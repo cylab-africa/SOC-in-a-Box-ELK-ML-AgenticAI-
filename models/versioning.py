@@ -19,6 +19,84 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 MANIFEST_FILENAME: str = "manifest.json"
+GLOBAL_MANIFEST: str = "models_manifest.json"
+
+
+def create_versioned_dir(base_dir: Path, data_group: str) -> Path:
+    """Create a timestamped directory for model artifacts.
+
+    Args:
+        base_dir: Root models directory (e.g. Path("models/")).
+        data_group: Data group name (e.g. "process", "network").
+
+    Returns:
+        Path to the created versioned directory.
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    versioned = base_dir / data_group / timestamp
+    versioned.mkdir(parents=True, exist_ok=True)
+    return versioned
+
+
+def update_active_version(
+    base_dir: Path,
+    data_group: str,
+    version_dir: str,
+    model_names: list[str],
+) -> dict[str, Any]:
+    """Update the global manifest to point to a new active version.
+
+    Args:
+        base_dir: Root models directory.
+        data_group: Data group name.
+        version_dir: Name of the versioned subdirectory.
+        model_names: Model names in this version.
+
+    Returns:
+        Updated global manifest dict.
+    """
+    manifest_path = base_dir / GLOBAL_MANIFEST
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+    else:
+        manifest = {}
+
+    manifest[data_group] = {
+        "active_version": version_dir,
+        "models": model_names,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    logger.info(
+        "Active version for %s set to %s", data_group, version_dir,
+    )
+    return manifest
+
+
+def get_active_version(base_dir: Path, data_group: str) -> Path | None:
+    """Get the path to the active model version for a data group.
+
+    Args:
+        base_dir: Root models directory.
+        data_group: Data group name.
+
+    Returns:
+        Path to the active version directory, or None if not set.
+    """
+    manifest_path = base_dir / GLOBAL_MANIFEST
+    if not manifest_path.exists():
+        return None
+    manifest = json.loads(manifest_path.read_text())
+    entry = manifest.get(data_group)
+    if not entry:
+        return None
+    active = base_dir / data_group / entry["active_version"]
+    if not active.exists():
+        logger.warning("Active version dir does not exist: %s", active)
+        return None
+    return active
 
 
 def create_manifest(

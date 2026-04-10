@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 
 from models.base_model import AnomalyModel
-from models.pyod_models import ECODModel, COPODModel, AutoEncoderModel
+from models.pyod_models import ECODModel, COPODModel, AutoEncoderModel, IForestModel
 from models.ensemble import EnsembleModel, DEFAULT_WEIGHTS
 
 logger = logging.getLogger(__name__)
@@ -38,8 +38,8 @@ class ModelConfig:
 # Registry: ML job name -> ModelConfig
 MODEL_REGISTRY: dict[str, ModelConfig] = {
     "v3_linux_anomalous_process_all_hosts": ModelConfig(
-        model_classes=[ECODModel, COPODModel, AutoEncoderModel],
-        weights={"ecod": 0.35, "copod": 0.30, "autoencoder": 0.35},
+        model_classes=[IForestModel, ECODModel, COPODModel, AutoEncoderModel],
+        weights={"iforest": 0.20, "ecod": 0.30, "copod": 0.20, "autoencoder": 0.30},
         attack_techniques=["T1059", "T1036", "T1055"],
     ),
     "v3_rare_process_by_host_linux": ModelConfig(
