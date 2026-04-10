@@ -350,3 +350,156 @@ class BeaconDetectorTransformer(FeatureTransformer):
             result.loc[group.index] = min(burst_ratio, 1.0)
 
         return result.astype(np.float64)
+
+
+class BytesRatioTransformer(FeatureTransformer):
+    """Ratio of bytes sent to bytes received per connection.
+
+    ATT&CK: T1041 - Exfiltration Over C2 Channel.
+    A high outbound/inbound byte ratio suggests data exfiltration.
+    A very low ratio with high volume may indicate C2 downloads.
+    """
+
+    FEATURE_NAMES: list[str] = ["bytes_out_in_ratio"]
+
+    def __init__(self) -> None:
+        """Initialize with empty baseline statistics."""
+        super().__init__()
+        self._mean_ratio: float = 1.0
+        self._std_ratio: float = 1.0
+
+    def fit(self, df: pd.DataFrame) -> "BytesRatioTransformer":
+        """Learn nominal bytes ratio distribution from training data.
+
+        Args:
+            df: Training DataFrame; uses 'source.bytes' and 'destination.bytes'.
+
+        Returns:
+            self
+        """
+        src_col = self._find_col(df, ("source.bytes", "network.bytes_out"))
+        dst_col = self._find_col(df, ("destination.bytes", "network.bytes_in"))
+
+        if src_col and dst_col:
+            src = pd.to_numeric(df[src_col], errors="coerce").fillna(0.0)
+            dst = pd.to_numeric(df[dst_col], errors="coerce").fillna(0.0)
+            ratio = src / (dst + EPSILON)
+            self._mean_ratio = float(ratio.mean())
+            self._std_ratio = max(float(ratio.std()), EPSILON)
+
+        self._is_fitted = True
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Append bytes_out_in_ratio feature.
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            df with bytes ratio feature appended.
+        """
+        to_add = self._skip_existing(df)
+        if not to_add:
+            return df
+
+        src_col = self._find_col(df, ("source.bytes", "network.bytes_out"))
+        dst_col = self._find_col(df, ("destination.bytes", "network.bytes_in"))
+
+        if not src_col or not dst_col:
+            df["bytes_out_in_ratio"] = np.float64(0.0)
+            return df
+
+        src = pd.to_numeric(df[src_col], errors="coerce").fillna(0.0)
+        dst = pd.to_numeric(df[dst_col], errors="coerce").fillna(0.0)
+        ratio = src / (dst + EPSILON)
+        zscore = (ratio - self._mean_ratio) / self._std_ratio
+        df["bytes_out_in_ratio"] = zscore.clip(0.0, 1.0).astype(np.float64)
+        return df
+
+    def get_feature_names(self) -> list[str]:
+        """Return feature column names."""
+        return self.FEATURE_NAMES
+
+    def get_attack_mapping(self) -> dict[str, str]:
+        """Return ATT&CK technique mapping."""
+        return {"bytes_out_in_ratio": "T1041 - Exfiltration Over C2 Channel"}
+
+    @staticmethod
+    def _find_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
+        """Return first column present in DataFrame.
+
+        Args:
+            df: Input DataFrame.
+            candidates: Column name candidates in priority order.
+
+        Returns:
+            Column name or None.
+        """
+        for col in candidates:
+            if col in df.columns:
+                return col
+        return None
+
+
+class NewDestTransformer(FeatureTransformer):
+    """Flag connections to previously-unseen destination IPs.
+
+    ATT&CK: T1048 - Exfiltration Over Alternative Protocol.
+    Connections to new destinations not observed in the training baseline
+    may indicate lateral movement or exfiltration to a new C2.
+    """
+
+    FEATURE_NAMES: list[str] = ["is_new_dest"]
+
+    def __init__(self) -> None:
+        """Initialize with empty known-destination set."""
+        super().__init__()
+        self._known_dests: set[str] = set()
+
+    def fit(self, df: pd.DataFrame) -> "NewDestTransformer":
+        """Record all destination IPs seen in training data.
+
+        Args:
+            df: Training DataFrame; uses 'destination.ip'.
+
+        Returns:
+            self
+        """
+        if "destination.ip" in df.columns:
+            self._known_dests = set(
+                df["destination.ip"].dropna().astype(str).unique()
+            )
+        self._is_fitted = True
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Append is_new_dest binary feature.
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            df with is_new_dest (1.0 = never seen, 0.0 = known).
+        """
+        to_add = self._skip_existing(df)
+        if not to_add:
+            return df
+
+        if "destination.ip" not in df.columns:
+            df["is_new_dest"] = np.float64(0.0)
+            return df
+
+        dests = df["destination.ip"].fillna("").astype(str)
+        df["is_new_dest"] = dests.apply(
+            lambda d: 0.0 if d in self._known_dests or d == "" else 1.0
+        ).astype(np.float64)
+        return df
+
+    def get_feature_names(self) -> list[str]:
+        """Return feature column names."""
+        return self.FEATURE_NAMES
+
+    def get_attack_mapping(self) -> dict[str, str]:
+        """Return ATT&CK technique mapping."""
+        return {"is_new_dest": "T1048 - Exfiltration Over Alternative Protocol"}

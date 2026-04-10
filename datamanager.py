@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 
-def validate_and_add_missing_fields(df, data_type="process"):
+def validate_and_add_missing_fields(df: "pd.DataFrame", data_type: str = "process") -> "pd.DataFrame":
     """Add missing fields with default values instead of just warning."""
     
     required_field_defaults = {

@@ -429,3 +429,190 @@ class AuthFailureTransformer(FeatureTransformer):
                 result.loc[idx] = score
 
         return result.astype(np.float64)
+
+
+class SessionDurationTransformer(FeatureTransformer):
+    """Z-score of session duration per user.
+
+    ATT&CK: T1078 - Valid Accounts.
+    Abnormally long or short sessions may indicate compromised credentials
+    used by an attacker with different usage patterns.
+    """
+
+    FEATURE_NAMES: list[str] = ["session_dur_zscore"]
+
+    def __init__(self) -> None:
+        """Initialize with empty per-user duration statistics."""
+        super().__init__()
+        self._user_dur_mean: dict[str, float] = {}
+        self._user_dur_std: dict[str, float] = {}
+        self._global_mean: float = 0.0
+        self._global_std: float = 1.0
+
+    def fit(self, df: pd.DataFrame) -> "SessionDurationTransformer":
+        """Learn per-user session duration baselines.
+
+        Args:
+            df: Training DataFrame; uses 'event.duration' and 'user.name'.
+
+        Returns:
+            self
+        """
+        dur_col = self._find_dur_col(df)
+        if dur_col and "user.name" in df.columns:
+            durations = pd.to_numeric(df[dur_col], errors="coerce").fillna(0.0)
+            users = df["user.name"].fillna("unknown").astype(str)
+
+            self._global_mean = float(durations.mean())
+            self._global_std = max(float(durations.std()), EPSILON)
+
+            for user in users.unique():
+                mask = users == user
+                u_dur = durations[mask]
+                if len(u_dur) >= 2:
+                    self._user_dur_mean[user] = float(u_dur.mean())
+                    self._user_dur_std[user] = max(float(u_dur.std()), EPSILON)
+
+        self._is_fitted = True
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Append session_dur_zscore feature.
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            df with session duration z-score feature appended.
+        """
+        to_add = self._skip_existing(df)
+        if not to_add:
+            return df
+
+        dur_col = self._find_dur_col(df)
+        if not dur_col or "user.name" not in df.columns:
+            df["session_dur_zscore"] = np.float64(0.0)
+            return df
+
+        durations = pd.to_numeric(df[dur_col], errors="coerce").fillna(0.0)
+        users = df["user.name"].fillna("unknown").astype(str)
+
+        scores: list[float] = []
+        for user, dur in zip(users, durations):
+            mean = self._user_dur_mean.get(user, self._global_mean)
+            std = self._user_dur_std.get(user, self._global_std)
+            z = abs(float(dur) - mean) / std
+            scores.append(min(z / 3.0, 1.0))
+
+        df["session_dur_zscore"] = pd.Series(
+            scores, index=df.index, dtype=np.float64
+        )
+        return df
+
+    def get_feature_names(self) -> list[str]:
+        """Return feature column names."""
+        return self.FEATURE_NAMES
+
+    def get_attack_mapping(self) -> dict[str, str]:
+        """Return ATT&CK technique mapping."""
+        return {"session_dur_zscore": "T1078 - Valid Accounts"}
+
+    @staticmethod
+    def _find_dur_col(df: pd.DataFrame) -> str | None:
+        """Find duration column in the DataFrame.
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            Column name or None.
+        """
+        for col in ("event.duration", "session.duration", "duration"):
+            if col in df.columns:
+                return col
+        return None
+
+
+class AuthSourceRarityTransformer(FeatureTransformer):
+    """Rarity score for authentication source IPs per user.
+
+    ATT&CK: T1078 - Valid Accounts.
+    Logins from a source IP not previously associated with a user
+    may indicate credential theft used from a different location.
+    """
+
+    FEATURE_NAMES: list[str] = ["auth_src_rarity"]
+
+    def __init__(self) -> None:
+        """Initialize with empty per-user source IP profiles."""
+        super().__init__()
+        self._user_sources: dict[str, Counter] = {}
+
+    def fit(self, df: pd.DataFrame) -> "AuthSourceRarityTransformer":
+        """Build per-user source IP frequency profiles.
+
+        Args:
+            df: Training DataFrame; uses 'user.name' and 'source.ip'.
+
+        Returns:
+            self
+        """
+        if "user.name" not in df.columns or "source.ip" not in df.columns:
+            self._is_fitted = True
+            return self
+
+        users = df["user.name"].fillna("unknown").astype(str)
+        sources = df["source.ip"].fillna("unknown").astype(str)
+
+        for user in users.unique():
+            mask = users == user
+            self._user_sources[user] = Counter(sources[mask].tolist())
+
+        self._is_fitted = True
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Append auth_src_rarity feature.
+
+        Args:
+            df: Input DataFrame.
+
+        Returns:
+            df with auth source rarity feature appended.
+        """
+        to_add = self._skip_existing(df)
+        if not to_add:
+            return df
+
+        if "user.name" not in df.columns or "source.ip" not in df.columns:
+            df["auth_src_rarity"] = np.float64(0.0)
+            return df
+
+        users = df["user.name"].fillna("unknown").astype(str)
+        sources = df["source.ip"].fillna("unknown").astype(str)
+
+        scores: list[float] = []
+        for user, src in zip(users, sources):
+            profile = self._user_sources.get(user, Counter())
+            if not profile:
+                scores.append(0.5)  # Unknown user, moderate rarity
+            elif src not in profile:
+                scores.append(1.0)  # Never-seen source for this user
+            else:
+                total = sum(profile.values())
+                freq = profile[src] / max(total, 1)
+                # Invert frequency: rare sources score higher
+                scores.append(max(1.0 - freq, 0.0))
+
+        df["auth_src_rarity"] = pd.Series(
+            scores, index=df.index, dtype=np.float64
+        )
+        return df
+
+    def get_feature_names(self) -> list[str]:
+        """Return feature column names."""
+        return self.FEATURE_NAMES
+
+    def get_attack_mapping(self) -> dict[str, str]:
+        """Return ATT&CK technique mapping."""
+        return {"auth_src_rarity": "T1078 - Valid Accounts"}
