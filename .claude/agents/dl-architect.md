@@ -42,41 +42,47 @@ class DLAnomalyModel(ABC):
     def load(self, path: Path) -> "DLAnomalyModel": ...
 ```
 
+## Hardware Constraints (HARD LIMITS — do not exceed)
+- **CPU only** — no CUDA, no GPU dependencies
+- **4 cores** — set `torch.set_num_threads(4)` at module import
+- **15 GB RAM total system** — all 3 models combined must stay under 3 GB
+- **No PyTorch Geometric** — too heavy; use pure PyTorch or numpy for graphs
+
 ### Model 1: Temporal Autoencoder (temporal_ae.py)
 **Purpose:** Detect anomalous event sequences per host over time.
 
-Architecture:
-- Encoder: 2-layer LSTM (hidden_dim=128) or 4-head Transformer encoder
-- Bottleneck: linear projection to latent_dim=32
-- Decoder: mirror of encoder
+Architecture (CPU-lightweight):
+- Encoder: 1-layer GRU (hidden_dim=64, NOT LSTM — GRU is faster on CPU)
+- Bottleneck: linear projection to latent_dim=16
+- Decoder: 1-layer GRU mirror
 - Loss: MSE reconstruction
 - Anomaly score: mean reconstruction error per sequence
 
-Input: sliding windows of shape (batch, seq_len=64, n_features)
-- Each timestep = one event's feature vector
+Input: sliding windows of shape (batch, seq_len=32, n_features)
+- Reduced from 64 to 32 to cut memory in half
 - Pad shorter sequences, mask padding in loss
 
 Training:
-- Epochs: 50 max with early stopping (patience=5)
-- Optimizer: AdamW, lr=1e-3 with cosine annealing
-- Batch size: 256
+- Epochs: 20 max with early stopping (patience=3)
+- Optimizer: Adam, lr=1e-3
+- Batch size: 64 (NOT 256 — keeps memory under 500MB during training)
+- Use `torch.no_grad()` during inference always
 
 Detects: T1059 (unusual command sequences), T1053 (scheduled task chains),
 T1048 (low-and-slow exfiltration patterns)
 
-### Model 2: Process Tree GNN (process_graph.py)
+### Model 2: Process Tree MLP Anomaly Detector (process_graph.py)
 **Purpose:** Detect anomalous process parent-child relationships.
 
-Architecture:
-- 3 GraphSAGE layers (hidden_dim=64) with ReLU + dropout(0.2)
-- Node features: process name embedding (learned, dim=16) + numeric features
-- Readout: node-level anomaly via reconstruction objective
-  (predict masked node features from neighbors)
-- Anomaly score: per-node reconstruction error, aggregated per tree
+Architecture (CPU-lightweight — NO PyTorch Geometric):
+- Represent each process tree as a fixed-length feature vector:
+  - Tree depth, branching factor, unique process count, known-bad name flags
+  - Aggregate parent/child name hashes into bag-of-words style features
+- 2-layer MLP autoencoder (input -> 32 -> 16 -> 32 -> input) with ReLU
+- Anomaly score: reconstruction error of the tree feature vector
 
-Input: directed graphs where nodes=processes, edges=parent->child
-- Use PyTorch Geometric (PyG) Data objects
-- Handle variable-size trees with batching
+Input: DataFrame rows where each row = one process tree summary
+- No graph objects needed — pure numpy/pandas aggregation
 
 Detects: T1055 (process injection — unusual lineage), T1036 (masquerading —
 name doesn't match tree position), T1059.004 (shell spawning chains)
@@ -85,16 +91,15 @@ name doesn't match tree position), T1059.004 (shell spawning chains)
 **Purpose:** Learn host/user embeddings where anomalous behavior is distant
 from the entity's normal cluster.
 
-Architecture:
-- Encoder: 3-layer MLP (256 -> 128 -> 64) with BatchNorm + ReLU
-- Training: NT-Xent contrastive loss
+Architecture (CPU-lightweight):
+- Encoder: 2-layer MLP (input -> 64 -> 32) with ReLU — NOT 256/128/64
+- Training: simplified contrastive loss (cosine similarity with margin)
   - Positive pairs: two windows from same entity's normal behavior
-  - Negative pairs: cross-entity OR synthetic anomaly injection
-- Anomaly score: cosine distance from entity's centroid
+  - Negative pairs: cross-entity samples
+- Anomaly score: cosine distance from entity's centroid in 32-dim space
 
 Synthetic anomaly generation:
 - Permute features randomly (break correlations)
-- Inject known-bad patterns from adversarial/ (if available)
 - Scale selected features to extremes
 
 Detects: T1078 (valid accounts — behavior deviates from entity's norm),
@@ -120,10 +125,11 @@ def get_device() -> torch.device:
 All models must work on CPU. GPU is optional speedup.
 
 ## Performance Requirements
-- Training on CPU: < 10 minutes for 100k events (all 3 models)
-- Inference on CPU: < 30 seconds for 10k events per model
-- Memory: < 4GB during training
-- Checkpoint size: < 500MB per model
+- Training on CPU (4 cores, 15GB system RAM): < 5 minutes for 100k events (all 3 models)
+- Inference on CPU: < 15 seconds for 10k events per model
+- Memory: < 3GB combined across all 3 models during training
+- Checkpoint size: < 100MB per model
+- Always call `torch.set_num_threads(4)` at the top of every model file
 
 ## Self-Validation
 ```bash
