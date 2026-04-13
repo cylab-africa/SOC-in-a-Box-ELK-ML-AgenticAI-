@@ -1,0 +1,41 @@
+{
+  "index_patterns": ["ml-anomalies-correlated-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "chain_id": {"type": "keyword"},
+        "host": {"type": "keyword"},
+        "chain_score": {"type": "float"},
+        "chain_completeness": {"type": "float"},
+        "phases_observed": {"type": "keyword"},
+        "phases_missing": {"type": "keyword"},
+        "member_anomalies": {"type": "keyword"},
+        "linked_entities": {
+          "properties": {
+            "users": {"type": "keyword"},
+            "processes": {"type": "keyword"},
+            "dest_ips": {"type": "ip"}
+          }
+        },
+        "time_span_minutes": {"type": "integer"},
+        "first_seen": {"type": "date"},
+        "last_seen": {"type": "date"},
+        "investigation_priority": {"type": "keyword"},
+        "mitre_techniques_observed": {
+          "type": "nested",
+          "properties": {
+            "id": {"type": "keyword"},
+            "name": {"type": "keyword"},
+            "tactic": {"type": "keyword"}
+          }
+        },
+        "created_at": {"type": "date"}
+      }
+    }
+  }
+}

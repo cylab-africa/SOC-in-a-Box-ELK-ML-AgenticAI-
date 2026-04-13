@@ -1,0 +1,52 @@
+{
+  "index_patterns": ["ml-anomalies-custom-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "anomaly_id": {"type": "keyword"},
+        "job_id": {"type": "keyword"},
+        "timestamp": {"type": "date"},
+        "host.name": {"type": "keyword"},
+        "user.name": {"type": "keyword"},
+        "process.name": {"type": "keyword"},
+        "process.args": {"type": "text"},
+        "destination.ip": {"type": "ip"},
+        "destination.port": {"type": "integer"},
+        "anomaly_score": {"type": "float"},
+        "record_score": {"type": "float"},
+        "entity_value": {"type": "keyword"},
+        "kill_chain_phase": {"type": "keyword"},
+        "kill_chain_phase_order": {"type": "integer"},
+        "mitre_tactic": {"type": "keyword"},
+        "mitre_technique_id": {"type": "keyword"},
+        "mitre_technique_name": {"type": "keyword"},
+        "mitre_techniques": {
+          "type": "nested",
+          "properties": {
+            "id": {"type": "keyword"},
+            "name": {"type": "keyword"},
+            "tactic": {"type": "keyword"}
+          }
+        },
+        "context": {
+          "properties": {
+            "entity_anomaly_count_7d": {"type": "integer"},
+            "entity_anomaly_trend": {"type": "keyword"},
+            "score_percentile": {"type": "float"},
+            "score_percentile_label": {"type": "keyword"},
+            "source_es_doc_ids": {"type": "keyword"},
+            "source_index": {"type": "keyword"},
+            "recommended_next_steps": {"type": "text"}
+          }
+        },
+        "correlation_id": {"type": "keyword"},
+        "pushed_at": {"type": "date"}
+      }
+    }
+  }
+}
