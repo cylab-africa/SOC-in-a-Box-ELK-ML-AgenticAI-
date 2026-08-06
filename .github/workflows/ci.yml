@@ -35,7 +35,7 @@ jobs:
           pytest tests/ -x --tb=short
       - name: Compile check all Python files
         run: |
-          find . -name "*.py" -not -path "./.claude/*" -not -path "./mlruns/*" | xargs python -m py_compile
+          find . -name "*.py" -not -path "./mlruns/*" | xargs python -m py_compile
 
   secret-scan:
     runs-on: ubuntu-latest
