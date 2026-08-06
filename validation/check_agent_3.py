@@ -33,6 +33,15 @@ from common import (
 AGENT_OWNED = ["dl_models"]
 
 
+def _torch_available() -> bool:
+    """Return True if PyTorch is importable in this environment."""
+    try:
+        import torch  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _list_dl_model_classes(mod) -> list:
     """Return concrete DL model classes from a module."""
     candidates = []
@@ -49,6 +58,9 @@ def _list_dl_model_classes(mod) -> list:
 
 def check_dl_model_subclassing() -> tuple[bool, str]:
     """Verify DL model classes subclass DLAnomalyModel."""
+    if not _torch_available():
+        return True, "PyTorch not installed — skipping (install with pip install -e \".[dl]\")"
+
     dl_dir = PROJECT_ROOT / "dl_models"
     if not dl_dir.exists():
         return True, "dl_models/ not yet created — skipping"
@@ -76,6 +88,9 @@ def check_dl_model_subclassing() -> tuple[bool, str]:
 
 def check_fit_decision_function() -> tuple[bool, str]:
     """Verify fit/decision_function works on CPU with synthetic data."""
+    if not _torch_available():
+        return True, "PyTorch not installed — skipping (install with pip install -e \".[dl]\")"
+
     dl_dir = PROJECT_ROOT / "dl_models"
     if not dl_dir.exists():
         return True, "dl_models/ not yet created — skipping"
@@ -110,6 +125,9 @@ def check_fit_decision_function() -> tuple[bool, str]:
 
 def check_save_load_roundtrip() -> tuple[bool, str]:
     """Verify .save() / .load() round-trip produces consistent scores."""
+    if not _torch_available():
+        return True, "PyTorch not installed — skipping (install with pip install -e \".[dl]\")"
+
     dl_dir = PROJECT_ROOT / "dl_models"
     if not dl_dir.exists():
         return True, "dl_models/ not yet created — skipping"

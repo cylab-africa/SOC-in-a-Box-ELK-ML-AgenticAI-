@@ -321,9 +321,6 @@ class PipelineBenchmark:
             e["@timestamp"] for e in scored if e.get("is_attack") and e.get("anomaly_score", 0) >= threshold
         )
         if attack_times:
-            scenario_start = min(e["@timestamp"] for e in events)
-            # Simple string comparison for ISO timestamps
-            attack_times[0] > scenario_start
             ttfd = 0.0  # placeholder — real implementation uses datetime parsing
 
         return ScenarioMetrics(

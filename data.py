@@ -788,40 +788,6 @@ def fetch_user_activity_data(es: "Elasticsearch", config: dict, time_range: dict
         logger.error(f"Error fetching user activity data: {e}")
         return pd.DataFrame()
 
-        if not hits:
-            logger.warning("No user data found matching the criteria")
-            return pd.DataFrame()
-
-        records = []
-        for hit in hits:
-            source = hit["_source"]
-
-            # Flatten nested fields
-            flattened = {}
-            for key, value in source.items():
-                if isinstance(value, dict):
-                    for subkey, subvalue in value.items():
-                        flattened[f"{key}.{subkey}"] = subvalue
-                else:
-                    flattened[key] = value
-
-            records.append(flattened)
-
-        df = pd.DataFrame(records)
-
-        if "@timestamp" in df.columns:
-            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors='coerce', utc=True)
-
-        # Apply training time filters
-        df = apply_training_time_filters(df, "user")
-
-        logger.info(f"Successfully processed {len(df)} Linux user activity records")
-        return df
-
-    except Exception as e:
-        logger.error(f"Error fetching user activity data: {e}")
-        return pd.DataFrame()
-
 def fetch_discovery_commands_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch discovery commands data with search_after pagination to bypass 10k limit.

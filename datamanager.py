@@ -1114,7 +1114,7 @@ def _flatten_elasticsearch_document(source: dict):
 
         raw = '|'.join(key_parts)
         try:
-            h = hashlib.sha1(raw.encode('utf-8')).hexdigest()
+            h = hashlib.sha256(raw.encode('utf-8')).hexdigest()
             flattened['event.id'] = f"synth-{h[:12]}"
         except Exception:
             # Last resort stable fallback
@@ -3161,7 +3161,7 @@ def _parse_auth_message(message: str) -> dict:
     return result
 
 
-def fetch_auth_data(es, config, time_range=None, query_size=10000):
+def fetch_auth_data(es: "Elasticsearch", config: dict, time_range: dict | None = None, query_size: int = 10000) -> "pd.DataFrame":
     """Fetch authentication data from .ds-logs-system.auth-default-*.
 
     Parses raw syslog messages into structured ECS-like fields
@@ -3291,7 +3291,7 @@ def fetch_auth_data(es, config, time_range=None, query_size=10000):
         return pd.DataFrame()
 
 
-def preprocess_auth_data(df):
+def preprocess_auth_data(df: "pd.DataFrame"):
     """Preprocess authentication data with enhanced training configuration support."""
     if df.empty:
         return df

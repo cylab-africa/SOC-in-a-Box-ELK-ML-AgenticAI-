@@ -57,10 +57,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/linux-anomaly-detection"
-Documentation = "https://github.com/your-org/linux-anomaly-detection/tree/main/docs"
-Repository = "https://github.com/your-org/linux-anomaly-detection"
-Issues = "https://github.com/your-org/linux-anomaly-detection/issues"
+Homepage = "https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-"
+Documentation = "https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-/tree/main/docs"
+Repository = "https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-"
+Issues = "https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-/issues"
 
 [project.scripts]
 linux-anomaly-detect = "main:main"
@@ -88,7 +88,14 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "S", "B"]
-ignore = ["S101", "S603", "S607"]  # assert, subprocess, partial path
+ignore = [
+    "S101", "S603", "S607",  # assert, subprocess, partial path
+    "N806", "N803",  # X/y/X_train etc. are standard sklearn/numpy convention
+    "S104",  # "0.0.0.0" is used as an invalid/missing-IP sentinel in
+             # detection data throughout this codebase, never a socket bind
+    "S108",  # "/tmp/", "/var/tmp/" etc. are detection-signal path prefixes
+             # (flagging suspicious process activity), not insecure tempfile use
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
