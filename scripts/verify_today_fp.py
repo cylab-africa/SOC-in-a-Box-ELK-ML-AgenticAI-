@@ -21,10 +21,10 @@ if str(_ROOT) not in sys.path:
 
 from push_all_anomalies import (  # type: ignore
     _connect_es,
-    _load_env,
     _doc_get,
-    is_likely_false_positive,
+    _load_env,
     context_complete,
+    is_likely_false_positive,
 )
 
 RULE_NAME = "ML Anomaly High Score"

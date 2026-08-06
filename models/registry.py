@@ -14,8 +14,8 @@ import logging
 from dataclasses import dataclass, field
 
 from models.base_model import AnomalyModel
-from models.pyod_models import ECODModel, COPODModel, AutoEncoderModel, IForestModel
-from models.ensemble import EnsembleModel, DEFAULT_WEIGHTS
+from models.ensemble import DEFAULT_WEIGHTS, EnsembleModel
+from models.pyod_models import AutoEncoderModel, COPODModel, ECODModel, IForestModel
 
 logger = logging.getLogger(__name__)
 

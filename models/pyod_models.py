@@ -60,7 +60,7 @@ class ECODModel(AnomalyModel):
         self._model = ECOD(contamination=0.05)
         self._is_fitted: bool = False
 
-    def fit(self, X: np.ndarray) -> "ECODModel":
+    def fit(self, X: np.ndarray) -> ECODModel:
         """Train ECOD on feature matrix.
 
         Args:
@@ -98,7 +98,7 @@ class ECODModel(AnomalyModel):
         super().save(path)
         joblib.dump(self._model, path / "ecod.joblib")
 
-    def load(self, path: Path) -> "ECODModel":
+    def load(self, path: Path) -> ECODModel:
         """Load ECOD model from disk.
 
         Args:
@@ -131,7 +131,7 @@ class COPODModel(AnomalyModel):
         self._model = COPOD(contamination=0.05)
         self._is_fitted: bool = False
 
-    def fit(self, X: np.ndarray) -> "COPODModel":
+    def fit(self, X: np.ndarray) -> COPODModel:
         """Train COPOD on feature matrix.
 
         Args:
@@ -169,7 +169,7 @@ class COPODModel(AnomalyModel):
         super().save(path)
         joblib.dump(self._model, path / "copod.joblib")
 
-    def load(self, path: Path) -> "COPODModel":
+    def load(self, path: Path) -> COPODModel:
         """Load COPOD model from disk.
 
         Args:
@@ -220,7 +220,7 @@ class AutoEncoderModel(AnomalyModel):
         self._model = None
         self._is_fitted: bool = False
 
-    def fit(self, X: np.ndarray) -> "AutoEncoderModel":
+    def fit(self, X: np.ndarray) -> AutoEncoderModel:
         """Train AutoEncoder on feature matrix.
 
         Args:
@@ -277,7 +277,7 @@ class AutoEncoderModel(AnomalyModel):
         if self._model is not None:
             joblib.dump(self._model, path / "autoencoder.joblib")
 
-    def load(self, path: Path) -> "AutoEncoderModel":
+    def load(self, path: Path) -> AutoEncoderModel:
         """Load AutoEncoder model from disk.
 
         Args:
@@ -336,7 +336,7 @@ class IForestModel(AnomalyModel):
         )
         self._is_fitted: bool = False
 
-    def fit(self, X: np.ndarray) -> "IForestModel":
+    def fit(self, X: np.ndarray) -> IForestModel:
         """Train Isolation Forest on feature matrix.
 
         Args:
@@ -381,7 +381,7 @@ class IForestModel(AnomalyModel):
         super().save(path)
         joblib.dump(self._model, path / "iforest.joblib")
 
-    def load(self, path: Path) -> "IForestModel":
+    def load(self, path: Path) -> IForestModel:
         """Load Isolation Forest model from disk.
 
         Args:

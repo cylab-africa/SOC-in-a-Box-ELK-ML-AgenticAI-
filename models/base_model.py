@@ -35,7 +35,7 @@ class AnomalyModel(ABC):
     model_name: str = "base"
 
     @abstractmethod
-    def fit(self, X: np.ndarray) -> "AnomalyModel":
+    def fit(self, X: np.ndarray) -> AnomalyModel:
         """Train the model on feature matrix X (normal/benign data).
 
         Args:
@@ -70,7 +70,7 @@ class AnomalyModel(ABC):
         }
         (path / "meta.json").write_text(json.dumps(meta, indent=2))
 
-    def load(self, path: Path) -> "AnomalyModel":
+    def load(self, path: Path) -> AnomalyModel:
         """Restore model from disk. Override for model-specific loading.
 
         Args:

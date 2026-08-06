@@ -29,7 +29,7 @@ class DLAnomalyModel(ABC):
     attack_techniques: list[str] = []
 
     @abstractmethod
-    def fit(self, X: np.ndarray) -> "DLAnomalyModel":
+    def fit(self, X: np.ndarray) -> DLAnomalyModel:
         """Train the model on normal (benign) data.
 
         Args:
@@ -61,7 +61,7 @@ class DLAnomalyModel(ABC):
         """
 
     @abstractmethod
-    def load(self, path: Path) -> "DLAnomalyModel":
+    def load(self, path: Path) -> DLAnomalyModel:
         """Restore model weights and config from disk.
 
         Args:

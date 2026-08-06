@@ -138,7 +138,7 @@ def _top_values(docs: list[dict[str, Any]], field: str, n: int = 10) -> list[dic
 def _score_histogram(values: list[float], bins: list[float]) -> dict[str, int]:
     """Bucketise scores into predefined bins (upper-exclusive)."""
     hist: dict[str, int] = {}
-    for lo, hi in zip(bins, bins[1:]):
+    for lo, hi in zip(bins, bins[1:], strict=False):
         label = f"{lo:.2f}-{hi:.2f}"
         hist[label] = sum(1 for v in values if lo <= v < hi)
     hist[f">= {bins[-1]:.2f}"] = sum(1 for v in values if v >= bins[-1])

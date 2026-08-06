@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -166,8 +165,8 @@ class TemporalAutoencoder(DLAnomalyModel):
         self.patience = patience
         self.seed = seed
 
-        self.n_features: Optional[int] = None
-        self._model: Optional[_GRUAutoencoder] = None
+        self.n_features: int | None = None
+        self._model: _GRUAutoencoder | None = None
         self._threshold: float = 0.0
         self._device: torch.device = get_device()
 
@@ -201,7 +200,7 @@ class TemporalAutoencoder(DLAnomalyModel):
             windows.append(X[start : start + self.seq_len])
         return np.array(windows, dtype=np.float32)
 
-    def fit(self, X: np.ndarray) -> "TemporalAutoencoder":
+    def fit(self, X: np.ndarray) -> TemporalAutoencoder:
         """Train the GRU autoencoder on normal event sequences.
 
         Args:
@@ -304,7 +303,6 @@ class TemporalAutoencoder(DLAnomalyModel):
 
         n_samples = len(X)
         sample_scores = np.zeros(n_samples, dtype=np.float32)
-        idx = 0
         step = self.seq_len // 2
         for w_idx in range(len(windows)):
             start = w_idx * step
@@ -336,7 +334,7 @@ class TemporalAutoencoder(DLAnomalyModel):
         save_checkpoint(self._model.state_dict(), meta, Path(path), CHECKPOINT_FILENAME)
         logger.info(f"TemporalAutoencoder saved to {path}")
 
-    def load(self, path: Path) -> "TemporalAutoencoder":
+    def load(self, path: Path) -> TemporalAutoencoder:
         """Restore model weights and hyperparameters from disk.
 
         Args:

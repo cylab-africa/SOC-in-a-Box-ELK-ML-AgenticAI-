@@ -8,7 +8,6 @@ change output characteristics beyond acceptable tolerances.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 
 class TestScoreDistribution:

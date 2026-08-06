@@ -5,31 +5,31 @@ All transformers inherit from FeatureTransformer (base.py) and map to
 MITRE ATT&CK techniques. Features are float64, NaN-safe, and idempotent.
 """
 
+from features.auth_features import (
+    AuthFailureTransformer,
+    AuthSourceRarityTransformer,
+    LoginTimeTransformer,
+    PrivilegeEscalationTransformer,
+    SessionDurationTransformer,
+)
 from features.base import FeatureTransformer
+from features.network_features import (
+    BeaconDetectorTransformer,
+    BytesRatioTransformer,
+    DestinationRarityTransformer,
+    DNSEntropyTransformer,
+    NewDestTransformer,
+)
 from features.process_features import (
     CommandLineEntropyTransformer,
     ProcessRarityTransformer,
     ProcessTreeTransformer,
     TemporalCyclicalTransformer,
 )
-from features.network_features import (
-    DestinationRarityTransformer,
-    DNSEntropyTransformer,
-    BeaconDetectorTransformer,
-    BytesRatioTransformer,
-    NewDestTransformer,
-)
-from features.auth_features import (
-    LoginTimeTransformer,
-    PrivilegeEscalationTransformer,
-    AuthFailureTransformer,
-    SessionDurationTransformer,
-    AuthSourceRarityTransformer,
-)
 from features.temporal_features import (
     EventCountTransformer,
-    VolumeZscoreTransformer,
     TransitionSurpriseTransformer,
+    VolumeZscoreTransformer,
 )
 
 # Registry: all available transformers keyed by short name

@@ -14,10 +14,9 @@ ATT&CK techniques guarded against suppression:
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +47,9 @@ class AllowlistEntry:
     dampening_factor: float  # multiply raw score by this value (0.0–1.0)
     category: str  # "infrastructure", "monitoring", "system", "custom"
     created_at: datetime
-    expires_at: Optional[datetime] = None  # None = permanent
+    expires_at: datetime | None = None  # None = permanent
     hit_count: int = 0
-    last_hit: Optional[datetime] = None
+    last_hit: datetime | None = None
 
     def is_expired(self) -> bool:
         """Return True if this entry has passed its expiry date."""
@@ -113,7 +112,7 @@ DEFAULT_ALLOWLIST: list[AllowlistEntry] = [
 class AllowlistManager:
     """Manages graduated allowlist entries and applies score dampening."""
 
-    def __init__(self, extra_entries: Optional[list[AllowlistEntry]] = None) -> None:
+    def __init__(self, extra_entries: list[AllowlistEntry] | None = None) -> None:
         """Initialise with default entries plus any caller-supplied extras."""
         self._entries: list[AllowlistEntry] = list(DEFAULT_ALLOWLIST)
         if extra_entries:

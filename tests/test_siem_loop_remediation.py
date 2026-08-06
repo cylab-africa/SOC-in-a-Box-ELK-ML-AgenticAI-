@@ -8,7 +8,6 @@ we intended to change, not a toy approximation of it.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -78,6 +77,7 @@ class TestScoreContract:
         """
         import numpy as np
         import pandas as pd
+
         from detection_methods import _apply_safety_limits
 
         n = 100

@@ -5,9 +5,7 @@ Validates graduated allowlisting, LOLBin protection, and threshold computation.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
-
-import pytest
+from datetime import datetime, timezone
 
 
 class TestAllowlistManager:
@@ -27,7 +25,7 @@ class TestAllowlistManager:
 
     def test_lolbin_protection(self) -> None:
         """LOLBin processes are never dampened regardless of allowlist."""
-        from benign_lists import AllowlistManager, NEVER_ALLOWLIST
+        from benign_lists import NEVER_ALLOWLIST, AllowlistManager
 
         manager = AllowlistManager()
         for lolbin in ["sudo", "curl", "wget", "python3", "bash"]:
@@ -38,7 +36,7 @@ class TestAllowlistManager:
 
     def test_expired_entry_skipped(self) -> None:
         """Expired allowlist entries are not applied."""
-        from benign_lists import AllowlistManager, AllowlistEntry
+        from benign_lists import AllowlistEntry, AllowlistManager
 
         expired = AllowlistEntry(
             pattern="old_service",
@@ -55,7 +53,7 @@ class TestAllowlistManager:
 
     def test_stale_entry_flagged(self) -> None:
         """Stale entries (no hits in 90 days) are flagged for review."""
-        from benign_lists import AllowlistManager, AllowlistEntry, STALE_ENTRY_DAYS
+        from benign_lists import AllowlistEntry, AllowlistManager
 
         stale = AllowlistEntry(
             pattern="stale_process",

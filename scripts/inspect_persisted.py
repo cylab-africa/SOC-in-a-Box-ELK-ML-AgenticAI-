@@ -1,5 +1,7 @@
-import pandas as pd
 import os
+
+import pandas as pd
+
 p_dir = os.path.join('results','persisted_results')
 files = [f for f in os.listdir(p_dir) if f.endswith('.parquet') or f.endswith('.csv')]
 for f in files:

@@ -109,8 +109,9 @@ def check_correlation_chains() -> tuple[bool, str]:
             return True, "No correlator class or function found yet — skipping"
         # Try function-based correlation
         try:
-            import pandas as pd
             from datetime import datetime, timedelta
+
+            import pandas as pd
             now = datetime.utcnow()
             alerts = [
                 {"host": "host1", "process": "bash", "score": 0.9, "timestamp": now.isoformat(),
@@ -122,14 +123,15 @@ def check_correlation_chains() -> tuple[bool, str]:
                  "timestamp": (now + timedelta(seconds=60)).isoformat(),
                  "job": "v3_linux_anomalous_network_activity"},
             ]
-            result = corr_fn(alerts)
+            corr_fn(alerts)
             return True, ""
         except Exception as e:
             return False, f"correlate() failed: {e}"
 
     try:
-        import pandas as pd
         from datetime import datetime, timedelta
+
+        import pandas as pd
         now = datetime.utcnow()
         alerts = pd.DataFrame([
             {"host.name": "host1", "process.name": "bash", "anomaly_score": 0.9,

@@ -1,13 +1,13 @@
 """Diagnostic: run a single job detection on a small sample and print ml score stats."""
 import logging
-import pandas as pd
 import os
+
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('linux_anomaly_detection')
 
 from detection_methods import detect_job_anomalies, get_job_for_data_type
-import detection_methods as dm
 
 results_dir = os.path.join(os.path.dirname(__file__), '..', '')
 results_dir = os.path.abspath(results_dir)

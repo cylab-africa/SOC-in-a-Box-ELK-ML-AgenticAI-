@@ -1,9 +1,9 @@
 """Convert scaler_feature_summary.json into a compact CSV summary.
 Writes: results/persisted_results/scaler_feature_summary.csv
 """
+import csv
 import json
 from pathlib import Path
-import csv
 
 ROOT = Path(__file__).resolve().parents[1]
 IN_FILE = ROOT / 'results' / 'persisted_results' / 'scaler_feature_summary.json'
@@ -13,7 +13,7 @@ if not IN_FILE.exists():
     print('Input JSON not found:', IN_FILE)
     raise SystemExit(1)
 
-with open(IN_FILE, 'r', encoding='utf-8') as fh:
+with open(IN_FILE, encoding='utf-8') as fh:
     data = json.load(fh)
 
 rows = []

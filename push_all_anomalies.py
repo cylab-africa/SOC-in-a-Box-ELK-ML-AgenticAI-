@@ -27,11 +27,10 @@ import json
 import logging
 import os
 import re
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from benign_lists import AllowlistManager
 from config import AdaptiveThreshold
@@ -374,7 +373,7 @@ def enrich_from_source_indices(
 
 def _build_source_query(
     doc: dict[str, Any], cfg: dict[str, Any], lookback_minutes: int
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Build an ES query to find correlated raw events for source enrichment."""
     host_name = _doc_get(doc, "host.name") or ""
     host_valid = host_name and str(host_name).strip().lower() not in _PLACEHOLDER_VALUES
@@ -457,7 +456,7 @@ def _apply_source_enrichment(
 
     enriched = 0
     # Map of flat doc keys to hit-source extraction paths
-    file_obj = hit.get("file") or {}
+    hit.get("file") or {}
     # Try nested then flat dotted key fallback. Some ES indices return
     # fields only as flat dotted keys (no nested reconstruction).
     def _pick(nested_parent: str, nested_child: str):
@@ -1212,7 +1211,7 @@ def compute_effective_threshold(
     entity: str,
     raw_score: float,
     threshold_cfg: AdaptiveThreshold,
-    evaluation_time: Optional[datetime] = None,
+    evaluation_time: datetime | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Compute the effective push threshold for a single alert.
 
@@ -1306,7 +1305,7 @@ def is_correlated_chain(alert: dict[str, Any]) -> bool:
 
 def dedup_filter(
     alert: dict[str, Any],
-    dedup_state: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
+    dedup_state: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> tuple[bool, str, dict[str, Any]]:
     """Apply 4-hour window dedup with score-escalation override.
 
@@ -1348,7 +1347,9 @@ def dedup_filter(
         }
         return True, "first_occurrence", {"score": score, "window_start": now, "count": 1, "similar_count": 0}
 
-    # Within window — check for escalation
+    # Within window — check for escalation. in_window being True guarantees
+    # prior is not None (see the and-chain above), which mypy can't infer.
+    assert prior is not None
     prior_score = prior["score"]
     if score >= prior_score * (1.0 + SCORE_ESCALATION_DELTA):
         logger.info(
@@ -1378,8 +1379,8 @@ def filter_alert(
     alert: dict[str, Any],
     allowlist_mgr: AllowlistManager,
     threshold_cfg: AdaptiveThreshold,
-    dedup_state: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
-    evaluation_time: Optional[datetime] = None,
+    dedup_state: dict[tuple[str, str], dict[str, Any]] | None = None,
+    evaluation_time: datetime | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """Run the full filtering pipeline for a single alert.
 
@@ -1477,8 +1478,8 @@ def should_push(
     alert: dict[str, Any],
     allowlist_mgr: AllowlistManager,
     threshold_cfg: AdaptiveThreshold,
-    dedup_state: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
-    evaluation_time: Optional[datetime] = None,
+    dedup_state: dict[tuple[str, str], dict[str, Any]] | None = None,
+    evaluation_time: datetime | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """Public entry-point: decide whether an alert should be pushed.
 
@@ -1502,7 +1503,7 @@ def is_benign(
     alert: dict[str, Any],
     allowlist_mgr: AllowlistManager,
     threshold_cfg: AdaptiveThreshold,
-    evaluation_time: Optional[datetime] = None,
+    evaluation_time: datetime | None = None,
 ) -> bool:
     """Convenience check: return True only if an alert is definitively benign.
 
@@ -2397,7 +2398,7 @@ def main() -> None:
     for fpath in files:
         logger.info("Loading %s", fpath)
         try:
-            with open(fpath, "r", encoding="utf-8") as fh:
+            with open(fpath, encoding="utf-8") as fh:
                 payload = json.load(fh)
         except (json.JSONDecodeError, OSError) as exc:
             logger.error("Failed to read %s: %s; skipping", fpath, exc)
@@ -2515,6 +2516,10 @@ def main() -> None:
         for index_name, docs in index_docs.items():
             logger.info("  %s: %d docs", index_name, len(docs))
         return
+
+    # Not a dry run, so the earlier `if es is None: return` guarantees a
+    # live client here even though mypy can't track that across the loop.
+    assert es is not None
 
     # Push to ES
     total_success = 0

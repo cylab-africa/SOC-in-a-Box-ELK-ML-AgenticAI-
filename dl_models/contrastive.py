@@ -14,9 +14,7 @@ CPU-only; combined with other DL models stays under 3 GB.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -128,10 +126,10 @@ class ContrastiveEntityLearner(DLAnomalyModel):
         self.margin = margin
         self.seed = seed
 
-        self.n_features: Optional[int] = None
-        self._encoder: Optional[_ContrastiveEncoder] = None
+        self.n_features: int | None = None
+        self._encoder: _ContrastiveEncoder | None = None
         self._centroids: dict[int, np.ndarray] = {}
-        self._global_centroid: Optional[np.ndarray] = None
+        self._global_centroid: np.ndarray | None = None
         self._device: torch.device = get_device()
 
     def _build_model(self, n_features: int) -> None:
@@ -194,7 +192,7 @@ class ContrastiveEntityLearner(DLAnomalyModel):
             np.array(labels, dtype=np.float32),
         )
 
-    def fit(self, X: np.ndarray) -> "ContrastiveEntityLearner":
+    def fit(self, X: np.ndarray) -> ContrastiveEntityLearner:
         """Train the contrastive encoder on normal data.
 
         Args:
@@ -343,7 +341,7 @@ class ContrastiveEntityLearner(DLAnomalyModel):
         )
         logger.info(f"ContrastiveEntityLearner saved to {path}")
 
-    def load(self, path: Path) -> "ContrastiveEntityLearner":
+    def load(self, path: Path) -> ContrastiveEntityLearner:
         """Restore encoder weights and centroid from disk.
 
         Args:

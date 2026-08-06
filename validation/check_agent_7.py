@@ -122,7 +122,7 @@ def check_benchmark_framework_instantiates() -> tuple[bool, str]:
         Tuple of (success, error_message).
     """
     try:
-        from benchmarks.evaluate import PipelineBenchmark, BenchmarkReport, ScenarioMetrics
+        from benchmarks.evaluate import BenchmarkReport, PipelineBenchmark, ScenarioMetrics
         _ = PipelineBenchmark(scenario_dir=SCENARIO_DIR)
         _ = BenchmarkReport()
         _ = ScenarioMetrics(scenario_name="test")

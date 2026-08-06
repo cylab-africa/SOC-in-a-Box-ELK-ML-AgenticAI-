@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backends.base import SIEMBackend
 
@@ -56,7 +56,7 @@ class FileBackend(SIEMBackend):
         index: str,
         query: dict[str, Any],
         size: int = 1000,
-        sort: Optional[list[dict[str, Any]]] = None,
+        sort: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Read documents from a local JSONL file named after the index.
 
@@ -130,7 +130,7 @@ class FileBackend(SIEMBackend):
         self,
         index: str,
         doc: dict[str, Any],
-        doc_id: Optional[str] = None,
+        doc_id: str | None = None,
     ) -> bool:
         """Append a single document to a JSONL file."""
         count, _ = self.bulk_push(index, [doc])

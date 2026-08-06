@@ -7,8 +7,8 @@ Outputs:
 This reads results/persisted_results/scaler_feature_summary.json (created by previous runs)
 and summarizes per-job/scaler the feature names, center_/mean_ if available, and any load errors.
 """
-import json
 import csv
+import json
 import os
 from pathlib import Path
 
@@ -21,7 +21,7 @@ if not summary_file.exists():
     print('No scaler_feature_summary.json found in results/persisted_results')
     raise SystemExit(1)
 
-with open(summary_file, 'r', encoding='utf-8') as fh:
+with open(summary_file, encoding='utf-8') as fh:
     data = json.load(fh)
 
 # Build rows

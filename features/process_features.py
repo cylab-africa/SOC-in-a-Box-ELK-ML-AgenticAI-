@@ -11,7 +11,7 @@ All transformers implement the FeatureTransformer ABC defined in base.py.
 """
 
 import math
-from collections import Counter, defaultdict
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -166,7 +166,7 @@ class ProcessTreeTransformer(FeatureTransformer):
         if "process.parent.name" in df.columns and "process.name" in df.columns:
             parents = df["process.parent.name"].fillna("unknown").astype(str)
             children = df["process.name"].fillna("unknown").astype(str)
-            pairs = list(zip(parents, children))
+            pairs = list(zip(parents, children, strict=False))
             self._pair_counts.update(pairs)
             self._total_pairs = len(pairs)
         self._is_fitted = True
@@ -245,7 +245,7 @@ class ProcessTreeTransformer(FeatureTransformer):
             prob = count / self._total_pairs
             return 1.0 if prob < self._anomaly_threshold else 0.0
 
-        result = [is_anomalous(pair) for pair in zip(parents, children)]
+        result = [is_anomalous(pair) for pair in zip(parents, children, strict=False)]
         return pd.Series(result, index=df.index, dtype=np.float64)
 
 
@@ -284,7 +284,7 @@ class ProcessRarityTransformer(FeatureTransformer):
 
             if "@timestamp" in df.columns:
                 ts = pd.to_datetime(df["@timestamp"], errors="coerce", utc=True)
-                for name, timestamp in zip(names, ts):
+                for name, timestamp in zip(names, ts, strict=False):
                     if pd.isna(timestamp):
                         continue
                     if name not in self._first_seen or timestamp < self._first_seen[name]:
@@ -371,7 +371,7 @@ class ProcessRarityTransformer(FeatureTransformer):
             now = pd.Series(self._fit_time, index=df.index)
 
         ages: list[float] = []
-        for name, current_ts in zip(names, now):
+        for name, current_ts in zip(names, now, strict=False):
             first = self._first_seen.get(str(name))
             if first is None or pd.isna(current_ts):
                 ages.append(0.0)

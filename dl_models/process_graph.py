@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -201,8 +200,8 @@ class ProcessTreeAnomalyDetector(DLAnomalyModel):
         self.patience = patience
         self.seed = seed
 
-        self.n_features: Optional[int] = None
-        self._model: Optional[_MLPAutoencoder] = None
+        self.n_features: int | None = None
+        self._model: _MLPAutoencoder | None = None
         self._threshold: float = 0.0
         self._device: torch.device = get_device()
 
@@ -217,7 +216,7 @@ class ProcessTreeAnomalyDetector(DLAnomalyModel):
             n_features, self.hidden_dim, self.bottleneck_dim
         ).to(self._device)
 
-    def fit(self, X: np.ndarray) -> "ProcessTreeAnomalyDetector":
+    def fit(self, X: np.ndarray) -> ProcessTreeAnomalyDetector:
         """Train the MLP autoencoder on normal process-tree feature vectors.
 
         Args:
@@ -334,7 +333,7 @@ class ProcessTreeAnomalyDetector(DLAnomalyModel):
         save_checkpoint(self._model.state_dict(), meta, Path(path), CHECKPOINT_FILENAME)
         logger.info(f"ProcessTreeAnomalyDetector saved to {path}")
 
-    def load(self, path: Path) -> "ProcessTreeAnomalyDetector":
+    def load(self, path: Path) -> ProcessTreeAnomalyDetector:
         """Restore model weights and hyperparameters from disk.
 
         Args:

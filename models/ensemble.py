@@ -65,7 +65,7 @@ class EnsembleModel(AnomalyModel):
         self._models.append(model)
         self.attack_techniques = self._collect_techniques()
 
-    def fit(self, X: np.ndarray) -> "EnsembleModel":
+    def fit(self, X: np.ndarray) -> EnsembleModel:
         """Train all constituent models on the same feature matrix.
 
         Args:
@@ -140,7 +140,7 @@ class EnsembleModel(AnomalyModel):
             except Exception:
                 logger.exception("Failed to save model %s", model.model_name)
 
-    def load(self, path: Path) -> "EnsembleModel":
+    def load(self, path: Path) -> EnsembleModel:
         """Load ensemble configuration. Individual models must be loaded separately.
 
         Args:

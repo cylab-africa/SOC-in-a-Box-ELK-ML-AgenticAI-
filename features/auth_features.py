@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from features.base import FeatureTransformer
-from features.utils import EPSILON, zscore_series, clip_score
+from features.utils import EPSILON
 
 
 class LoginTimeTransformer(FeatureTransformer):
@@ -113,7 +113,7 @@ class LoginTimeTransformer(FeatureTransformer):
         users = df["user.name"].fillna("unknown").astype(str)
 
         scores: list[float] = []
-        for user, hour in zip(users, hours):
+        for user, hour in zip(users, hours, strict=False):
             mean = self._user_hour_mean.get(user, 12.0)
             std = self._user_hour_std.get(user, 6.0)
             if std < EPSILON:
@@ -141,7 +141,7 @@ class LoginTimeTransformer(FeatureTransformer):
         users = df["user.name"].fillna("unknown").astype(str)
 
         scores: list[float] = []
-        for user, dow in zip(users, dows):
+        for user, dow in zip(users, dows, strict=False):
             profile = self._user_dow_counts.get(user, {})
             if not profile:
                 scores.append(0.0)
@@ -268,7 +268,7 @@ class PrivilegeEscalationTransformer(FeatureTransformer):
         procs = df["process.name"].fillna("").astype(str)
 
         scores: list[float] = []
-        for user, proc in zip(users, procs):
+        for user, proc in zip(users, procs, strict=False):
             baseline_rate = self._user_privesc_rate.get(user, 0.0)
             is_privesc = 1.0 if proc in self._PRIVESC_CMDS else 0.0
             # If this is a privesc command and user rarely uses them, flag it
@@ -376,7 +376,7 @@ class AuthFailureTransformer(FeatureTransformer):
 
         users = df["user.name"].fillna("unknown").astype(str)
         scores: list[float] = []
-        for user, failed in zip(users, is_failure):
+        for user, failed in zip(users, is_failure, strict=False):
             baseline = self._user_fail_rate.get(user, 0.0)
             if failed > 0 and baseline < 0.1:
                 scores.append(1.0)  # Failure from a user who rarely fails
@@ -414,7 +414,7 @@ class AuthFailureTransformer(FeatureTransformer):
         if failures.empty:
             return result
 
-        for src_ip, group in failures.groupby(sources[outcomes == "failure"]):
+        for _src_ip, group in failures.groupby(sources[outcomes == "failure"]):
             if len(group) < 2:
                 continue
             sorted_ts = group["_ts"].sort_values()
@@ -498,7 +498,7 @@ class SessionDurationTransformer(FeatureTransformer):
         users = df["user.name"].fillna("unknown").astype(str)
 
         scores: list[float] = []
-        for user, dur in zip(users, durations):
+        for user, dur in zip(users, durations, strict=False):
             mean = self._user_dur_mean.get(user, self._global_mean)
             std = self._user_dur_std.get(user, self._global_std)
             z = abs(float(dur) - mean) / std
@@ -592,7 +592,7 @@ class AuthSourceRarityTransformer(FeatureTransformer):
         sources = df["source.ip"].fillna("unknown").astype(str)
 
         scores: list[float] = []
-        for user, src in zip(users, sources):
+        for user, src in zip(users, sources, strict=False):
             profile = self._user_sources.get(user, Counter())
             if not profile:
                 scores.append(0.5)  # Unknown user, moderate rarity

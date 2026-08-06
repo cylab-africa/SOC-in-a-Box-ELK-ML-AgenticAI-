@@ -23,7 +23,6 @@ import argparse
 import glob as _glob
 import json
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import re
 import shlex
@@ -32,8 +31,9 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Environment bootstrap
@@ -53,7 +53,7 @@ except ImportError:
         try:
             if not os.path.exists(dotenv_path):
                 return False
-            with open(dotenv_path, "r") as f:
+            with open(dotenv_path) as f:
                 for raw in f:
                     line = raw.strip()
                     if not line or line.startswith("#"):
@@ -101,8 +101,8 @@ logger = logging.getLogger("realtime_service")
 # ---------------------------------------------------------------------------
 # Constants and configuration from environment
 # ---------------------------------------------------------------------------
-ALL_DATA_GROUPS: List[str] = ["process", "network", "user", "discovery", "metadata", "auth", "host"]
-DEFAULT_MODEL_GROUPS: List[str] = list(ALL_DATA_GROUPS)
+ALL_DATA_GROUPS: list[str] = ["process", "network", "user", "discovery", "metadata", "auth", "host"]
+DEFAULT_MODEL_GROUPS: list[str] = list(ALL_DATA_GROUPS)
 PYEXE: str = sys.executable or "python"
 
 
@@ -384,7 +384,7 @@ class HealthMetrics:
         out.write_text(json.dumps(data, indent=2, default=str))
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "HealthMetrics":
+    def load(cls, path: Path | None = None) -> HealthMetrics:
         """Load metrics from a JSON file.
 
         Args:
@@ -426,9 +426,9 @@ class HealthMetrics:
 # ---------------------------------------------------------------------------
 # Global mutable state
 # ---------------------------------------------------------------------------
-missing_model_errors: Dict[str, int] = {}
-last_auto_retrain_time: Dict[str, datetime] = {}
-background_trainer_proc: Optional[subprocess.Popen] = None
+missing_model_errors: dict[str, int] = {}
+last_auto_retrain_time: dict[str, datetime] = {}
+background_trainer_proc: subprocess.Popen | None = None
 last_cleanup_time: datetime = datetime.now(timezone.utc) - timedelta(hours=CLEANUP_INTERVAL_HOURS)
 
 
@@ -477,7 +477,7 @@ def _run_and_stream(cmd_list: list, dry_run: bool = False) -> bool:
         "v3_linux_rare_metadata": "metadata",
     }
 
-    def _infer_group(job_name: str) -> Optional[str]:
+    def _infer_group(job_name: str) -> str | None:
         for prefix, group in job_to_group.items():
             if job_name.startswith(prefix):
                 return group
@@ -547,7 +547,7 @@ def models_exist_for(data_type: str) -> bool:
     return False
 
 
-def get_model_file_age_hours(data_type: str) -> Optional[float]:
+def get_model_file_age_hours(data_type: str) -> float | None:
     """Get the age of model files in hours."""
     for d in _candidate_model_dirs():
         model_file = os.path.join(d, f"{data_type}_models.joblib")
@@ -562,7 +562,7 @@ def get_model_file_age_hours(data_type: str) -> Optional[float]:
     return None
 
 
-def is_model_stale(data_type: str, max_age_hours: Optional[int] = None) -> bool:
+def is_model_stale(data_type: str, max_age_hours: int | None = None) -> bool:
     """Check if model files are stale (older than threshold)."""
     if not MODEL_STALENESS_ENABLED:
         return False
@@ -577,14 +577,14 @@ def is_model_stale(data_type: str, max_age_hours: Optional[int] = None) -> bool:
     return is_old
 
 
-def get_stale_model_groups(groups: Optional[List[str]] = None) -> List[str]:
+def get_stale_model_groups(groups: list[str] | None = None) -> list[str]:
     """Get list of data groups with stale models."""
     if groups is None:
         groups = DEFAULT_MODEL_GROUPS
     return [g for g in groups if is_model_stale(g)]
 
 
-def record_missing_model_error(group: str, entity: Optional[str] = None) -> None:
+def record_missing_model_error(group: str, entity: str | None = None) -> None:
     """Record a missing model error for auto-retrain tracking."""
     global missing_model_errors
     missing_model_errors.setdefault(group, 0)
@@ -685,7 +685,7 @@ def _start_background_trainer(data_groups: list, dry_run: bool = False) -> bool:
         return False
 
 
-def trigger_auto_retrain_for_missing(groups: List[str], dry_run: bool = False) -> bool:
+def trigger_auto_retrain_for_missing(groups: list[str], dry_run: bool = False) -> bool:
     """Trigger auto-retrain for groups with too many missing model errors."""
     global missing_model_errors, last_auto_retrain_time
     groups_to_retrain = [g for g in groups if should_auto_retrain(g)]
@@ -708,7 +708,7 @@ def trigger_auto_retrain_for_missing(groups: List[str], dry_run: bool = False) -
 # Detection, push, and correlation
 # ---------------------------------------------------------------------------
 
-def _dedupe_preserve_order(items: List[str]) -> List[str]:
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
     """Return a list with duplicates removed, preserving order."""
     seen: set = set()
     result: list = []
@@ -719,7 +719,7 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return result
 
 
-def _resolve_training_groups(detection_mode: str, allowed_groups: Optional[List[str]]) -> List[str]:
+def _resolve_training_groups(detection_mode: str, allowed_groups: list[str] | None) -> list[str]:
     """Resolve which data groups should be retrained."""
     if detection_mode == "group":
         return [DATA_GROUP]
@@ -735,7 +735,7 @@ def run_detection(
     retrain: bool = False,
     retrain_force: bool = False,
     dry_run: bool = False,
-    allowed_groups: Optional[List[str]] = None,
+    allowed_groups: list[str] | None = None,
 ) -> bool:
     """Run detection via main.py with realtime-friendly flags.
 
@@ -773,8 +773,8 @@ def run_detection(
     stale_groups = get_stale_model_groups(training_groups) if MODEL_STALENESS_ENABLED else []
     stale_groups = [g for g in stale_groups if g not in missing_groups]
 
-    groups_to_train: List[str] = []
-    trainer_reason: Optional[str] = None
+    groups_to_train: list[str] = []
+    trainer_reason: str | None = None
 
     if missing_groups:
         groups_to_train = missing_groups
@@ -800,7 +800,7 @@ def run_detection(
                 logger.warning("Stale model %s: %.1fh old (threshold: %dh)", g, age, MODEL_STALENESS_HOURS)
         if not _trainer_is_running():
             if _start_background_trainer(groups_to_train, dry_run=dry_run):
-                setattr(run_detection, "_trainer_started", True)
+                run_detection._trainer_started = True
                 logger.info("Background trainer launched (%s) for: %s", trainer_reason, ", ".join(groups_to_train))
         else:
             pid = background_trainer_proc.pid if background_trainer_proc else "?"
@@ -997,7 +997,7 @@ def _cleanup_stale_model_dirs() -> None:
     for data_type in active_types:
         # Find the freshest copy across all candidate dirs
         best_mtime: float = 0.0
-        best_dir: Optional[str] = None
+        best_dir: str | None = None
         for d in dirs:
             model_file = os.path.join(d, f"{data_type}_models.joblib")
             if os.path.exists(model_file):
@@ -1055,7 +1055,7 @@ def _rotate_logs(max_size_mb: int = 50, keep_lines: int = 5000) -> None:
         try:
             size_mb = os.path.getsize(fpath) / (1024 * 1024)
             if size_mb > max_size_mb:
-                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
                 tail = lines[-keep_lines:] if len(lines) > keep_lines else lines
                 with open(fpath, "w", encoding="utf-8") as f:
@@ -1119,7 +1119,7 @@ def main() -> int:
         if resolved_mode == "group":
             logger.info("DETECTION_MODE='group' in env; defaulting to 'comprehensive' for realtime")
             resolved_mode = "comprehensive"
-    setattr(run_detection, "_override_detection_mode", resolved_mode)
+    run_detection._override_detection_mode = resolved_mode
     logger.info(f"Detection mode: {resolved_mode}")
 
     # Health metrics
@@ -1283,7 +1283,7 @@ def _run_loop(
                 trainer_started = getattr(run_detection, "_trainer_started", False)
                 if trainer_started:
                     last_retrain = datetime.now(timezone.utc)
-                    setattr(run_detection, "_trainer_started", False)
+                    run_detection._trainer_started = False
 
                 pushed = push_anomalies(dry_run=dry_run)
                 if not dry_run:

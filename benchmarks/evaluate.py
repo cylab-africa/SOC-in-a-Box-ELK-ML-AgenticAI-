@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -324,7 +323,7 @@ class PipelineBenchmark:
         if attack_times:
             scenario_start = min(e["@timestamp"] for e in events)
             # Simple string comparison for ISO timestamps
-            ttfd_str_diff = attack_times[0] > scenario_start
+            attack_times[0] > scenario_start
             ttfd = 0.0  # placeholder — real implementation uses datetime parsing
 
         return ScenarioMetrics(

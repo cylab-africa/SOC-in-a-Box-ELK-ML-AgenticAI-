@@ -1,5 +1,7 @@
 from pathlib import Path
+
 import pandas as pd
+
 from detection_methods import detect_job_anomalies
 from model_manager import load_all_models
 

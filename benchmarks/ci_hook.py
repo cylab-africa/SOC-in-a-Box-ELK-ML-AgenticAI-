@@ -27,14 +27,9 @@ from pathlib import Path
 
 from benchmarks.evaluate import (
     BenchmarkReport,
-    ComparisonReport,
     JobMetrics,
     PipelineBenchmark,
     ScenarioMetrics,
-)
-from benchmarks.performance import (
-    PerformanceResult,
-    save_performance_results,
 )
 
 logger = logging.getLogger(__name__)

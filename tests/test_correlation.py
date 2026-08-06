@@ -7,7 +7,7 @@ groups anomalies into attack chains and assigns priorities.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 

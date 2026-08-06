@@ -7,7 +7,6 @@ DLAnomalyModel interface and produce valid outputs on synthetic data.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np

@@ -12,7 +12,7 @@ All transformers implement the FeatureTransformer ABC defined in base.py.
 """
 
 import math
-from collections import Counter, defaultdict
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -303,7 +303,7 @@ class BeaconDetectorTransformer(FeatureTransformer):
         result = pd.Series(0.0, index=df.index, dtype=np.float64)
 
         grouped = df.assign(_ts=ts).dropna(subset=["_ts"]).groupby("destination.ip")
-        for ip, group in grouped:
+        for _ip, group in grouped:
             if len(group) < 3:
                 continue
             diffs = group["_ts"].sort_values().diff().dropna().dt.total_seconds()
@@ -338,7 +338,7 @@ class BeaconDetectorTransformer(FeatureTransformer):
         result = pd.Series(0.0, index=df.index, dtype=np.float64)
 
         grouped = df.assign(_ts=ts).dropna(subset=["_ts"]).groupby("destination.ip")
-        for ip, group in grouped:
+        for _ip, group in grouped:
             if len(group) < 2:
                 continue
             diffs = group["_ts"].sort_values().diff().dropna().dt.total_seconds()

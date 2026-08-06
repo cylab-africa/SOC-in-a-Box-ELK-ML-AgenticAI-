@@ -74,7 +74,7 @@ class SequenceDataset(Dataset):
         feature_columns: list[str] | None = None,
         seq_len: int = 32,
         stride: int | None = None,
-    ) -> "SequenceDataset":
+    ) -> SequenceDataset:
         """Create a SequenceDataset from a pandas DataFrame.
 
         Args:
@@ -129,7 +129,7 @@ class TreeFeatureDataset(Dataset):
         cls,
         df: pd.DataFrame,
         feature_columns: list[str] | None = None,
-    ) -> "TreeFeatureDataset":
+    ) -> TreeFeatureDataset:
         """Create a TreeFeatureDataset from a pandas DataFrame.
 
         Args:

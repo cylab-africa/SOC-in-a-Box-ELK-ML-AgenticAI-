@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from backends.base import SIEMBackend
 
@@ -22,9 +22,9 @@ class ElasticsearchBackend(SIEMBackend):
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        host: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         verify_certs: bool = False,
         timeout: int = 60,
     ) -> None:
@@ -97,7 +97,7 @@ class ElasticsearchBackend(SIEMBackend):
         index: str,
         query: dict[str, Any],
         size: int = 1000,
-        sort: Optional[list[dict[str, Any]]] = None,
+        sort: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Run a search and return source dicts."""
         assert self._client is not None, "Call connect() first"
@@ -169,7 +169,7 @@ class ElasticsearchBackend(SIEMBackend):
         self,
         index: str,
         doc: dict[str, Any],
-        doc_id: Optional[str] = None,
+        doc_id: str | None = None,
     ) -> bool:
         """Index a single document."""
         assert self._client is not None, "Call connect() first"

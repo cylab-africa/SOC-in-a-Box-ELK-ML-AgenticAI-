@@ -79,8 +79,8 @@ class TestEnsembleModel:
 
     def test_ensemble_handles_failed_model(self) -> None:
         """Ensemble gracefully skips models that throw during scoring."""
-        from models.ensemble import EnsembleModel
         from models.base_model import AnomalyModel
+        from models.ensemble import EnsembleModel
 
         class _Broken(AnomalyModel):
             model_name = "broken"
@@ -109,8 +109,8 @@ class TestEnsembleModel:
 
     def test_ensemble_collects_techniques(self) -> None:
         """Ensemble merges ATT&CK techniques from all models."""
-        from models.ensemble import EnsembleModel
         from models.base_model import AnomalyModel
+        from models.ensemble import EnsembleModel
 
         class _M1(AnomalyModel):
             model_name = "m1"
@@ -133,8 +133,8 @@ class TestModelRegistry:
 
     def test_known_job_returns_ensemble(self) -> None:
         """get_models_for_job returns an EnsembleModel for known jobs."""
-        from models.registry import get_models_for_job
         from models.ensemble import EnsembleModel
+        from models.registry import get_models_for_job
 
         with patch("models.pyod_models._import_pyod") as mock_pyod:
             # Mock PyOD so we don't need it installed
@@ -148,8 +148,8 @@ class TestModelRegistry:
 
     def test_unknown_job_returns_default(self) -> None:
         """Unknown job names get a default ensemble."""
-        from models.registry import get_models_for_job
         from models.ensemble import EnsembleModel
+        from models.registry import get_models_for_job
 
         with patch("models.pyod_models._import_pyod") as mock_pyod:
             mock_pyod.return_value = type("MockModel", (), {
@@ -168,7 +168,7 @@ class TestModelVersioning:
         """Manifest round-trips through create/load."""
         from models.versioning import create_manifest, load_manifest
 
-        manifest = create_manifest(
+        create_manifest(
             model_dir=tmp_path,
             job_name="v3_linux_anomalous_process_all_hosts",
             model_names=["ecod", "copod"],

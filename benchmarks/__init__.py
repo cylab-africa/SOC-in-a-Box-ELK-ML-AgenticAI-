@@ -2,8 +2,8 @@
 
 from benchmarks.benchmark_framework import (
     BenchmarkResult,
-    benchmark_training,
     benchmark_inference,
+    benchmark_training,
     save_benchmark_results,
 )
 

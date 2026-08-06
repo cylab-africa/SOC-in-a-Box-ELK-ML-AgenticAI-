@@ -1,5 +1,6 @@
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 p = Path('results/persisted_results')
 files = list(p.glob('*.parquet')) + list(p.glob('*.csv'))

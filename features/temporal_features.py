@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from features.base import FeatureTransformer
-from features.utils import EPSILON, zscore_series, clip_score
+from features.utils import EPSILON, clip_score
 
 
 class EventCountTransformer(FeatureTransformer):
@@ -40,7 +40,7 @@ class EventCountTransformer(FeatureTransformer):
         self._host_1hr_mean: float = 0.0
         self._host_1hr_std: float = 1.0
 
-    def fit(self, df: pd.DataFrame) -> "EventCountTransformer":
+    def fit(self, df: pd.DataFrame) -> EventCountTransformer:
         """Learn per-host event rate baselines from training data.
 
         Args:
@@ -128,11 +128,11 @@ class EventCountTransformer(FeatureTransformer):
         if len(temp) == 0:
             return result
 
-        for host, group in temp.groupby("host.name"):
+        for _host, group in temp.groupby("host.name"):
             sorted_g = group.sort_values("_ts")
             win_delta = pd.Timedelta(window)
             counts = []
-            for i, row in sorted_g.iterrows():
+            for _i, row in sorted_g.iterrows():
                 t = row["_ts"]
                 window_start = t - win_delta
                 count = ((sorted_g["_ts"] >= window_start) & (sorted_g["_ts"] <= t)).sum()
@@ -160,7 +160,7 @@ class VolumeZscoreTransformer(FeatureTransformer):
         self._global_mean: float = 0.0
         self._global_std: float = 1.0
 
-    def fit(self, df: pd.DataFrame) -> "VolumeZscoreTransformer":
+    def fit(self, df: pd.DataFrame) -> VolumeZscoreTransformer:
         """Learn per-host daily event volume baselines.
 
         Args:
@@ -250,7 +250,7 @@ class TransitionSurpriseTransformer(FeatureTransformer):
         self._transition_probs: dict[str, dict[str, float]] = {}
         self._event_type_col: str = "event.action"
 
-    def fit(self, df: pd.DataFrame) -> "TransitionSurpriseTransformer":
+    def fit(self, df: pd.DataFrame) -> TransitionSurpriseTransformer:
         """Learn event type transition probabilities per host.
 
         Args:
@@ -273,7 +273,7 @@ class TransitionSurpriseTransformer(FeatureTransformer):
         else:
             temp = df.copy()
 
-        for host, group in temp.groupby("host.name"):
+        for _host, group in temp.groupby("host.name"):
             events = group[col].fillna("unknown").astype(str).tolist()
             for i in range(len(events) - 1):
                 transition_counts[events[i]][events[i + 1]] += 1
@@ -315,7 +315,7 @@ class TransitionSurpriseTransformer(FeatureTransformer):
         else:
             temp = df.copy()
 
-        for host, group in temp.groupby("host.name"):
+        for _host, group in temp.groupby("host.name"):
             events = group[col].fillna("unknown").astype(str).tolist()
             indices = group.index.tolist()
             for i in range(1, len(events)):

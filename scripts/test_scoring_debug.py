@@ -1,9 +1,11 @@
+import logging
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-from detection_methods import detect_job_anomalies, JOB_CONFIGURATIONS
-import logging
+
+from detection_methods import JOB_CONFIGURATIONS, detect_job_anomalies
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s')
 

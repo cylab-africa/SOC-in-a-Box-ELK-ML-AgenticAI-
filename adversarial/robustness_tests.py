@@ -12,8 +12,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from models.base_model import AnomalyModel
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,7 @@ class RobustnessTest:
 
     def test_perturbation_stability(
         self,
-        model: "AnomalyModel",
+        model: AnomalyModel,
         X: np.ndarray,
         n_trials: int = 10,
     ) -> RobustnessResult:
@@ -94,7 +98,7 @@ class RobustnessTest:
 
     def test_temporal_stability(
         self,
-        model: "AnomalyModel",
+        model: AnomalyModel,
         X: np.ndarray,
         n_repeats: int = 5,
     ) -> RobustnessResult:
@@ -124,7 +128,7 @@ class RobustnessTest:
             detail=f"max_delta={max_delta:.8f} (expected ~0)",
         )
 
-    def run_all(self, model: "AnomalyModel", X: np.ndarray) -> list[RobustnessResult]:
+    def run_all(self, model: AnomalyModel, X: np.ndarray) -> list[RobustnessResult]:
         """Run all robustness tests on a model.
 
         Args:
@@ -146,7 +150,7 @@ class RobustnessTest:
 
     def test_feature_importance_attack(
         self,
-        model: "AnomalyModel",
+        model: AnomalyModel,
         X: np.ndarray,
         top_k: int = 3,
     ) -> RobustnessResult:

@@ -23,7 +23,7 @@ class TestAttackMapping:
 
         data = json.loads(mapping_path.read_text())
         assert isinstance(data, dict)
-        for job_name, entry in data.items():
+        for _job_name, entry in data.items():
             assert "techniques" in entry
             assert "kill_chain_phase" in entry
             assert isinstance(entry["techniques"], list)

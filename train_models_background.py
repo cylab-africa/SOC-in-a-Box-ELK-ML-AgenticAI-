@@ -18,14 +18,13 @@ This script wraps the anomaly_detector training pipeline with:
   - Atomic model save (handled by model_manager.save_models)
 """
 
-import os
-import json
-import time
-import signal
 import argparse
+import json
 import logging
+import os
+import signal
+import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 logger = logging.getLogger("train_models_background")
 logging.basicConfig(
@@ -41,7 +40,7 @@ def load_checkpoint(path: str) -> dict:
     """Load checkpoint state from disk."""
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 return json.load(f)
         except Exception as exc:
             logger.warning("Failed to load checkpoint %s: %s", path, exc)

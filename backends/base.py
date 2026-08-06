@@ -8,7 +8,7 @@ Elasticsearch, OpenSearch, Splunk, or even a plain JSON file store.
 from __future__ import annotations
 
 import abc
-from typing import Any, Optional
+from typing import Any
 
 
 class SIEMBackend(abc.ABC):
@@ -43,7 +43,7 @@ class SIEMBackend(abc.ABC):
         index: str,
         query: dict[str, Any],
         size: int = 1000,
-        sort: Optional[list[dict[str, Any]]] = None,
+        sort: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Run a search query and return the list of hit ``_source`` dicts.
 
@@ -116,7 +116,7 @@ class SIEMBackend(abc.ABC):
         self,
         index: str,
         doc: dict[str, Any],
-        doc_id: Optional[str] = None,
+        doc_id: str | None = None,
     ) -> bool:
         """Index a single document.
 
