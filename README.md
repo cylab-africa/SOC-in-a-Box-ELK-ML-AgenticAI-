@@ -108,10 +108,17 @@ python push_all_anomalies.py
 ### 5. Docker (optional)
 
 ```bash
-docker compose -f docker/docker-compose.yml up
+docker compose --env-file .env -f docker/docker-compose.yml up
 ```
 
+See [DEPLOYMENT.md](DEPLOYMENT.md#5-docker-deployment) for what the bundled services do and how to point at an existing production cluster instead.
+
 ## Configuration
+
+For a full walkthrough of every file you need to edit when deploying
+against your own environment — required vs. optional, exact format, and
+what to put in each (including the IP-range/hostname allowlists below) —
+see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ### Environment Variables
 
