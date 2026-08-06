@@ -52,7 +52,7 @@ class RobustnessTest:
 
     def test_perturbation_stability(
         self,
-        model,
+        model: "AnomalyModel",
         X: np.ndarray,
         n_trials: int = 10,
     ) -> RobustnessResult:
@@ -94,7 +94,7 @@ class RobustnessTest:
 
     def test_temporal_stability(
         self,
-        model,
+        model: "AnomalyModel",
         X: np.ndarray,
         n_repeats: int = 5,
     ) -> RobustnessResult:
@@ -124,7 +124,7 @@ class RobustnessTest:
             detail=f"max_delta={max_delta:.8f} (expected ~0)",
         )
 
-    def run_all(self, model, X: np.ndarray) -> list[RobustnessResult]:
+    def run_all(self, model: "AnomalyModel", X: np.ndarray) -> list[RobustnessResult]:
         """Run all robustness tests on a model.
 
         Args:
@@ -146,7 +146,7 @@ class RobustnessTest:
 
     def test_feature_importance_attack(
         self,
-        model,
+        model: "AnomalyModel",
         X: np.ndarray,
         top_k: int = 3,
     ) -> RobustnessResult:

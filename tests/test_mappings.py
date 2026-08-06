@@ -92,7 +92,9 @@ class TestESTemplates:
             pytest.skip("ml-anomalies-custom.json not found")
 
         data = json.loads(path.read_text())
-        assert "mappings" in data or "properties" in data
+        has_mappings = "mappings" in data or "properties" in data
+        has_composable = "template" in data and "mappings" in data.get("template", {})
+        assert has_mappings or has_composable
 
     def test_correlated_template_valid(self) -> None:
         """ml-anomalies-correlated.json is valid mapping template."""
@@ -101,4 +103,6 @@ class TestESTemplates:
             pytest.skip("ml-anomalies-correlated.json not found")
 
         data = json.loads(path.read_text())
-        assert "mappings" in data or "properties" in data
+        has_mappings = "mappings" in data or "properties" in data
+        has_composable = "template" in data and "mappings" in data.get("template", {})
+        assert has_mappings or has_composable

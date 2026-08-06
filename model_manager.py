@@ -49,7 +49,7 @@ def train_process_anomaly_models(historical_data: "pd.DataFrame", config: dict) 
     
     return models, scalers, baselines
 
-def train_network_activity_models(historical_data, config):
+def train_network_activity_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
     """
     Train specialized models for network activity anomaly detection.
     Supports: v3_linux_anomalous_network_activity, v3_linux_anomalous_network_port_activity
@@ -118,7 +118,7 @@ def train_network_activity_models(historical_data, config):
     
     return models, scalers, baselines
 
-def train_user_behavior_models(historical_data, config):
+def train_user_behavior_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
     """
     Train specialized models for user behavior anomaly detection.
     Supports: v3_linux_anomalous_user_name, v3_linux_rare_sudo_user, v3_linux_rare_user_compiler
@@ -146,7 +146,7 @@ def train_user_behavior_models(historical_data, config):
     
     return models, scalers, baselines
 
-def train_discovery_command_models(historical_data, config):
+def train_discovery_command_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
     """
     Train specialized models for discovery command anomaly detection.
     Supports: v3_linux_network_configuration_discovery, v3_linux_network_connection_discovery,
@@ -184,7 +184,7 @@ def train_discovery_command_models(historical_data, config):
     
 #     return models, scalers, baselines
 
-def train_metadata_access_models(historical_data, config):
+def train_metadata_access_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
     """
     Train specialized models for metadata access anomaly detection.
     Supports: v3_linux_rare_metadata_process, v3_linux_rare_metadata_user
@@ -212,6 +212,64 @@ def train_metadata_access_models(historical_data, config):
     
     return models, scalers, baselines
 
+
+def train_auth_anomaly_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
+    """Train specialized models for authentication anomaly detection.
+
+    Supports: v3_linux_auth_rare_source_ip, v3_linux_auth_high_count_logon_fails,
+              v3_linux_auth_rare_user, v3_linux_auth_rare_hour
+
+    Args:
+        historical_data: Historical auth data from .ds-logs-system.auth-default-*
+        config: Configuration dictionary
+
+    Returns:
+        tuple: (models, scalers, baselines)
+    """
+    logger.info("Training specialized auth anomaly detection models")
+
+    manager = LinuxModelManager(config)
+
+    models, scalers = manager.train_models(historical_data, "auth")
+    baselines = manager.establish_baselines(historical_data, "auth")
+
+    manager.baselines["auth"] = baselines
+    manager.models["auth"] = models
+    manager.scalers["auth"] = scalers
+    manager.save_models("auth")
+
+    return models, scalers, baselines
+
+
+def train_host_anomaly_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
+    """Train specialized models for host-level activity anomaly detection.
+
+    Supports: v3_linux_anomalous_host_activity, v3_linux_host_user_deviation
+
+    Uses process-event data partitioned by host.hostname so each host gets its
+    own behavioral baseline (process diversity, user counts, timing patterns).
+
+    Args:
+        historical_data: Historical process data with host fields
+        config: Configuration dictionary
+
+    Returns:
+        tuple: (models, scalers, baselines)
+    """
+    logger.info("Training specialized host activity anomaly detection models")
+
+    manager = LinuxModelManager(config)
+
+    models, scalers = manager.train_models(historical_data, "host")
+    baselines = manager.establish_baselines(historical_data, "host")
+
+    manager.baselines["host"] = baselines
+    manager.models["host"] = models
+    manager.scalers["host"] = scalers
+    manager.save_models("host")
+
+    return models, scalers, baselines
+
 import numpy as np
 import pandas as pd
 import re
@@ -232,59 +290,86 @@ from detection_methods import extract_ml_features
 from entity_alignment import clean_network_data_for_training
 
 logger = logging.getLogger("linux_anomaly_detection")
-def filter_process_data(df):
+def filter_process_data(df: "pd.DataFrame") -> "pd.DataFrame":
     """Filter process data for anomaly detection."""
     if 'process.name' not in df.columns:
         return df
     return df[df['process.name'].notna()]
 
-def filter_host_process(df):
+def filter_host_process(df: "pd.DataFrame") -> "pd.DataFrame":
     """Filter process data by host."""
     if 'host.hostname' not in df.columns or 'process.name' not in df.columns:
         return df
     return df[df['host.hostname'].notna() & df['process.name'].notna()]
 
-def filter_network_ip(df):
+def filter_network_ip(df: "pd.DataFrame") -> "pd.DataFrame":
     """Filter network data by IP."""
     if 'destination.ip' not in df.columns:
         return df
     return df[df['destination.ip'].notna()]
 
-def filter_network_port(df):
+def filter_network_port(df: "pd.DataFrame") -> "pd.DataFrame":
     """Filter network data by port."""
     if 'destination.port' not in df.columns:
         return df
     return df[df['destination.port'].notna()]
-def filter_sudo_users(df):
+def filter_sudo_users(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to only sudo process events."""
     return df[df['process.name'] == 'sudo'] if 'process.name' in df.columns else df
 
-def filter_compiler_users(df):
+def filter_compiler_users(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to only compiler process events."""
     compiler_list = ['gcc', 'g++', 'clang', 'make', 'cmake', 'javac', 'rustc', 'go', 'python', 'perl']
     return df[df['process.name'].isin(compiler_list)] if 'process.name' in df.columns else df
 
-def filter_network_config(df):
+def filter_network_config(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to network configuration commands."""
     commands = ['ifconfig', 'ip', 'route', 'iptables', 'netstat', 'ss']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
 
-def filter_network_connection(df):
+def filter_network_connection(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to network connection commands."""
     commands = ['netstat', 'ss', 'lsof', 'nmap', 'nc', 'telnet']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
 
-def filter_system_info(df):
+def filter_system_info(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to system information commands."""
     commands = ['uname', 'hostname', 'hostnamectl', 'systeminfo', 'lscpu', 'lshw', 'dmidecode', 'cat', 'more', 'less']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
 
-def filter_process_discovery(df):
+def filter_process_discovery(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to process discovery commands."""
     commands = ['ps', 'top', 'htop', 'pgrep', 'pidof', 'pstree', 'lsof']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
 
-def filter_user_discovery(df):
+def filter_user_discovery(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to user discovery commands."""
     commands = ['who', 'w', 'last', 'lastlog', 'id', 'users', 'finger', 'getent']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
 
-def filter_linux_process(df):
+def filter_linux_process(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to common Linux shell processes."""
     commands = ['bash', 'sh', 'zsh', 'ksh', 'csh']
     return df[df['process.name'].isin(commands)] if 'process.name' in df.columns else df
+
+
+def filter_failed_logins(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to failed login events only."""
+    if 'is_failed_login' in df.columns:
+        return df[df['is_failed_login'] == 1]
+    if 'event.outcome' in df.columns:
+        return df[df['event.outcome'] == 'failure']
+    return df
+
+
+def filter_non_business_hours(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Filter DataFrame to non-business-hours events."""
+    if 'is_business_hours' in df.columns:
+        return df[df['is_business_hours'] == 0]
+    if 'hour_of_day' in df.columns:
+        return df[(df['hour_of_day'] < 8) | (df['hour_of_day'] > 17)]
+    return df
+
 
 class LinuxModelManager:
     """
@@ -292,7 +377,7 @@ class LinuxModelManager:
     Each job gets appropriate entity selection, filtering, and features.
     """
     
-    def __init__(self, config):
+    def __init__(self, config: dict):
         self.config = config
         self.models = {}
         self.scalers = {}
@@ -394,6 +479,46 @@ class LinuxModelManager:
                 "secondary_entity": "user.name",
                 "filter_func": None,
                 "description": "Rare user/group combination detection"
+            }
+            },
+            "auth": {
+            "v3_linux_auth_rare_source_ip": {
+                "entity_column": "source.ip",
+                "secondary_entity": None,
+                "filter_func": None,
+                "description": "Detect rare source IPs authenticating to hosts"
+            },
+            "v3_linux_auth_high_count_logon_fails": {
+                "entity_column": "user.name",
+                "secondary_entity": None,
+                "filter_func": filter_failed_logins,
+                "description": "Detect brute-force login attempts per user"
+            },
+            "v3_linux_auth_rare_user": {
+                "entity_column": "user.name",
+                "secondary_entity": None,
+                "filter_func": None,
+                "description": "Detect rare user authentications"
+            },
+            "v3_linux_auth_rare_hour": {
+                "entity_column": "user.name",
+                "secondary_entity": None,
+                "filter_func": filter_non_business_hours,
+                "description": "Detect unusual authentication timing"
+            }
+            },
+            "host": {
+            "v3_linux_anomalous_host_activity": {
+                "entity_column": "host.hostname",
+                "secondary_entity": None,
+                "filter_func": None,
+                "description": "Detect hosts with anomalous process activity"
+            },
+            "v3_linux_host_user_deviation": {
+                "entity_column": "host.hostname",
+                "secondary_entity": "user.name",
+                "filter_func": None,
+                "description": "Detect hosts showing unusual per-host user activity"
             }
             }
         }
@@ -817,7 +942,8 @@ class LinuxModelManager:
             elif composite_type == "ip_port":
                 if 'destination.ip' in data.columns and 'destination.port' in data.columns:
                     # Validate IP addresses
-                    def validate_ip(ip):
+                    def validate_ip(ip: str):
+                        """Validate an IP address string."""
                         try:
                             import ipaddress
                             ipaddress.ip_address(str(ip))
@@ -829,7 +955,8 @@ class LinuxModelManager:
                     ip_str = data['destination.ip'].apply(validate_ip).fillna('0.0.0.0').astype(str)
                     
                     # Validate ports (ensure numeric and in valid range)
-                    def validate_port(port):
+                    def validate_port(port: int | str):
+                        """Validate a port number."""
                         try:
                             p = int(float(port))
                             return str(p) if 0 <= p <= 65535 else '0'
@@ -1249,7 +1376,9 @@ class LinuxModelManager:
             "network": "destination.ip", 
             "user": "user.name",
             "discovery": "process.name",
-            "metadata": "process.name"
+            "metadata": "process.name",
+            "auth": "user.name",
+            "host": "host.hostname"
         }
         
         # Get the default entity column for this data type
@@ -1586,12 +1715,52 @@ class LinuxModelManager:
             }
             metadata_file = os.path.join(models_dir, f"{data_type}_metadata.joblib")
             joblib.dump(metadata, metadata_file)
-            
+
+            # Post-save: remove this data_type's files from other candidate dirs
+            self._cleanup_old_model_copies(data_type, models_dir)
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error saving models for {data_type}: {e}")
             return False
+
+    def _cleanup_old_model_copies(self, data_type: str, primary_dir: str) -> None:
+        """Remove stale model files for *data_type* from non-primary directories."""
+        suffixes = ["_models.joblib", "_scalers.joblib", "_baselines.joblib",
+                     "_metadata.joblib", "_feature_manifests.json"]
+        candidate_dirs = self._candidate_model_dirs(primary_dir)
+        removed = 0
+        for d in candidate_dirs:
+            if os.path.abspath(d) == os.path.abspath(primary_dir):
+                continue
+            for suffix in suffixes:
+                fpath = os.path.join(d, f"{data_type}{suffix}")
+                if os.path.exists(fpath):
+                    try:
+                        os.remove(fpath)
+                        removed += 1
+                    except OSError:
+                        pass
+        if removed:
+            logger.info("Post-save cleanup: removed %d old %s model files from non-primary dirs", removed, data_type)
+
+    @staticmethod
+    def _candidate_model_dirs(primary: str) -> list:
+        """Return candidate directories where models may be stored."""
+        candidates = [
+            os.path.abspath(primary),
+            os.path.abspath("./models"),
+            os.path.abspath("./results/models"),
+            "/tmp/linux_anomaly_models",
+        ]
+        seen: set = set()
+        out: list = []
+        for p in candidates:
+            if p not in seen:
+                seen.add(p)
+                out.append(p)
+        return out
     
     def get_models_for_job(self, job_name: str) -> Tuple[Dict, Dict, Dict]:
         """
@@ -1755,14 +1924,14 @@ class LinuxModelManager:
 
 
 # Convenience functions for backward compatibility
-def establish_linux_baselines(historical_data, config, data_type="process"):
+def establish_linux_baselines(historical_data: "pd.DataFrame", config: dict, data_type: str = "process") -> tuple:
     """
     Establish baselines for Linux data with job-specific logic.
     """
     manager = LinuxModelManager(config)
     return manager.establish_baselines(historical_data, data_type)
 
-def train_linux_models(historical_data, config, data_type="process"):
+def train_linux_models(historical_data: "pd.DataFrame", config: dict, data_type: str="process"):
     """
     Train Linux anomaly detection models with job-specific logic.
     """
@@ -1775,7 +1944,7 @@ def train_linux_models(historical_data, config, data_type="process"):
     
     return models, scalers
 
-def save_linux_models(models, scalers, baselines, config, data_type="process"):
+def save_linux_models(models: dict, scalers: dict, baselines: dict, config: dict, data_type: str="process"):
     """
     Save Linux models with job-aware structure.
     """
@@ -1785,7 +1954,7 @@ def save_linux_models(models, scalers, baselines, config, data_type="process"):
     manager.baselines[data_type] = baselines
     return manager.save_models(data_type)
 
-def load_linux_models(config, data_type="process"):
+def load_linux_models(config: dict, data_type: str="process"):
     """
     Load Linux models with job-aware structure.
     """
@@ -1800,7 +1969,7 @@ def load_linux_models(config, data_type="process"):
     else:
         return {}, {}, {}, False
 
-def validate_model_coverage(config):
+def validate_model_coverage(config: dict):
     """
     NEW: Validate which jobs have proper model coverage.
     """
@@ -1845,7 +2014,7 @@ def validate_model_coverage(config):
     return coverage
 
 
-def load_all_models(config=None, candidates=None):
+def load_all_models(config: dict=None, candidates: list | None=None):
     """
     Utility: attempt to load any model/scaler joblib files from candidate locations.
     Returns (models, scalers) dicts. This helper is conservative and only used by

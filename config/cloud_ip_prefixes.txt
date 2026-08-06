@@ -1,0 +1,62 @@
+# Known cloud / CDN IP prefixes — one per line
+# Traffic to these is routine developer/infrastructure activity
+
+# AWS
+3.
+13.
+15.
+18.
+34.
+35.
+44.
+50.
+52.
+54.
+99.
+
+# Azure
+20.
+23.
+40.
+51.
+104.
+137.
+168.
+
+# GCP
+142.
+146.
+
+# Cloudflare
+104.16.
+104.17.
+104.18.
+104.19.
+104.20.
+104.21.
+172.64.
+172.65.
+172.66.
+172.67.
+
+# GitHub
+140.82.
+143.55.
+185.199.108.
+185.199.109.
+185.199.110.
+185.199.111.
+
+# Fastly (PyPI, npm, Ubuntu)
+151.101.
+199.232.
+
+# Ubuntu / Canonical
+91.189.
+185.125.
+
+# Public DNS (Google, Cloudflare, Quad9)
+8.8.
+1.1.
+1.0.
+9.9.

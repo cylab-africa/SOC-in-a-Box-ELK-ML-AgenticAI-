@@ -1,0 +1,62 @@
+# Docker Compose for Linux Anomaly Detection
+# =============================================
+# Usage:
+#   docker compose -f docker/docker-compose.yml up
+#
+# This starts the detection service alongside Elasticsearch and Kibana
+# for a complete local development/demo environment.
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: anomaly-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ES_PASSWORD:-changeme}
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -k https://localhost:9200 | grep -q 'cluster_name'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: anomaly-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD:-changeme}
+      - ELASTICSEARCH_SSL_VERIFICATIONMODE=none
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  detection:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: anomaly-detection
+    env_file:
+      - ../.env
+    environment:
+      - ES_HOST=https://elasticsearch:9200
+    volumes:
+      - ../results:/app/results
+      - ../logs:/app/logs
+      - ../config:/app/config
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  es-data:
+    driver: local

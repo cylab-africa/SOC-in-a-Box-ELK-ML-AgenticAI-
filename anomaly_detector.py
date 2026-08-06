@@ -3105,12 +3105,14 @@ from datamanager import (
     fetch_user_activity_data,
     fetch_discovery_commands_data,
     fetch_metadata_access_data,
+    fetch_auth_data,
     fetch_baseline_data,
     preprocess_process_data,
     preprocess_network_data,
     preprocess_user_data,
     preprocess_discovery_data,
     preprocess_metadata_data,
+    preprocess_auth_data,
     get_training_configuration,
     aggregate_data_by_group,
     create_time_buckets
@@ -3125,7 +3127,9 @@ from model_manager import (
     train_network_activity_models,
     train_user_behavior_models,
     train_discovery_command_models,
-    train_metadata_access_models
+    train_metadata_access_models,
+    train_auth_anomaly_models,
+    train_host_anomaly_models
 )
 
 # Import FIXED detection methods
@@ -3287,6 +3291,34 @@ class LinuxAnomalyDetector:
                     "description": "Unusual users accessing metadata services",
                     "method": lambda data: self._run_job_detection(data, "v3_linux_rare_metadata_user")
                 }
+            },
+            "auth": {
+                "v3_linux_auth_rare_source_ip": {
+                    "description": "Rare source IPs authenticating to hosts",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_auth_rare_source_ip")
+                },
+                "v3_linux_auth_high_count_logon_fails": {
+                    "description": "Brute-force login attempts per user+host",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_auth_high_count_logon_fails")
+                },
+                "v3_linux_auth_rare_user": {
+                    "description": "Rare user accounts authenticating",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_auth_rare_user")
+                },
+                "v3_linux_auth_rare_hour": {
+                    "description": "Authentication at unusual hours",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_auth_rare_hour")
+                }
+            },
+            "host": {
+                "v3_linux_anomalous_host_activity": {
+                    "description": "Anomalous host activity profiles (process diversity, user counts)",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_anomalous_host_activity")
+                },
+                "v3_linux_host_user_deviation": {
+                    "description": "Unusual user activity patterns per host",
+                    "method": lambda data: self._run_job_detection(data, "v3_linux_host_user_deviation")
+                }
             }
         }
     
@@ -3381,29 +3413,33 @@ class LinuxAnomalyDetector:
         """Generate comprehensive reports, visualizations, and individual anomaly data."""
         try:
             logger.info("Generating comprehensive outputs")
-            
+            plotting_enabled = self.config.get("output", {}).get("visualization", False)
+
             # Generate reports and visualizations for each data group
             for data_type, group_results in results.items():
                 if not group_results:
                     continue
-                
+
                 try:
                     # Generate group report
                     report_file, _ = self.visualizer.generate_comprehensive_report(
                         group_results, data_type
                     )
-                    
+
                     if report_file:
                         logger.info(f"Generated {data_type} report: {report_file}")
-                    
-                    # Generate visualizations
-                    viz_paths = self.visualizer.create_data_type_visualizations(
-                        group_results, data_type
-                    )
-                    
-                    if viz_paths:
-                        logger.info(f"Generated {len(viz_paths)} visualizations for {data_type}")
-                        
+
+                    # Generate visualizations (disabled by default - see output.visualization
+                    # config; PNG generation on every detection cycle with no retention was
+                    # a major source of unbounded disk growth)
+                    if plotting_enabled:
+                        viz_paths = self.visualizer.create_data_type_visualizations(
+                            group_results, data_type
+                        )
+
+                        if viz_paths:
+                            logger.info(f"Generated {len(viz_paths)} visualizations for {data_type}")
+
                 except Exception as e:
                     logger.error(f"Error generating outputs for {data_type}: {e}")
             
@@ -3462,6 +3498,11 @@ class LinuxAnomalyDetector:
             return fetch_discovery_commands_data(self.es, self.config, timeframe, query_size=10000)
         elif data_type == "metadata":
             return fetch_metadata_access_data(self.es, self.config, timeframe, query_size=10000)
+        elif data_type == "auth":
+            return fetch_auth_data(self.es, self.config, timeframe, query_size=10000)
+        elif data_type == "host":
+            # Host group reuses process events; models partition by host.hostname
+            return fetch_process_data(self.es, self.config, timeframe, query_size=10000)
         else:
             logger.error(f"Unknown data type: {data_type}")
             return pd.DataFrame()    
@@ -3660,6 +3701,10 @@ class LinuxAnomalyDetector:
                 models, scalers, baselines = train_discovery_command_models(baseline_data, self.config)
             elif data_type == "metadata":
                 models, scalers, baselines = train_metadata_access_models(baseline_data, self.config)
+            elif data_type == "auth":
+                models, scalers, baselines = train_auth_anomaly_models(baseline_data, self.config)
+            elif data_type == "host":
+                models, scalers, baselines = train_host_anomaly_models(baseline_data, self.config)
             else:
                 # Fallback to general training
                 models, scalers = self.model_manager.train_models(baseline_data, data_type)
@@ -3790,6 +3835,11 @@ class LinuxAnomalyDetector:
                     baseline_data = preprocess_discovery_data(baseline_data)
                 elif data_type == "metadata":
                     baseline_data = preprocess_metadata_data(baseline_data)
+                elif data_type == "auth":
+                    baseline_data = preprocess_auth_data(baseline_data)
+                elif data_type == "host":
+                    # Host group reuses process-event preprocessing (same index)
+                    baseline_data = preprocess_process_data(baseline_data)
                 
                 logger.info(f"Preprocessed baseline data shape: {baseline_data.shape}")
                 return baseline_data
@@ -3965,18 +4015,30 @@ class LinuxAnomalyDetector:
                     # Verify this is actually an ML anomaly
                     if anomaly.get('detection_method') != 'machine_learning':
                         continue
-                        
+
                     if not anomaly.get('final_anomaly', False):
                         continue
-                    
-                    # Create structured ML anomaly record
+
+                    # Canonical model output is always in [0, 1]. Keep
+                    # both `ml_score` (back-compat) and `raw_ml_score`
+                    # (new explicit contract) so downstream push/Kibana
+                    # can threshold on the unambiguous field.
+                    raw_ml = anomaly.get('raw_ml_score', anomaly.get('ml_anomaly_score', 0.0))
+                    try:
+                        raw_ml_f = float(raw_ml) if raw_ml is not None and not pd.isna(raw_ml) else 0.0
+                    except Exception:
+                        raw_ml_f = 0.0
+                    raw_ml_f = max(0.0, min(1.0, raw_ml_f))
+
                     anomaly_record = {
                         "timestamp": str(anomaly.get('@timestamp', '')),
-                        "ml_score": float(anomaly.get('ml_anomaly_score', 0.0)),  # ML specific score
-                        "confidence": float(anomaly.get('confidence', 0.0)),     # ML confidence
+                        "ml_score": raw_ml_f,
+                        "raw_ml_score": raw_ml_f,
+                        "score_contract_version": 2,
+                        "confidence": float(anomaly.get('confidence', 0.0)),
                         "event_count": int(anomaly.get('event_count', 0)),
-                        "detection_method": "machine_learning",  # Explicitly set
-                        "clean_index": int(idx)  # Clean, NaN-free index
+                        "detection_method": "machine_learning",
+                        "clean_index": int(idx),
                     }
                     
                     # Add ML-specific threshold info
@@ -4014,7 +4076,7 @@ class LinuxAnomalyDetector:
                     ml_only_anomalies[job_name]["anomalies"].append(anomaly_record)
                     ml_only_anomalies[job_name]["anomaly_count"] += 1
                     ml_anomaly_count += 1
-        
+
         if ml_anomaly_count == 0:
             logger.warning("No ML anomalies found in any data type - check ML detection thresholds")
             # Create empty file for consistency
@@ -4071,7 +4133,12 @@ class LinuxAnomalyDetector:
                 ml_records.append(record)
         
         if ml_records:
-            import pandas as pd
+            # NOTE: pandas is already imported at module scope (line ~3090).
+            # A local `import pandas as pd` here makes Python treat `pd` as a
+            # local variable for the ENTIRE function, which raises
+            # UnboundLocalError when `pd.isna(...)` runs earlier in the loop.
+            # That silent exception was zeroing every anomaly's raw_ml_score,
+            # blocking the push pipeline end-to-end. Keep this import removed.
             ml_df = pd.DataFrame(ml_records)
             ml_df.to_csv(csv_file, index=False)
             logger.info(f"Also saved ML anomalies to CSV: {csv_file}")
@@ -4128,6 +4195,65 @@ class LinuxAnomalyDetector:
             logger.error(f"_generate_summary_report failed: {e}")
             return None
 
+    @staticmethod
+    def _is_valid_process_name(val: Any) -> bool:
+        """Reject tokenisation artefacts like pure-numeric or 1-char tokens.
+
+        Valid process names must be non-empty, not match only digits, and
+        contain at least 2 characters after stripping whitespace. This
+        guards against upstream tokenisation bugs that surface as
+        `process.name == "6"` in Kibana alerts.
+        """
+        if val is None:
+            return False
+        try:
+            if pd.isna(val):
+                return False
+        except Exception:
+            pass
+        s = str(val).strip()
+        if not s:
+            return False
+        if len(s) < 2:
+            return False
+        if s.isdigit():
+            return False
+        return True
+
+    @staticmethod
+    def _derive_process_name_fallback(anomaly: Any) -> str:
+        """Best-effort process name when the primary token is malformed.
+
+        Prefers the basename of `process.executable`, then the first
+        alphanumeric token of `process.command_line`, and finally a
+        labelled placeholder so that downstream filtering can detect
+        low-quality entities.
+        """
+        exe = anomaly.get('process.executable') if hasattr(anomaly, 'get') else None
+        try:
+            if exe is not None and not pd.isna(exe):
+                exe_s = str(exe).strip()
+                if exe_s:
+                    base = os.path.basename(exe_s)
+                    if LinuxAnomalyDetector._is_valid_process_name(base):
+                        return base
+        except Exception:
+            pass
+
+        cmd = anomaly.get('process.command_line') if hasattr(anomaly, 'get') else None
+        try:
+            if cmd is not None and not pd.isna(cmd):
+                cmd_s = str(cmd).strip()
+                if cmd_s:
+                    first = cmd_s.split()[0] if cmd_s.split() else ''
+                    base = os.path.basename(first) if first else ''
+                    if LinuxAnomalyDetector._is_valid_process_name(base):
+                        return base
+        except Exception:
+            pass
+
+        return "invalid-process"
+
     # Helper extraction methods used by the ML-only exporter
     def _extract_entity_fields(self, anomaly: 'pd.Series', data_type: str) -> Dict[str, Any]:
         """Extract canonical entity information from an anomaly row.
@@ -4148,9 +4274,20 @@ class LinuxAnomalyDetector:
             if host and not pd.isna(host):
                 entity.setdefault('host', host)
 
-            # Process
-            proc = anomaly.get('process.name') or anomaly.get('process') or anomaly.get('process_name') or anomaly.get('proc')
-            if proc and not pd.isna(proc):
+            # Process - with validation + fallback. Reject tokens like "6"
+            # or 1-char artefacts, and fall back to executable basename.
+            proc_raw = anomaly.get('process.name') or anomaly.get('process') or anomaly.get('process_name') or anomaly.get('proc')
+            proc_valid = self._is_valid_process_name(proc_raw)
+            if proc_valid:
+                proc = proc_raw
+            else:
+                proc = self._derive_process_name_fallback(anomaly)
+                entity.setdefault('process_extraction_fallback', True)
+                entity.setdefault(
+                    'process_original',
+                    None if proc_raw is None else str(proc_raw),
+                )
+            if proc:
                 entity.setdefault('process', proc)
 
             # User

@@ -231,10 +231,11 @@ class AutoEncoderModel(AnomalyModel):
         """
         AutoEncoder = _import_pyod("AutoEncoder", "pyod.models.auto_encoder")
         X_clean = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        effective_batch = min(self._batch, X_clean.shape[0])
         self._model = AutoEncoder(
-            hidden_neurons=self._hidden,
-            epochs=self._epochs,
-            batch_size=self._batch,
+            hidden_neuron_list=self._hidden,
+            epoch_num=self._epochs,
+            batch_size=effective_batch,
             contamination=0.05,
             verbose=0,
         )

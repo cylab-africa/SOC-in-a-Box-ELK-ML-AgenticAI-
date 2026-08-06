@@ -112,10 +112,14 @@ class KillChainCorrelator:
         """Group anomalies into attack chains.
 
         Steps:
-        1. Group by host AND overlapping time window
-        2. Score by kill chain phase coverage and ordering
-        3. Link entities (users, processes, destination IPs)
-        4. Assign investigation priority
+        0. Context gate: drop anomalies that carry no investigative
+           context (no host, no user/proc/dest.ip). Chains built from
+           these would just be "host X had N unknown blips" and are
+           the main source of noisy correlated alerts.
+        1. Group by host AND overlapping time window.
+        2. Score by kill chain phase coverage and ordering.
+        3. Link entities (users, processes, destination IPs).
+        4. Assign investigation priority.
 
         Args:
             anomalies: List of enriched anomaly dicts. Each should have:
@@ -131,6 +135,22 @@ class KillChainCorrelator:
         Returns:
             List of CorrelatedChain objects, sorted by score descending.
         """
+        # Step 0: context gate
+        dropped_no_context = 0
+        filtered: list[dict[str, Any]] = []
+        for anom in anomalies:
+            if self._has_meaningful_context(anom):
+                filtered.append(anom)
+            else:
+                dropped_no_context += 1
+        if dropped_no_context:
+            logger.info(
+                "correlation context gate dropped %d/%d anomalies "
+                "(no host or no user/proc/dest.ip)",
+                dropped_no_context, len(anomalies),
+            )
+        anomalies = filtered
+
         # Group anomalies by host
         host_groups: dict[str, list[dict]] = defaultdict(list)
         for anom in anomalies:
@@ -360,6 +380,28 @@ class KillChainCorrelator:
             return "medium"
         return "low"
 
+    @classmethod
+    def _has_meaningful_context(cls, anom: dict[str, Any]) -> bool:
+        """Return True if the anomaly has enough context to correlate.
+
+        We require a real host name AND at least one of:
+          - user.name
+          - process.name
+          - destination.ip
+          - mitre.kill_chain_phase (phase alone is still investigable)
+
+        Without any of these a "chain" is just a bucket of timestamps
+        on the same host and drives false-positive kill-chain alerts.
+        """
+        host = cls._extract_host(anom)
+        if not host or host in ("", "unknown"):
+            return False
+        has_user = bool(cls._extract_field(anom, ("user.name",)))
+        has_proc = bool(cls._extract_field(anom, ("process.name",)))
+        has_dst = bool(cls._extract_field(anom, ("destination.ip",)))
+        has_phase = bool(cls._extract_phase(anom))
+        return has_user or has_proc or has_dst or has_phase
+
     @staticmethod
     def _extract_host(anom: dict[str, Any]) -> str:
         """Extract host name from an anomaly dict.
@@ -474,3 +516,109 @@ class KillChainCorrelator:
         data = f"{host}:{first_seen.isoformat()}:{','.join(member_ids)}"
         digest = hashlib.sha256(data.encode()).hexdigest()[:12]
         return f"chain-{digest}"
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point — invoked by realtime_service.run_correlation.
+# ---------------------------------------------------------------------------
+
+def _load_latest_anomalies() -> list[dict[str, Any]]:
+    """Load the most recent ml_only_anomalies_*.json dump.
+
+    Returns the list of anomaly dicts, or [] if nothing found.
+    """
+    import glob
+    import os
+
+    candidates = sorted(
+        glob.glob("results/ml_only_anomalies_*.json"),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    if not candidates:
+        logger.warning("No ml_only_anomalies_*.json file found in results/")
+        return []
+    latest = candidates[0]
+    try:
+        with open(latest) as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error("Failed to load %s: %s", latest, exc)
+        return []
+
+    if isinstance(payload, list):
+        anomalies = payload
+    elif isinstance(payload, dict):
+        anomalies = (
+            payload.get("anomalies")
+            or payload.get("records")
+            or payload.get("hits", {}).get("hits", [])
+            or []
+        )
+    else:
+        anomalies = []
+
+    logger.info("Loaded %d anomalies from %s", len(anomalies), latest)
+    return anomalies
+
+
+def main() -> int:
+    """CLI entry: read latest anomalies, correlate, write chains."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Correlate anomaly alerts into kill-chain attack chains."
+    )
+    parser.add_argument(
+        "--time-window-minutes", type=int, default=60,
+        help="Maximum time span (minutes) for grouping anomalies into a chain.",
+    )
+    parser.add_argument(
+        "--min-chain-length", type=int, default=2,
+        help="Minimum anomaly count required to form a chain.",
+    )
+    parser.add_argument(
+        "--input-file", type=str, default=None,
+        help="Explicit anomalies JSON file (defaults to newest ml_only_anomalies_*.json).",
+    )
+    parser.add_argument(
+        "--out-file", type=str, default=str(CORRELATION_OUTPUT),
+        help="Output JSONL path for correlated chains.",
+    )
+    parser.add_argument(
+        "--log-level", type=str, default="INFO",
+        help="Logging level.",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=args.log_level.upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    if args.input_file:
+        try:
+            with open(args.input_file) as fh:
+                payload = json.load(fh)
+            anomalies = payload if isinstance(payload, list) else (
+                payload.get("anomalies") or []
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("Failed to load %s: %s", args.input_file, exc)
+            return 2
+    else:
+        anomalies = _load_latest_anomalies()
+
+    correlator = KillChainCorrelator(
+        time_window_minutes=args.time_window_minutes,
+        min_chain_length=args.min_chain_length,
+    )
+    chains = correlator.correlate_and_write(
+        anomalies, output_path=Path(args.out_file),
+    )
+    logger.info("Wrote %d chains to %s", len(chains), args.out_file)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

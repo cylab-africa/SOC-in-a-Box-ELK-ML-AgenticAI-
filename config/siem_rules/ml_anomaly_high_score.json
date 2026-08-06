@@ -1,0 +1,152 @@
+{
+  "rule_id": "4d118130-6885-4ee1-b3ff-0d79021ef78e",
+  "name": "ML Anomaly High Score",
+  "description": "Promotes machine-learning anomalies from the Linux anomaly detection pipeline into Security Alerts once they cross a real rarity threshold AND ship with the minimum analyst context (host, entity, and at least one of user/file/IP). Thresholds on `raw_ml_score` (0-1 canonical model score) rather than `ml_score:*` so noise from saturated `record_score` values does not dominate the dashboard.",
+  "enabled": true,
+  "interval": "5m",
+  "from": "now-360s",
+  "to": "now",
+  "max_signals": 100,
+  "risk_score": 50,
+  "severity": "medium",
+  "language": "kuery",
+  "type": "query",
+  "index": [
+    ".ml-anomalies-custom-*"
+  ],
+  "query": "raw_ml_score >= 0.75 and host.name : * and (process.name : * or user.name : * or file.name : * or source.ip : * or destination.ip : *)",
+  "risk_score_mapping": [
+    {
+      "field": "raw_ml_score",
+      "operator": "equals",
+      "value": "",
+      "risk_score": 50
+    }
+  ],
+  "severity_mapping": [
+    {
+      "field": "raw_ml_score",
+      "operator": "equals",
+      "value": "0.75",
+      "severity": "medium"
+    },
+    {
+      "field": "raw_ml_score",
+      "operator": "equals",
+      "value": "0.85",
+      "severity": "high"
+    },
+    {
+      "field": "raw_ml_score",
+      "operator": "equals",
+      "value": "0.95",
+      "severity": "critical"
+    }
+  ],
+  "investigation_fields": {
+    "field_names": [
+      "host.name",
+      "user.name",
+      "process.name",
+      "process.command_line",
+      "file.name",
+      "file.path",
+      "source.ip",
+      "destination.ip",
+      "job_id",
+      "raw_ml_score",
+      "record_score",
+      "fp_classification"
+    ]
+  },
+  "required_fields": [
+    {"name": "host.name", "type": "keyword", "ecs": true},
+    {"name": "raw_ml_score", "type": "float", "ecs": false},
+    {"name": "job_id", "type": "keyword", "ecs": false}
+  ],
+  "related_integrations": [
+    {"package": "endpoint", "version": "^8.0.0"}
+  ],
+  "threat": [
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0007",
+        "name": "Discovery",
+        "reference": "https://attack.mitre.org/tactics/TA0007/"
+      },
+      "technique": [
+        {
+          "id": "T1057",
+          "name": "Process Discovery",
+          "reference": "https://attack.mitre.org/techniques/T1057/"
+        },
+        {
+          "id": "T1046",
+          "name": "Network Service Discovery",
+          "reference": "https://attack.mitre.org/techniques/T1046/"
+        },
+        {
+          "id": "T1083",
+          "name": "File and Directory Discovery",
+          "reference": "https://attack.mitre.org/techniques/T1083/"
+        }
+      ]
+    },
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0002",
+        "name": "Execution",
+        "reference": "https://attack.mitre.org/tactics/TA0002/"
+      },
+      "technique": [
+        {
+          "id": "T1059",
+          "name": "Command and Scripting Interpreter",
+          "reference": "https://attack.mitre.org/techniques/T1059/",
+          "subtechnique": [
+            {
+              "id": "T1059.004",
+              "name": "Unix Shell",
+              "reference": "https://attack.mitre.org/techniques/T1059/004/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "framework": "MITRE ATT&CK",
+      "tactic": {
+        "id": "TA0008",
+        "name": "Lateral Movement",
+        "reference": "https://attack.mitre.org/tactics/TA0008/"
+      },
+      "technique": [
+        {
+          "id": "T1021",
+          "name": "Remote Services",
+          "reference": "https://attack.mitre.org/techniques/T1021/"
+        }
+      ]
+    }
+  ],
+  "tags": [
+    "Linux",
+    "ML",
+    "AnomalyDetection",
+    "Upanzi"
+  ],
+  "note": "## Triage\n1. Compare `raw_ml_score` to the job's baseline in the ML tab.\n2. Inspect `process.command_line`, `file.name`, `source.ip` and `destination.ip` for known suspicious patterns.\n3. Check `fp_classification` - if it is `tp_or_likely_tp` the upstream classifier did not flag it as noise.\n4. Pivot on `host.name` and `job_id` to see whether this alert is a single escalation or part of a cluster.\n\n## Known FP categories already suppressed upstream\n- Admin discovery CLIs (`ip`, `ps`, `grep`, etc.) on infrastructure hosts.\n- Numeric-only process tokens from upstream tokenisation bugs.\n- APT package-manager activity under `_apt`.\n- Service accounts on known infrastructure hosts with internal-only traffic.",
+  "false_positives": [
+    "Routine administrator sessions on known infrastructure hosts (see `fp_classification`).",
+    "Package-manager activity under `_apt` or similar service accounts (already suppressed upstream)."
+  ],
+  "references": [
+    "https://attack.mitre.org/",
+    "https://www.elastic.co/guide/en/security/current/rules-ui-create.html"
+  ],
+  "author": [
+    "Upanzi Security Operations"
+  ]
+}

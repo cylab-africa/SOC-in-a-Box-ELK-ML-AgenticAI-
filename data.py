@@ -19,12 +19,12 @@ from pathlib import Path
 class OptimizedRetriever:
     """Optimized data retrieval with search_after for large datasets."""
     
-    def __init__(self, es, config):
+    def __init__(self, es: "Elasticsearch", config: dict):
         self.es = es
         self.batch_size = config.get("batch_size", 10000)
         self.debug_mode = config.get("debug_mode", False)
     
-    def retrieve_with_search_after(self, index_pattern, query_body, source_fields, max_records):
+    def retrieve_with_search_after(self, index_pattern: str, query_body: dict, source_fields: list | None, max_records: int):
         """Retrieve data using search_after for efficient pagination - FIXED for Elasticsearch compatibility."""
         all_records = []
         search_after = None
@@ -72,7 +72,7 @@ class OptimizedRetriever:
         
         return all_records
     
-    def _flatten_elasticsearch_document(self, doc, parent_key='', sep='.'):
+    def _flatten_elasticsearch_document(self, doc: dict, parent_key: str='', sep: str='.'):
         """Flatten nested Elasticsearch document."""
         items = []
         for k, v in doc.items():
@@ -317,7 +317,7 @@ def apply_training_time_filters(df: pd.DataFrame, data_type: str = "process") ->
     
     return df
 
-def connect_to_elasticsearch(config):
+def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
     """
     Connect to Elasticsearch with enhanced error handling and configuration support.
     
@@ -367,7 +367,7 @@ def connect_to_elasticsearch(config):
     except Exception as e:
         logger.error(f"Error connecting to Elasticsearch: {e}")
         return None
-def _flatten_elasticsearch_document(doc, parent_key='', sep='.'):
+def _flatten_elasticsearch_document(doc: dict, parent_key: str='', sep: str='.'):
     """Flatten nested Elasticsearch document safely without dropping data."""
     items = []
     for k, v in doc.items():
@@ -388,7 +388,7 @@ def _flatten_elasticsearch_document(doc, parent_key='', sep='.'):
 
     return dict(items)
   
-def fetch_process_data(es, config, time_range=None, query_size=10000):
+def fetch_process_data(es: "Elasticsearch", config: dict, time_range: dict | None = None, query_size: int = 10000) -> "pd.DataFrame":
     """
     Fetch process data with search_after pagination to bypass 10k limit.
     Maintains original function signature & arguments.
@@ -537,7 +537,7 @@ def fetch_process_data(es, config, time_range=None, query_size=10000):
         return pd.DataFrame()
 
 
-def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
+def fetch_network_activity_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch network activity data with search_after pagination to bypass 10k limit.
     """
@@ -672,7 +672,7 @@ def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
         logger.error(f"Error fetching network activity data: {e}")
         return pd.DataFrame()
     
-def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
+def fetch_user_activity_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch user activity data with search_after pagination to bypass 10k limit.
     """
@@ -831,7 +831,7 @@ def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
         logger.error(f"Error fetching user activity data: {e}")
         return pd.DataFrame()
 
-def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000):
+def fetch_discovery_commands_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch discovery commands data with search_after pagination to bypass 10k limit.
     """
@@ -967,7 +967,7 @@ def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000)
         logger.error(f"Error fetching discovery commands data: {e}")
         return pd.DataFrame()
 
-def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
+def fetch_metadata_access_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch metadata access data with search_after pagination to bypass 10k limit.
     """
@@ -1097,7 +1097,8 @@ def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
         df["is_service_account"] = df["user.name"].str.lower().isin(service_accounts).astype(int)
         
         # Determine access method based on destination IP
-        def get_access_method(ip):
+        def get_access_method(ip: str):
+            """Determine access method from IP address."""
             if ip == "169.254.169.254":
                 return "aws_metadata"
             elif ip == "169.254.169.253":
@@ -1143,7 +1144,7 @@ def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
         logger.error(f"Error fetching metadata access data: {e}")
         return pd.DataFrame()
     
-def fetch_baseline_data(es, config, data_type="process", days_back=None):
+def fetch_baseline_data(es: "Elasticsearch", config: dict, data_type: str="process", days_back: int=None):
     """
     Fetch baseline data for model training with enhanced configuration support.
     """
@@ -1206,7 +1207,7 @@ SYSTEM_PATHS = {
     "suspicious_paths": ["/var/www/", "/srv/", "/mnt/", "/media/", "/proc/self/", "/.hidden/"]
 }
 
-def ensure_process_fields(df):
+def ensure_process_fields(df: "pd.DataFrame"):
     """
     Ensure all critical fields exist in process data.
     """
@@ -1252,7 +1253,7 @@ def ensure_process_fields(df):
     
     return df
 
-def preprocess_process_data(df):
+def preprocess_process_data(df: "pd.DataFrame"):
     """
     Enhanced preprocessing that ensures ALL features are calculated correctly.
     """
@@ -1437,7 +1438,7 @@ def preprocess_process_data(df):
     
 #     logger.info(f"Preprocessed user data: {len(df)} records with {len(df.columns)} fields")
 #     return df
-def preprocess_network_data(df):
+def preprocess_network_data(df: "pd.DataFrame"):
     """
     Enhanced network data preprocessing that preserves all fields.
     """
@@ -1493,7 +1494,7 @@ def preprocess_network_data(df):
 # USER-SPECIFIC PREPROCESSING
 # ===============================================================================
 
-def preprocess_user_data(df):
+def preprocess_user_data(df: "pd.DataFrame"):
     """
     Enhanced user data preprocessing that calculates all needed features.
     """
@@ -1531,7 +1532,7 @@ def preprocess_user_data(df):
 # DISCOVERY-SPECIFIC PREPROCESSING
 # ===============================================================================
 
-def preprocess_discovery_data(df):
+def preprocess_discovery_data(df: "pd.DataFrame"):
     """
     Enhanced discovery data preprocessing with all required features.
     """
@@ -1619,7 +1620,7 @@ def preprocess_discovery_data(df):
     logger.info(f"Generated all required fields: {discovery_required}")
     
     return df
-def preprocess_user_data(df):
+def preprocess_user_data(df: "pd.DataFrame"):
     """Enhanced user data preprocessing."""
     if df.empty:
         return df
@@ -1695,7 +1696,7 @@ def preprocess_user_data(df):
     
 #     logger.info(f"Preprocessed discovery data: {len(df)} records with {len(df.columns)} fields")
 #     return df
-def preprocess_discovery_data(df):
+def preprocess_discovery_data(df: "pd.DataFrame"):
     """
     Enhanced discovery data preprocessing with complete feature extraction.
     FIXES: All missing discovery fields identified in logs.
@@ -1747,7 +1748,8 @@ def preprocess_discovery_data(df):
         "other": []
     }
     
-    def categorize_discovery(process_name):
+    def categorize_discovery(process_name: str):
+        """Categorize a process name into discovery type."""
         for category, commands in discovery_categories.items():
             if process_name in commands:
                 return category
@@ -1821,7 +1823,7 @@ def preprocess_discovery_data(df):
     
     return df
 
-def preprocess_metadata_data(df):
+def preprocess_metadata_data(df: "pd.DataFrame"):
     """
     Preprocess metadata data with enhanced training configuration support.
     """
@@ -1852,7 +1854,7 @@ def preprocess_metadata_data(df):
     return df
 
 
-def validate_and_fix_field_mappings(df):
+def validate_and_fix_field_mappings(df: "pd.DataFrame"):
     """
     Validate and fix field mappings from flattened Elasticsearch documents.
     """
@@ -1898,7 +1900,7 @@ def validate_and_fix_field_mappings(df):
     
     return df
 
-def aggregate_data_by_group(df, group_columns, agg_columns):
+def aggregate_data_by_group(df: "pd.DataFrame", group_columns: list, agg_columns: list | None):
     """
     Enhanced aggregation that preserves ALL features needed by ML models.
     """
@@ -2113,7 +2115,7 @@ def aggregate_data_by_group(df, group_columns, agg_columns):
 #     except Exception as e:
 #         logger.error(f"Error creating time buckets: {e}")
 #         return df
-def create_time_buckets(df, time_column="@timestamp", bucket_size="15min"):
+def create_time_buckets(df: "pd.DataFrame", time_column: str="@timestamp", bucket_size: str="15min"):
     """
     Enhanced time bucketing that creates all temporal features needed by models.
     """
@@ -2202,7 +2204,7 @@ def create_time_buckets(df, time_column="@timestamp", bucket_size="15min"):
         logger.error(f"Error creating time buckets: {e}")
         return df
 
-def debug_elasticsearch_data(es, config):
+def debug_elasticsearch_data(es: "Elasticsearch", config: dict):
     """
     Debug function to check Elasticsearch connectivity and data availability.
     """

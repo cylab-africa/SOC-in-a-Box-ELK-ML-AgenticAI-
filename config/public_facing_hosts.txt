@@ -1,0 +1,10 @@
+# Internet-facing hosts — one per line
+# Inbound traffic on public ports (80, 443, etc.) on these hosts is expected.
+# Customize this list for your environment.
+reverseproxy
+lbp
+apkit-dev
+apkit
+esignet
+mosip-rancher-nginx
+mosip-mosip-nginx

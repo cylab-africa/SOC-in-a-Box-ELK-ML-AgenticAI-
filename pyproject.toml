@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-anomaly-detection"
+version = "1.0.0"
+description = "MITRE ATT&CK-aligned anomaly detection for Linux endpoints backed by Elasticsearch"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Linux Anomaly Detection Contributors"},
+]
+keywords = [
+    "security", "anomaly-detection", "linux", "elasticsearch",
+    "mitre-attack", "siem", "threat-detection", "machine-learning",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Monitoring",
+]
+
+dependencies = [
+    "elasticsearch>=8.0.0",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "pandas>=1.5.0",
+    "scipy>=1.9.0",
+    "pyod>=1.1.0",
+    "joblib>=1.3.0",
+    "requests>=2.28.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dl = [
+    "torch>=2.0.0",
+]
+ops = [
+    "mlflow>=2.0.0",
+    "dagshub>=0.3.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/linux-anomaly-detection"
+Documentation = "https://github.com/your-org/linux-anomaly-detection/tree/main/docs"
+Repository = "https://github.com/your-org/linux-anomaly-detection"
+Issues = "https://github.com/your-org/linux-anomaly-detection/issues"
+
+[project.scripts]
+linux-anomaly-detect = "main:main"
+linux-anomaly-serve = "realtime_service:main"
+linux-anomaly-train = "train_models_background:main"
+linux-anomaly-push = "push_all_anomalies:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "features*",
+    "models*",
+    "dl_models*",
+    "adversarial*",
+    "benchmarks*",
+    "validation*",
+]
+
+[tool.setuptools.package-data]
+"config" = ["*.yaml", "*.txt"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "S", "B"]
+ignore = ["S101", "S603", "S607"]  # assert, subprocess, partial path
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-x --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

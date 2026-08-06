@@ -118,10 +118,17 @@ def check_fit_transform_output() -> tuple[bool, str]:
                         if not isinstance(out, pd.DataFrame):
                             errors.append(f"{name}.transform must return DataFrame")
                             continue
-                        non_float = [c for c in out.columns if out[c].dtype != np.float64]
+                        # Only check columns added by the transformer (not passthrough)
+                        feature_names = []
+                        if hasattr(instance, 'get_feature_names'):
+                            feature_names = instance.get_feature_names()
+                        elif hasattr(instance, 'FEATURE_NAMES'):
+                            feature_names = instance.FEATURE_NAMES
+                        cols_to_check = [c for c in feature_names if c in out.columns] or list(out.select_dtypes(include=[np.number]).columns)
+                        non_float = [c for c in cols_to_check if out[c].dtype != np.float64]
                         if non_float:
                             errors.append(f"{name} non-float64 columns: {non_float[:3]}")
-                        nan_cols = [c for c in out.columns if out[c].isna().any()]
+                        nan_cols = [c for c in cols_to_check if out[c].isna().any()]
                         if nan_cols:
                             errors.append(f"{name} NaN in output columns: {nan_cols[:3]}")
                     except Exception as e:

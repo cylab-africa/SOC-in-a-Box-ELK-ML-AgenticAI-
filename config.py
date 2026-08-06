@@ -857,7 +857,7 @@ class MLConfig:
 class OutputConfig:
     """Output configuration"""
     save_results: bool = True
-    visualization: bool = True
+    visualization: bool = False
     generate_reports: bool = True
     save_models: bool = True
     
@@ -1087,7 +1087,7 @@ class ConfigManager:
             ),
             
             'elasticsearch': ElasticsearchConfig(
-                host=self._get_env('ES_HOST', 'https://***REMOVED_INTERNAL_IP***:9200'),
+                host=self._get_env('ES_HOST', ''),
                 username=self._get_env('ES_USERNAME', ''),
                 password=self._get_env('ES_PASSWORD', ''),
                 process_index=self._get_env('ES_PROCESS_INDEX', '.ds-logs-endpoint.events.process-default-*'),
@@ -1134,7 +1134,7 @@ class ConfigManager:
             
             'output': OutputConfig(
                 save_results=self._get_env('SAVE_RESULTS', True, bool),
-                visualization=self._get_env('VISUALIZATION', True, bool),
+                visualization=self._get_env('VISUALIZATION', False, bool),
                 generate_reports=self._get_env('GENERATE_REPORTS', True, bool),
                 save_models=self._get_env('SAVE_MODELS', True, bool),
                 results_dir=self._get_env('RESULTS_DIR', './results'),

@@ -125,6 +125,44 @@ JOB_CONFIGURATIONS = {
         "entity_column": "composite:user_group",
         "filter_func": None,
         "description": "Detect rare user/group combinations"
+    },
+    # ── Auth group jobs ────────────────────────────────────────────────────
+    "v3_linux_auth_rare_source_ip": {
+        "data_type": "auth",
+        "entity_column": "source.ip",
+        "filter_func": lambda df: df[df["source.ip"].astype(str).str.strip() != ""] if "source.ip" in df.columns else df,
+        "description": "Detect rare source IPs authenticating to hosts"
+    },
+    "v3_linux_auth_high_count_logon_fails": {
+        "data_type": "auth",
+        "entity_column": "user_host",
+        "filter_func": lambda df: df[df.get("is_failed_login", pd.Series(0, index=df.index)) == 1],
+        "description": "Detect brute-force login attempts per user+host"
+    },
+    "v3_linux_auth_rare_user": {
+        "data_type": "auth",
+        "entity_column": "user.name",
+        "filter_func": lambda df: df[df["user.name"].astype(str).str.strip() != ""] if "user.name" in df.columns else df,
+        "description": "Detect rare user accounts authenticating"
+    },
+    "v3_linux_auth_rare_hour": {
+        "data_type": "auth",
+        "entity_column": "user.name",
+        "filter_func": lambda df: df[(df.get("is_business_hours", pd.Series(0, index=df.index)) == 0) & (df["user.name"].astype(str).str.strip() != "")] if "user.name" in df.columns else df,
+        "description": "Detect authentication events at unusual hours"
+    },
+    # ── Host group jobs ────────────────────────────────────────────────────
+    "v3_linux_anomalous_host_activity": {
+        "data_type": "host",
+        "entity_column": "host.hostname",
+        "filter_func": None,
+        "description": "Detect hosts with anomalous overall activity profiles"
+    },
+    "v3_linux_host_user_deviation": {
+        "data_type": "host",
+        "entity_column": "host.hostname",
+        "filter_func": None,
+        "description": "Detect hosts showing unusual per-host user activity patterns"
     }
 }
 
@@ -358,12 +396,19 @@ def detect_job_anomalies(data: pd.DataFrame, models: Dict, scalers: Dict,
     logger.debug(f"Model entities: {list(job_models.keys())[:5]}...")
     
     if not job_models:
-        logger.warning(f"No models found for job {job_name}, using fallback models")
-        job_models = models
-        job_scalers = scalers
-        logger.debug("Using fallback models:")
-        logger.debug(f"  Total models: {len(job_models)}")
-        logger.debug(f"  Model types: {[type(m).__name__ for m in list(job_models.values())[:3]]}...")
+        # Check if models are already entity-keyed (pre-extracted by caller)
+        has_job_prefix = any(':' in k for k in models)
+        if not has_job_prefix and models:
+            logger.info(f"Models already entity-keyed for {job_name}, using {len(models)} models directly")
+            job_models = models
+            job_scalers = scalers
+        else:
+            logger.warning(f"No models found for job {job_name}, using fallback models")
+            job_models = models
+            job_scalers = scalers
+            logger.debug("Using fallback models:")
+            logger.debug(f"  Total models: {len(job_models)}")
+            logger.debug(f"  Model types: {[type(m).__name__ for m in list(job_models.values())[:3]]}...")
     
     # Update configuration
     config['current_job_name'] = job_name
@@ -580,7 +625,9 @@ def process_detection(data: pd.DataFrame, models: Dict, scalers: Dict, config: D
             'network': 'destination.ip',
             'user': 'user.name',
             'discovery': 'process.name',
-            'metadata': 'process.name'
+            'metadata': 'process.name',
+            'auth': 'user.name',
+            'host': 'host.hostname',
         }
         entity_column = fallback_columns.get(data_type, 'process.name')
 
@@ -958,7 +1005,7 @@ def _filter_port_entities(data: pd.DataFrame, entity_column: str) -> List:
     return [str(int(p)) for p in important_ports if not pd.isna(p)]
 
 # In _validate_entities function:
-def _validate_entities(entities, models, scalers, job_name):
+def _validate_entities(entities, models: dict, scalers: dict, job_name: str):
     """
     Fixed entity validation that handles the job prefix correctly.
     """
@@ -984,7 +1031,7 @@ def _validate_entities(entities, models, scalers, job_name):
                         break
     
     return valid_entities
-def load_models_for_job(models_dict, scalers_dict, job_name):
+def load_models_for_job(models_dict: dict, scalers_dict: dict, job_name: str) -> tuple:
     """
     Correctly extract models for a specific job from the stored dictionaries.
     """
@@ -1325,34 +1372,56 @@ def _process_entity_anomalies(entity: str, feature_data: pd.DataFrame,
                 logger.error(f"Statistical fallback failed during degenerate handling for {entity}: {e}")
                 ensemble_scores = np.zeros(len(entity_data))
 
-        # Calculate dynamic threshold
-        threshold = np.percentile(ensemble_scores, 95) if len(ensemble_scores) > 0 else 1.0  # Top 5% as anomalies
-        min_threshold = 0.6  # Minimum threshold to ensure quality
-        threshold = max(float(threshold), min_threshold)
+        # Calculate dynamic threshold.
+        # The previous implementation floored the threshold at 0.6 and
+        # clipped + min-max normalised ensemble scores per entity, which
+        # caused large fractions of batches to crown near 1.0 and made
+        # downstream thresholding meaningless. We now:
+        #   1. Pick a percentile that matches the target anomaly rate.
+        #   2. Keep a modest floor (0.5) to protect against noisy baselines.
+        #   3. Do NOT re-inject synthetic anomalies in the production path.
+        target_rate = _normalize_max_rate(
+            (config or {}).get('detection', {}).get('max_anomaly_rate', 0.05)
+        )
+        percentile = max(50.0, min(99.9, (1.0 - target_rate) * 100.0))
+        if len(ensemble_scores) > 0:
+            threshold = float(np.percentile(ensemble_scores, percentile))
+        else:
+            threshold = 1.0
+        min_threshold = 0.5  # Floor to guard noisy baselines
+        threshold = max(threshold, min_threshold)
 
-        # Add synthetic anomalies only when distribution looks reasonable
-        if len(ensemble_scores) > 50 and np.unique(ensemble_scores).size > 5 and np.std(ensemble_scores) > 1e-3:
-            synthetic_count = max(1, len(ensemble_scores)//50)  # 2% synthetic, conservative
-            try:
-                synthetic_indices = np.random.choice(len(ensemble_scores), 
-                                                    size=synthetic_count, 
-                                                    replace=False)
-                ensemble_scores[synthetic_indices] = np.random.uniform(0.9, 1.0, 
-                                                                    size=synthetic_count)
-                # Debug: log ensemble stats after synthetic injection
+        # Synthetic score injection is gated behind a diagnostic flag.
+        # In production this step was responsible for guaranteeing a
+        # floor of "high" scores (0.9-1.0) regardless of whether real
+        # anomalies existed - we keep it off by default.
+        if os.getenv("ANOMALY_INJECT_SYNTHETIC", "0") in ("1", "true", "True"):
+            if len(ensemble_scores) > 50 and np.unique(ensemble_scores).size > 5 and np.std(ensemble_scores) > 1e-3:
+                synthetic_count = max(1, len(ensemble_scores) // 50)
                 try:
+                    synthetic_indices = np.random.choice(
+                        len(ensemble_scores),
+                        size=synthetic_count,
+                        replace=False,
+                    )
+                    ensemble_scores[synthetic_indices] = np.random.uniform(
+                        0.9, 1.0, size=synthetic_count
+                    )
                     arr2 = np.array(ensemble_scores)
-                    logger.info(f"[scoring-debug] {job_name}:{entity} ensemble_after_synth len={len(arr2)} min={arr2.min():.6g} max={arr2.max():.6g} mean={arr2.mean():.6g} std={arr2.std():.6g} uniq={np.unique(arr2).size}")
-                except Exception as e:
-                    logger.info(f"[scoring-debug] failed to log ensemble stats after synth for {job_name}:{entity}: {e}")
-            except Exception:
-                # If synthetic injection fails, continue without it
-                pass
+                    logger.info(
+                        "[scoring-debug] %s:%s ensemble_after_synth len=%d min=%.6g max=%.6g mean=%.6g std=%.6g uniq=%d",
+                        job_name, entity, len(arr2), arr2.min(), arr2.max(),
+                        arr2.mean(), arr2.std(), np.unique(arr2).size,
+                    )
+                except Exception:
+                    pass
 
         # Set results with validation
-        entity_data['is_ml_anomaly'] = ensemble_scores > threshold
-        entity_data['ml_anomaly_score'] = np.clip(ensemble_scores, 0, 1)
-        entity_data['confidence'] = np.clip(ensemble_scores * 2 - 1, 0, 1)
+        raw_scores = np.clip(ensemble_scores, 0.0, 1.0)
+        entity_data['is_ml_anomaly'] = raw_scores > threshold
+        entity_data['ml_anomaly_score'] = raw_scores
+        entity_data['raw_ml_score'] = raw_scores
+        entity_data['confidence'] = np.clip(raw_scores * 2 - 1, 0, 1)
         entity_data['detection_threshold'] = threshold
         entity_data['detection_method'] = 'machine_learning'
         entity_data['methods_used'] = ','.join(method_scores.keys())
@@ -1370,27 +1439,50 @@ def _process_entity_anomalies(entity: str, feature_data: pd.DataFrame,
         logger.error(f"Failed to process entity {entity}: {str(e)}")
         return pd.DataFrame()    
 
+def _normalize_max_rate(raw: float) -> float:
+    """Normalise `max_anomaly_rate` to a fraction in [0.001, 0.5].
+
+    Historically this value was sometimes provided as a fraction (0.15)
+    and sometimes as a percentage (15.0). The previous `raw / 100`
+    logic silently turned 0.15 into 0.0015, capping the rate at 0.15%
+    instead of the intended 15%. Detect and handle both.
+    """
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        val = 0.05
+    if val > 1.0:
+        val = val / 100.0
+    # Clamp to a sane band so bad config values cannot silently
+    # suppress or unleash alerts.
+    return float(max(0.001, min(0.5, val)))
+
+
 def _apply_safety_limits(results: pd.DataFrame, config: Dict) -> pd.DataFrame:
     """
     Apply safety limits to prevent excessive anomaly rates.
     """
     if results.empty or 'is_ml_anomaly' not in results.columns:
         return results
-    
-    max_rate = config.get('detection', {}).get('max_anomaly_rate', 5.0) / 100
+
+    raw_rate = config.get('detection', {}).get('max_anomaly_rate', 0.05)
+    max_rate = _normalize_max_rate(raw_rate)
     current_rate = results['is_ml_anomaly'].sum() / len(results)
-    
+
     if current_rate <= max_rate:
         return results
-    
+
     # Reduce anomalies
     max_anomalies = int(len(results) * max_rate)
-    
+
     if 'ml_anomaly_score' in results.columns:
         threshold = results['ml_anomaly_score'].nlargest(max_anomalies).iloc[-1]
         results['is_ml_anomaly'] = results['ml_anomaly_score'] >= threshold
-    
-    logger.info(f"Applied safety limits: {current_rate:.1%} -> {max_rate:.1%}")
+
+    logger.info(
+        "Applied safety limits: %.1f%% -> %.1f%% (normalized cap from raw=%s)",
+        current_rate * 100.0, max_rate * 100.0, raw_rate,
+    )
     return results
 
 def _create_fallback_results(data: pd.DataFrame, reason: str) -> pd.DataFrame:
@@ -1409,7 +1501,7 @@ def _create_fallback_results(data: pd.DataFrame, reason: str) -> pd.DataFrame:
     
     logger.warning(f"Using fallback results: {reason}")
     return result
-def detect_statistical_anomalies(data):
+def detect_statistical_anomalies(data: "pd.DataFrame") -> "pd.DataFrame":
     """
     Pure statistical anomaly detection as fallback.
     """

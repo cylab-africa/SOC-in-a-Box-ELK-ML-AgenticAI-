@@ -238,6 +238,7 @@ class ProcessTreeTransformer(FeatureTransformer):
         children = df["process.name"].fillna("unknown").astype(str)
 
         def is_anomalous(pair: tuple[str, str]) -> float:
+            """Return 1.0 if parent-child pair is rare, else 0.0."""
             if self._total_pairs == 0:
                 return 0.0
             count = self._pair_counts.get(pair, 0)

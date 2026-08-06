@@ -1,0 +1,7 @@
+# Public service ports — one per line
+# Traffic on these ports is expected for internet-facing hosts
+80
+443
+8080
+8443
+3000

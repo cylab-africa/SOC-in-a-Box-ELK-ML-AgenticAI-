@@ -1,6 +1,0 @@
-2025-09-01 16:36:24,283 - linux_anomaly_detection - INFO - Starting Linux Anomaly Detection System
-2025-09-01 16:36:24,284 - linux_anomaly_detection - INFO - Detection mode: group
-2025-09-01 16:36:24,284 - linux_anomaly_detection - INFO - Initializing LinuxAnomalyDetector
-2025-09-01 16:36:24,689 - elastic_transport.transport - INFO - HEAD https://***REMOVED_INTERNAL_IP***:9200/ [status:200 duration:0.045s]
-2025-09-01 16:36:24,689 - linux_anomaly_detection - INFO - Successfully connected to Elasticsearch at https://***REMOVED_INTERNAL_IP***:9200
-2025-09-01 16:36:24,691 - linux_anomaly_detection - ERROR - Data group required for group detection mode

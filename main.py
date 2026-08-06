@@ -7,11 +7,17 @@ across 5 data groups: process, network, user, discovery, and metadata.
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 import argparse
 import traceback
 from datetime import datetime
-import mlflow
-import mlflow.exceptions
+try:
+    import mlflow
+    import mlflow.exceptions
+    _MLFLOW_AVAILABLE = True
+except ImportError:
+    _MLFLOW_AVAILABLE = False
+    mlflow = None
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv() 
@@ -42,9 +48,11 @@ def setup_logging(log_level='INFO', log_file=None):
     # Always log to console
     handlers.append(logging.StreamHandler())
     
-    # Add file handler if specified
+    # Add file handler if specified (size-based rotation to bound disk usage)
     if log_file:
-        handlers.append(logging.FileHandler(log_file))
+        handlers.append(
+            RotatingFileHandler(log_file, maxBytes=20 * 1024 * 1024, backupCount=5)
+        )
     
     # Configure logging
     logging.basicConfig(
@@ -144,7 +152,7 @@ def parse_arguments():
     parser.add_argument(
         '--log-file', '-f',
         type=str,
-        default=f"logs/linux_anomaly_detection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+        default="logs/linux_anomaly_detection.log",
         help='Path to log file'
     )
     
@@ -196,7 +204,7 @@ def parse_arguments():
     parser.add_argument(
         '--data-group',
         type=str,
-        choices=['process', 'network', 'user', 'discovery', 'metadata'],
+        choices=['process', 'network', 'user', 'discovery', 'metadata', 'auth', 'host'],
         help='Data group to process (for group mode)'
     )
     
@@ -204,7 +212,7 @@ def parse_arguments():
         '--data-groups',
         type=str,
         nargs='+',
-        choices=['process', 'network', 'user', 'discovery', 'metadata'],
+        choices=['process', 'network', 'user', 'discovery', 'metadata', 'auth', 'host'],
         help='Multiple data groups to process (for comprehensive mode)'
     )
     
@@ -722,7 +730,11 @@ def main():
         
         logger.info("Starting Linux Anomaly Detection System")
         logger.info(f"Detection mode: {args.detection_mode}")
-        
+
+        # Force disable mlflow if not installed
+        if not _MLFLOW_AVAILABLE:
+            args.disable_mlflow = True
+
         # Setup MLflow if not disabledF
         if not args.disable_mlflow:
             # Try to restore the deleted experiment first (if that's the issue)

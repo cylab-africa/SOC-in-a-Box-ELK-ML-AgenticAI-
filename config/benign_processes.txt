@@ -1,0 +1,142 @@
+# Benign processes — one per line
+# Lines starting with # are comments, blank lines are ignored
+# These processes are considered infrastructure daemons and will be treated
+# as false positives when combined with internal-only traffic.
+#
+# NOTE: LOLBins and general-purpose tools are EXCLUDED:
+#   shells (bash, sh, zsh), recon tools (grep, find, ps, whoami, id),
+#   network tools (ip, ss, netstat, iptables, curl, wget, nmap),
+#   languages (python, perl, ruby, node), remote access (ssh, scp),
+#   privilege tools (sudo, su, chmod, chown), data tools (tar, git)
+#   These are flagged by the anomaly detector for a reason.
+
+# Kubernetes / container orchestration daemons
+kubelet
+kube-proxy
+kube-apiserver
+kube-controller
+kube-scheduler
+etcd
+coredns
+flannel
+containerd
+containerd-shim
+containerd-shim-runc-v2
+dockerd
+docker
+docker-init
+docker-proxy
+runc
+calico
+calico-node
+k8s-dqlite
+microk8s
+microk8s.daemon-kubelite
+
+# Elastic stack daemons
+elasticsearch
+kibana
+logstash
+filebeat
+metricbeat
+packetbeat
+auditbeat
+elastic-agent
+elastic-endpoint
+agentbeat
+
+# Security agent daemons
+falcon-sensor
+falcon-sensor-bpf
+falconctl
+osqueryd
+auditd
+
+# Systemd / init daemons
+systemd
+systemd-journald
+systemd-logind
+systemd-resolved
+systemd-networkd
+systemd-timesyncd
+systemd-udevd
+systemd-tmpfiles
+systemd-sysctl
+init
+
+# Cron / scheduling daemons
+cron
+crond
+anacron
+
+# Logging daemons
+rsyslogd
+syslog-ng
+logrotate
+
+# System daemons
+dbus-daemon
+polkitd
+snapd
+packagekitd
+unattended-upgrade
+unattended-upgr
+
+# Package management (not LOLBins)
+apt
+apt-get
+dpkg
+dpkg-deb
+dpkg-query
+yum
+dnf
+apt-config
+apt-key
+apt-cache
+update-notifier
+
+# Monitoring daemons
+prometheus
+node_exporter
+grafana-server
+zabbix_agent
+telegraf
+collectd
+
+# Certificate management
+certbot
+update-ca-certificates
+
+# Database server daemons
+mysqld
+postgres
+redis-server
+mongod
+
+# Web server daemons
+nginx
+apache2
+gunicorn
+uvicorn
+
+# SSH server daemon (NOT client tools like ssh, scp, sftp)
+sshd
+
+# Docker sub-tools
+docker-compose
+docker-buildx
+
+# Debian maintenance daemons
+dpkg-db-backup
+gpg-agent
+ldconfig
+udevadm
+debian-sa1
+sa1
+sa2
+sadc
+etckeeper
+run-parts
+updatedb
+sync
+fwupdmgr

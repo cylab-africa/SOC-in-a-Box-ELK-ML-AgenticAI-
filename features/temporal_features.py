@@ -178,10 +178,12 @@ class VolumeZscoreTransformer(FeatureTransformer):
 
             for host, grp in daily.groupby("host.name"):
                 self._host_daily_mean[str(host)] = float(grp["count"].mean())
-                self._host_daily_std[str(host)] = max(float(grp["count"].std()), EPSILON)
+                raw_std = grp["count"].std()
+                self._host_daily_std[str(host)] = max(float(raw_std), EPSILON) if not np.isnan(raw_std) else 1.0
 
             self._global_mean = float(daily["count"].mean()) if len(daily) > 0 else 0.0
-            self._global_std = max(float(daily["count"].std()), EPSILON) if len(daily) > 1 else 1.0
+            raw_global_std = daily["count"].std() if len(daily) > 1 else float("nan")
+            self._global_std = max(float(raw_global_std), EPSILON) if not np.isnan(raw_global_std) else 1.0
 
         self._is_fitted = True
         return self
@@ -217,7 +219,8 @@ class VolumeZscoreTransformer(FeatureTransformer):
             std = self._host_daily_std.get(host_str, self._global_std)
             zscore = (count - mean) / std
             mask = df.get("host.name") == host
-            result.loc[mask] = clip_score(zscore)
+            clipped = float(np.clip(zscore, 0.0, 10.0)) / 10.0
+            result.loc[mask] = clipped
 
         df["volume_zscore_7d"] = result.astype(np.float64)
         return df

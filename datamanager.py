@@ -164,7 +164,7 @@ def _calculate_hourly_distribution(total_records: int, time_range: dict,
                 f"strategy={strategy}, avg_per_hour={total_records//len(distribution)}")
     
     return distribution
-def _fetch_data_for_hour_window(es, index_pattern, base_query, time_window, target_records):
+def _fetch_data_for_hour_window(es: "Elasticsearch", index_pattern: str, base_query, time_window, target_records):
     """
     Fetch data for a specific hour window with fallback strategies.
     
@@ -218,7 +218,7 @@ def _fetch_data_for_hour_window(es, index_pattern, base_query, time_window, targ
     except Exception as e:
         logger.warning(f"Error fetching data for hour window {time_window}: {e}")
         return []
-def _apply_intelligent_backfill(es, index_pattern, base_query, time_range, 
+def _apply_intelligent_backfill(es: "Elasticsearch", index_pattern: str, base_query, time_range: dict | None, 
                               existing_hits, target_size):
     """
     Apply intelligent backfill to reach target size while maintaining temporal balance.
@@ -291,7 +291,7 @@ def _log_temporal_distribution_analysis(df: pd.DataFrame, data_type: str):
     except Exception as e:
         logger.debug(f"Could not analyze temporal distribution: {e}")
 
-def _fallback_to_standard_fetch(es, index_pattern, base_query, time_range, query_size):
+def _fallback_to_standard_fetch(es: "Elasticsearch", index_pattern: str, base_query, time_range: dict | None, query_size: int):
     """Fallback to standard fetch method if hourly stratification fails."""
     logger.info("Using standard fetch as fallback")
     
@@ -325,7 +325,7 @@ def _fallback_to_standard_fetch(es, index_pattern, base_query, time_range, query
     
     return all_hits
 
-def _fetch_with_hourly_stratification(es, config, index_pattern, base_query, 
+def _fetch_with_hourly_stratification(es: "Elasticsearch", config: dict, index_pattern: str, base_query, 
                                     time_range, query_size, strategy="balanced"):
     """
     Enhanced fetch function with hourly stratified sampling.
@@ -385,12 +385,12 @@ def _fetch_with_hourly_stratification(es, config, index_pattern, base_query,
 class OptimizedRetriever:
     """Optimized data retrieval with search_after for large datasets."""
     
-    def __init__(self, es, config):
+    def __init__(self, es: "Elasticsearch", config: dict):
         self.es = es
         self.batch_size = config.get("batch_size", 10000)
         self.debug_mode = config.get("debug_mode", True)
     
-    def retrieve_with_search_after(self, index_pattern, query_body, source_fields, max_records):
+    def retrieve_with_search_after(self, index_pattern: str, query_body: dict, source_fields: list | None, max_records: int):
         """Retrieve data using search_after for efficient pagination - FIXED for Elasticsearch compatibility."""
         all_records = []
         search_after = None
@@ -438,7 +438,7 @@ class OptimizedRetriever:
         
         return all_records
     
-    def _flatten_elasticsearch_document(self, doc, parent_key='', sep='.'):
+    def _flatten_elasticsearch_document(self, doc: dict, parent_key: str='', sep: str='.'):
         """Flatten nested Elasticsearch document."""
         items = []
         for k, v in doc.items():
@@ -515,6 +515,27 @@ DATA_GROUP_CONFIG = {
             "user_data_access", "@timestamp", "network.transport", "is_root_access",
             "process.command_line"
         ]
+    },
+    "auth": {
+        "endpoint": ".ds-logs-system.auth-default-*",
+        "jobs": [
+            "v3_linux_auth_rare_source_ip", "v3_linux_auth_high_count_logon_fails",
+            "v3_linux_auth_rare_user", "v3_linux_auth_rare_hour"
+        ],
+        "required_fields": [
+            "@timestamp", "host.name", "user.name", "source.ip", "source.port",
+            "event.action", "event.outcome", "process.name",
+            "hour_of_day", "is_business_hours", "is_failed_login", "is_ssh", "is_sudo"
+        ]
+    },
+    "host": {
+        "endpoint": ".ds-logs-endpoint.events.process-default-*",
+        "jobs": ["v3_linux_anomalous_host_activity", "v3_linux_host_user_deviation"],
+        "required_fields": [
+            "process.name", "process.executable", "process.command_line", "process.args",
+            "process.parent.name", "process.parent.executable", "user.name", "user.id",
+            "host.hostname", "@timestamp", "process.hash.sha256", "process.working_directory"
+        ]
     }
 }
 
@@ -550,6 +571,18 @@ def get_training_configuration(data_type: str) -> Dict:
             "detection_period_days": 1,
             "baseline_query_size": 2000000,
             "min_records_for_detection": 5
+        },
+        "auth": {
+            "training_period_days": 14,
+            "detection_period_days": 0.042,
+            "baseline_query_size": 500000,
+            "min_records_for_detection": 10
+        },
+        "host": {
+            "training_period_days": 5,
+            "detection_period_days": 0.083,
+            "baseline_query_size": 500000,
+            "min_records_for_detection": 10
         }
     }
     
@@ -632,7 +665,7 @@ def apply_training_time_filters(df: pd.DataFrame, data_type: str = "process") ->
     
     return df
 
-def connect_to_elasticsearch(config):
+def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
     """
     Connect to Elasticsearch with enhanced error handling and configuration support.
     
@@ -682,7 +715,7 @@ def connect_to_elasticsearch(config):
     except Exception as e:
         logger.error(f"Error connecting to Elasticsearch: {e}")
         return None
-def _flatten_elasticsearch_document(doc, parent_key='', sep='.'):
+def _flatten_elasticsearch_document(doc: dict, parent_key: str='', sep: str='.'):
     """Flatten nested Elasticsearch document safely without dropping data."""
     items = []
     for k, v in doc.items():
@@ -703,7 +736,7 @@ def _flatten_elasticsearch_document(doc, parent_key='', sep='.'):
 
     return dict(items)
   
-def fetch_process_data(es, config, time_range=None, query_size=10000):
+def fetch_process_data(es: "Elasticsearch", config: dict, time_range: dict | None = None, query_size: int = 10000) -> "pd.DataFrame":
     """
     Fetch process data with search_after pagination to bypass 10k limit.
     Maintains original function signature & arguments.
@@ -856,7 +889,7 @@ def fetch_process_data(es, config, time_range=None, query_size=10000):
         return pd.DataFrame()
 
 
-def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
+def fetch_network_activity_data(es: "Elasticsearch", config: dict, time_range: dict | None = None, query_size: int = 10000) -> "pd.DataFrame":
     """
     Fetch network activity data with search_after pagination to bypass 10k limit.
     """
@@ -997,13 +1030,13 @@ def fetch_network_activity_data(es, config, time_range=None, query_size=10000):
         return pd.DataFrame()
 ##############################################################################################################################
 ##############################################################################################################################
-def _flatten_elasticsearch_document(source):
+def _flatten_elasticsearch_document(source: dict):
     """
     CORRECTED: Flatten Elasticsearch document preserving nested IP addresses.
     """
     flattened = {}
 
-    def _flatten_dict(obj, parent_key=''):
+    def _flatten_dict(obj: dict, parent_key: str=''):
         if not isinstance(obj, dict):
             return
 
@@ -1098,7 +1131,7 @@ def _flatten_elasticsearch_document(source):
 
 
 
-def debug_document_flattening(source):
+def debug_document_flattening(source: dict) -> None:
     """Debug function to trace document flattening issues."""
     print("=== DOCUMENT FLATTENING DEBUG ===")
     print(f"Raw source keys: {list(source.keys())}")
@@ -1130,7 +1163,7 @@ def debug_document_flattening(source):
     return flattened
 
 
-def fetch_network_activity_data_corrected(es, config, time_range=None, query_size=10000):
+def fetch_network_activity_data_corrected(es: "Elasticsearch", config: dict, time_range: dict | None = None, query_size: int = 10000) -> "pd.DataFrame":
     """
     CORRECTED: Network data fetching with proper document flattening.
     """
@@ -1290,7 +1323,7 @@ def fetch_network_activity_data_corrected(es, config, time_range=None, query_siz
         return pd.DataFrame()
 
 
-def preprocess_network_data_safe(df):
+def preprocess_network_data_safe(df: "pd.DataFrame"):
     """Safe network preprocessing that never touches IP fields."""
     if df.empty:
         return df
@@ -1329,7 +1362,7 @@ def preprocess_network_data_safe(df):
     return df
 ############################################################################################
 ############################################################################################
-def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
+def fetch_user_activity_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch user activity data with search_after pagination to bypass 10k limit.
     """
@@ -1463,7 +1496,7 @@ def fetch_user_activity_data(es, config, time_range=None, query_size=10000):
     except Exception as e:
         logger.error(f"Error fetching process data: {e}")
         return pd.DataFrame()
-def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000):
+def fetch_discovery_commands_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch discovery commands data with search_after pagination to bypass 10k limit.
     """
@@ -1609,7 +1642,7 @@ def fetch_discovery_commands_data(es, config, time_range=None, query_size=10000)
     except Exception as e:
         logger.error(f"Error fetching process data: {e}")
         return pd.DataFrame()
-def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
+def fetch_metadata_access_data(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000):
     """
     Fetch metadata access data with search_after pagination to bypass 10k limit.
     Includes correct handling of IP (terms) and domain (wildcard) fields.
@@ -1768,7 +1801,7 @@ def fetch_metadata_access_data(es, config, time_range=None, query_size=10000):
         return pd.DataFrame()
 
 
-def fetch_baseline_data(es, config, data_type="process", days_back=None):
+def fetch_baseline_data(es: "Elasticsearch", config: dict, data_type: str="process", days_back: int=None):
     """
     Fetch baseline data for model training with enhanced configuration support.
     """
@@ -1816,6 +1849,11 @@ def fetch_baseline_data(es, config, data_type="process", days_back=None):
         return fetch_discovery_commands_data(es, config, time_range, query_size)
     elif data_type == "metadata":
         return fetch_metadata_access_data(es, config, time_range, query_size)
+    elif data_type == "auth":
+        return fetch_auth_data(es, config, time_range, query_size)
+    elif data_type == "host":
+        # Host group reuses process events; models partition by host.hostname
+        return fetch_process_data(es, config, time_range, query_size)
     else:
         logger.error(f"Unknown data type for baseline: {data_type}")
         return pd.DataFrame()
@@ -1831,7 +1869,7 @@ SYSTEM_PATHS = {
     "suspicious_paths": ["/var/www/", "/srv/", "/mnt/", "/media/", "/proc/self/", "/.hidden/"]
 }
 
-def ensure_process_fields(df):
+def ensure_process_fields(df: "pd.DataFrame"):
     """
     Ensure all critical fields exist in process data.
     """
@@ -1877,7 +1915,7 @@ def ensure_process_fields(df):
     
     return df
 
-def preprocess_process_data(df):
+def preprocess_process_data(df: "pd.DataFrame"):
     """
     Enhanced preprocessing that ensures ALL features are calculated correctly.
     """
@@ -2132,7 +2170,7 @@ def preprocess_process_data(df):
     
 #     return df
 
-def preprocess_network_data(df):
+def preprocess_network_data(df: "pd.DataFrame"):
     """
     FIXED: Enhanced network data preprocessing that preserves real IP addresses.
     """
@@ -2251,7 +2289,7 @@ def preprocess_network_data(df):
 # USER-SPECIFIC PREPROCESSING
 # ===============================================================================
 
-def preprocess_user_data(df):
+def preprocess_user_data(df: "pd.DataFrame"):
     """
     Enhanced user data preprocessing that calculates all needed features.
     """
@@ -2289,7 +2327,7 @@ def preprocess_user_data(df):
 # DISCOVERY-SPECIFIC PREPROCESSING
 # ===============================================================================
 
-def preprocess_discovery_data(df):
+def preprocess_discovery_data(df: "pd.DataFrame"):
     """
     Enhanced discovery data preprocessing with all required features.
     """
@@ -2377,7 +2415,7 @@ def preprocess_discovery_data(df):
     logger.info(f"Generated all required fields: {discovery_required}")
     
     return df
-def preprocess_user_data(df):
+def preprocess_user_data(df: "pd.DataFrame"):
     """Enhanced user data preprocessing."""
     if df.empty:
         return df
@@ -2407,7 +2445,7 @@ def preprocess_user_data(df):
     df["event_count"] = 1
     return df
 
-def preprocess_discovery_data(df):
+def preprocess_discovery_data(df: "pd.DataFrame"):
     """
     Enhanced discovery data preprocessing with complete feature extraction.
     FIXES: All missing discovery fields identified in logs.
@@ -2459,7 +2497,8 @@ def preprocess_discovery_data(df):
         "other": []
     }
     
-    def categorize_discovery(process_name):
+    def categorize_discovery(process_name: str):
+        """Categorize a process name into discovery type."""
         for category, commands in discovery_categories.items():
             if process_name in commands:
                 return category
@@ -2533,7 +2572,7 @@ def preprocess_discovery_data(df):
     
     return df
 
-def preprocess_metadata_data(df):
+def preprocess_metadata_data(df: "pd.DataFrame"):
     """
     Preprocess metadata data with enhanced training configuration support.
     """
@@ -2564,7 +2603,7 @@ def preprocess_metadata_data(df):
     return df
 
 
-def validate_and_fix_field_mappings(df):
+def validate_and_fix_field_mappings(df: "pd.DataFrame"):
     """
     Validate and fix field mappings from flattened Elasticsearch documents.
     """
@@ -2610,7 +2649,7 @@ def validate_and_fix_field_mappings(df):
     
     return df
 
-def aggregate_data_by_group(df, group_columns, agg_columns):
+def aggregate_data_by_group(df: "pd.DataFrame", group_columns: list, agg_columns: list | None):
     """
     Enhanced aggregation that preserves ALL features needed by ML models.
     """
@@ -2886,7 +2925,7 @@ def aggregate_data_by_group(df, group_columns, agg_columns):
 #     except Exception as e:
 #         logger.error(f"Error creating time buckets: {e}")
 #         return df
-def create_time_buckets(df, time_column="@timestamp", bucket_size="15min", min_buckets=10):
+def create_time_buckets(df: "pd.DataFrame", time_column: str="@timestamp", bucket_size: str="15min", min_buckets: int=10):
     """
     Enhanced time bucketing that dynamically adjusts bucket size based on data characteristics.
     Ensures sufficient temporal granularity for anomaly detection.
@@ -3022,7 +3061,7 @@ def create_time_buckets(df, time_column="@timestamp", bucket_size="15min", min_b
         return df
 
 
-def validate_temporal_coverage(df, entity_col, min_buckets=3):
+def validate_temporal_coverage(df: "pd.DataFrame", entity_col: str, min_buckets: int=3):
     """
     Validate if an entity has sufficient temporal coverage for anomaly detection.
     """
@@ -3039,7 +3078,7 @@ def validate_temporal_coverage(df, entity_col, min_buckets=3):
     logger.info(f"{len(entities_with_coverage)} entities have sufficient temporal coverage")
     return True
 import os
-def save_dataframe_to_files(df, base_filename, save_json=True, save_excel=True):
+def save_dataframe_to_files(df: "pd.DataFrame", base_filename: str, save_json: bool=True, save_excel: bool=True):
     """
     Save a DataFrame to JSON and/or Excel files in the current directory.
     
@@ -3125,8 +3164,8 @@ def save_dataframe_to_files(df, base_filename, save_json=True, save_excel=True):
         return {}
     
     
-def fetch_process_data_with_save(es, config, time_range=None, query_size=10000, 
-                                save=False, base_filename="process_data"):
+def fetch_process_data_with_save(es: "Elasticsearch", config: dict, time_range: dict | None=None, query_size: int=10000, 
+                                save: bool=False, base_filename: str="process_data"):
     """
     Fetch process data and optionally save it to files.
     
@@ -3149,4 +3188,269 @@ def fetch_process_data_with_save(es, config, time_range=None, query_size=10000,
     if save and not df.empty:
         save_dataframe_to_files(df, base_filename)
     
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Auth data group — fetch and preprocess
+# ---------------------------------------------------------------------------
+
+_AUTH_PATTERNS = {
+    'failed_password': re.compile(
+        r'Failed password for (?:invalid user )?(\S+) from (\S+) port (\d+)',
+        re.IGNORECASE,
+    ),
+    'accepted_password': re.compile(
+        r'Accepted (?:password|publickey) for (\S+) from (\S+) port (\d+)',
+        re.IGNORECASE,
+    ),
+    'session_opened': re.compile(
+        r'session opened for user (\S+?)[\s(]',
+        re.IGNORECASE,
+    ),
+    'session_closed': re.compile(
+        r'session closed for user (\S+)',
+        re.IGNORECASE,
+    ),
+    'sudo': re.compile(
+        r'(\S+)\s*:\s*.*COMMAND=(.*)',
+        re.IGNORECASE,
+    ),
+    'invalid_user': re.compile(
+        r'Invalid user (\S+) from (\S+)',
+        re.IGNORECASE,
+    ),
+}
+
+
+def _parse_auth_message(message: str) -> Dict:
+    """Parse a syslog auth message into structured ECS-like fields."""
+    result: Dict[str, Any] = {
+        'user.name': '',
+        'source.ip': '',
+        'source.port': 0,
+        'event.action': 'unknown',
+        'event.outcome': 'unknown',
+        'process.name': '',
+    }
+    if not message:
+        return result
+
+    msg = str(message)
+
+    proc_match = re.search(
+        r'\b(sshd|sudo|su|login|CRON|systemd-logind|gdm|lightdm)\b',
+        msg, re.IGNORECASE,
+    )
+    if proc_match:
+        result['process.name'] = proc_match.group(1).lower()
+
+    m = _AUTH_PATTERNS['failed_password'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['source.ip'] = m.group(2)
+        result['source.port'] = int(m.group(3))
+        result['event.action'] = 'failed_login'
+        result['event.outcome'] = 'failure'
+        return result
+
+    m = _AUTH_PATTERNS['accepted_password'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['source.ip'] = m.group(2)
+        result['source.port'] = int(m.group(3))
+        result['event.action'] = 'accepted_login'
+        result['event.outcome'] = 'success'
+        return result
+
+    m = _AUTH_PATTERNS['invalid_user'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['source.ip'] = m.group(2)
+        result['event.action'] = 'invalid_user'
+        result['event.outcome'] = 'failure'
+        return result
+
+    m = _AUTH_PATTERNS['session_opened'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['event.action'] = 'session_opened'
+        result['event.outcome'] = 'success'
+        return result
+
+    m = _AUTH_PATTERNS['session_closed'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['event.action'] = 'session_closed'
+        result['event.outcome'] = 'success'
+        return result
+
+    m = _AUTH_PATTERNS['sudo'].search(msg)
+    if m:
+        result['user.name'] = m.group(1)
+        result['event.action'] = 'sudo_command'
+        result['event.outcome'] = 'success'
+        result['process.name'] = 'sudo'
+        return result
+
+    return result
+
+
+def fetch_auth_data(es, config, time_range=None, query_size=10000):
+    """Fetch authentication data from .ds-logs-system.auth-default-*.
+
+    Parses raw syslog messages into structured ECS-like fields
+    (user.name, source.ip, event.action, event.outcome).
+    """
+    if not es:
+        logger.error("Elasticsearch connection is not available.")
+        return pd.DataFrame()
+
+    group_config = DATA_GROUP_CONFIG["auth"]
+    index_pattern = group_config["endpoint"]
+
+    if time_range is None:
+        try:
+            time_range = get_configured_time_range("auth")
+            logger.info("Using configured training period for auth data")
+        except Exception as e:
+            logger.warning(f"Could not get configured time range for auth: {e}")
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(days=1)
+            time_range = {"gte": start_time.isoformat(), "lte": end_time.isoformat()}
+
+    try:
+        query_size = int(query_size)
+    except (TypeError, ValueError):
+        query_size = 10000
+
+    source_fields = [
+        "@timestamp", "host.hostname", "host.name", "host.id",
+        "host.os.type", "host.os.name", "host.os.platform",
+        "message", "event.original",
+        "log.syslog.appname", "log.syslog.hostname", "log.syslog.procid",
+        "user.name", "source.ip", "source.port",
+        "event.action", "event.outcome", "event.dataset",
+        "agent.id", "agent.type", "agent.name",
+    ]
+
+    query = {
+        "size": min(10000, query_size),
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": time_range}},
+                ],
+                "should": [
+                    {"match_phrase": {"message": "Failed password"}},
+                    {"match_phrase": {"message": "Accepted"}},
+                    {"match_phrase": {"message": "Invalid user"}},
+                    {"match_phrase": {"message": "sudo"}},
+                    {"match_phrase": {"message": "session opened"}},
+                    {"match_phrase": {"message": "session closed"}},
+                    {"match_phrase": {"message": "sshd"}},
+                ],
+                "minimum_should_match": 1,
+                "must_not": [
+                    {"match_phrase": {"message": "CRON"}},
+                ],
+            }
+        },
+        "_source": source_fields,
+        "sort": [{"@timestamp": {"order": "desc", "unmapped_type": "date"}}],
+    }
+
+    try:
+        logger.info(f"Fetching auth data from {index_pattern} using search_after")
+        all_hits: List[dict] = []
+        search_after_val = None
+
+        while len(all_hits) < query_size:
+            if search_after_val:
+                query["search_after"] = search_after_val
+            response = es.search(index=index_pattern, body=query)
+            hits = response["hits"]["hits"]
+            if not hits:
+                break
+            all_hits.extend(hits)
+            search_after_val = hits[-1]["sort"]
+            if len(hits) < query["size"]:
+                break
+
+        logger.info(f"Retrieved {len(all_hits)} auth records from Elasticsearch")
+        if not all_hits:
+            logger.warning("No auth data found matching the criteria")
+            return pd.DataFrame()
+
+        records = []
+        for hit in all_hits:
+            source = hit["_source"]
+            flat = _flatten_elasticsearch_document(source)
+            parsed = _parse_auth_message(flat.get("message", ""))
+            for key, val in parsed.items():
+                if key not in flat or not flat[key]:
+                    flat[key] = val
+            if not flat.get("host.name"):
+                flat["host.name"] = flat.get("host.hostname", flat.get("agent.name", ""))
+            records.append(flat)
+
+        df = pd.DataFrame(records)
+
+        if "@timestamp" in df.columns:
+            df["@timestamp"] = pd.to_datetime(df["@timestamp"], errors="coerce", utc=True)
+
+        if "@timestamp" in df.columns and df["@timestamp"].notna().any():
+            df["hour_of_day"] = df["@timestamp"].dt.hour
+            df["day_of_week"] = df["@timestamp"].dt.dayofweek
+        else:
+            df["hour_of_day"] = 0
+            df["day_of_week"] = 0
+        df["is_business_hours"] = df["hour_of_day"].apply(lambda h: 1 if 8 <= h <= 17 else 0)
+        df["is_failed_login"] = (df.get("event.outcome", pd.Series(dtype=str)) == "failure").astype(int)
+        df["is_ssh"] = (df.get("process.name", pd.Series(dtype=str)).str.lower() == "sshd").astype(int)
+        df["is_sudo"] = (df.get("process.name", pd.Series(dtype=str)).str.lower() == "sudo").astype(int)
+
+        for col in group_config["required_fields"]:
+            if col not in df.columns:
+                df[col] = "" if col not in ("hour_of_day", "is_business_hours", "source.port") else 0
+
+        df = apply_training_time_filters(df, "auth")
+
+        logger.info(f"Successfully fetched {len(df)} Linux auth records")
+        return df
+
+    except Exception as e:
+        logger.error(f"Error fetching auth data: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return pd.DataFrame()
+
+
+def preprocess_auth_data(df):
+    """Preprocess authentication data with enhanced training configuration support."""
+    if df.empty:
+        return df
+
+    group_config = DATA_GROUP_CONFIG["auth"]
+    missing_fields = [f for f in group_config["required_fields"] if f not in df.columns]
+    if missing_fields:
+        logger.warning(f"Missing auth fields: {missing_fields}")
+        for field in missing_fields:
+            if field in ("hour_of_day", "is_business_hours", "source.port", "is_failed_login", "is_ssh", "is_sudo"):
+                df[field] = 0
+            else:
+                df[field] = ""
+
+    for col in ("hour_of_day", "day_of_week", "source.port", "is_business_hours",
+                "is_failed_login", "is_ssh", "is_sudo"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+
+    # Composite entity for brute-force detection
+    df["user_host"] = (
+        df.get("user.name", pd.Series("", index=df.index)).astype(str) + "@" +
+        df.get("host.name", pd.Series("", index=df.index)).astype(str)
+    )
+    df["event_count"] = 1
+    logger.info(f"Preprocessed auth data: {len(df)} records with {len(df.columns)} fields")
     return df

@@ -1,0 +1,12 @@
+# Benign process name prefixes — one per line
+# Processes whose names START WITH any of these are treated as benign
+falcon-sensor
+containerd-shim
+calico-node
+kworker/
+ksoftirqd/
+rcu_
+systemd-
+docker-
+kube-
+code-

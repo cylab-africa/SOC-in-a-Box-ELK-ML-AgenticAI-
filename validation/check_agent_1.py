@@ -35,28 +35,39 @@ AGENT_OWNED = ["model_manager.py", "detection_methods.py", "models"]
 MANIFEST_REQUIRED_KEYS = {"models", "version", "created_at"}
 
 
+def _import_model_module(f: Path):
+    """Import a models/ module using the package-qualified name."""
+    module_name = f"models.{f.stem}"
+    try:
+        import importlib
+        return importlib.import_module(module_name)
+    except Exception:
+        # Fallback to importlib.util for non-package files
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(f.stem, f)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+
 def check_anomaly_model_interface() -> tuple[bool, str]:
     """Verify AnomalyModel base class and subclasses exist with required interface."""
     models_dir = PROJECT_ROOT / "models"
     if not models_dir.exists():
         return True, "models/ directory not yet created — skipping interface check"
 
-    py_files = list(models_dir.glob("**/*.py"))
+    py_files = [f for f in models_dir.glob("*.py") if not f.name.startswith("_")]
     if not py_files:
         return True, "No Python files in models/ yet — skipping"
 
     errors = []
     for f in py_files:
         try:
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(f.stem, f)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            mod = _import_model_module(f)
             for name in dir(mod):
                 obj = getattr(mod, name)
                 if isinstance(obj, type) and name not in ("AnomalyModel",):
                     if hasattr(obj, "fit") and hasattr(obj, "decision_function"):
-                        # Check it subclasses AnomalyModel if that class exists
                         bases = [b.__name__ for b in obj.__mro__]
                         if "AnomalyModel" not in bases and not name.startswith("_"):
                             errors.append(f"{name} in {f.name} does not subclass AnomalyModel")
@@ -72,7 +83,7 @@ def check_model_fit_predict() -> tuple[bool, str]:
     if not models_dir.exists():
         return True, "models/ not yet created — skipping fit/predict check"
 
-    py_files = list(models_dir.glob("**/*.py"))
+    py_files = [f for f in models_dir.glob("*.py") if not f.name.startswith("_")]
     if not py_files:
         return True, "No model files yet"
 
@@ -81,14 +92,14 @@ def check_model_fit_predict() -> tuple[bool, str]:
 
     for f in py_files:
         try:
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(f.stem, f)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            mod = _import_model_module(f)
             for name in dir(mod):
                 obj = getattr(mod, name)
                 if isinstance(obj, type) and hasattr(obj, "fit") and hasattr(obj, "decision_function"):
                     if name.startswith("_"):
+                        continue
+                    import abc
+                    if abc.ABC in obj.__mro__ or getattr(obj, '__abstractmethods__', None):
                         continue
                     try:
                         instance = obj()

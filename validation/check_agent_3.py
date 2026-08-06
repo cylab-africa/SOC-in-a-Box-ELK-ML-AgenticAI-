@@ -138,7 +138,8 @@ def check_save_load_roundtrip() -> tuple[bool, str]:
                     with tempfile.TemporaryDirectory() as tmp:
                         save_path = Path(tmp) / "model"
                         obj.save(str(save_path))
-                        loaded = cls.load(str(save_path))
+                        loaded = cls()
+                        loaded.load(str(save_path))
                         scores_after = loaded.decision_function(X)
                     if not np.allclose(scores_before, scores_after, atol=1e-5):
                         errors.append(f"{name}: save/load round-trip scores differ")

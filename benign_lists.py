@@ -35,6 +35,7 @@ NEVER_ALLOWLIST: list[str] = [
     "socat", "awk", "sed", "dd", "tar", "gzip", "base64",
     "openssl", "nmap", "tcpdump", "strace", "ltrace", "gdb",
     "chmod", "chown", "crontab", "at", "systemctl",
+    "php", "chattr", "xxd", "nsenter", "unshare", "xargs",
 ]
 
 

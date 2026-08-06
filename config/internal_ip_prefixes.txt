@@ -1,0 +1,21 @@
+# Internal/private IP prefixes — one per line
+# IPs starting with these are considered internal and not suspicious
+# Includes RFC1918, loopback, link-local, and org-specific ranges
+127.
+10.
+192.168.
+::1
+fe80:
+fd
+0.0.0.0
+255.255.255.255
+172.29.
+172.17.
+172.18.
+172.19.
+172.20.
+10.233.
+10.48.
+10.152.
+10.250.
+169.254.

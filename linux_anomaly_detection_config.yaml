@@ -3,15 +3,15 @@
 
 # DAGsHub MLflow tracking configuration
 dagshub:
-  repo_name: "Anomaly-Detection-ML--SOC"
-  username: "masterlion-hash"
-  token: "***REMOVED_DAGSHUB_TOKEN***"
+  repo_name: "${DAGSHUB_REPO_NAME}"
+  username: "${DAGSHUB_USERNAME}"
+  token: "${DAGSHUB_TOKEN}"
 
 # Elasticsearch configuration for data sources
 elasticsearch:
-  host: "https://***REMOVED_INTERNAL_IP***:9200"
-  username: "***REMOVED_EMAIL***"
-  password: "***REMOVED_PASSWORD***"
+  host: "${ES_HOST}"
+  username: "${ES_USERNAME}"
+  password: "${ES_PASSWORD}"
   verify_certs: false
   ssl_show_warn: false
   timeout: 60
@@ -171,7 +171,7 @@ models:
 # Output and storage configuration
 output:
   save_results: true
-  visualization: true
+  visualization: false
   generate_reports: true
   save_models: true
   

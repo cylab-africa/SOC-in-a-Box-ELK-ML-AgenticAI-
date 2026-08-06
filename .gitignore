@@ -1,1 +1,61 @@
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# ML artifacts
+results/
+logs/
+mlruns/
+*.joblib
+*.pkl
+*.pt
+*.pth
+*.h5
+*.onnx
+/tmp/linux_anomaly_models/
+
+# Data dumps
+*.jsonl
+*.xlsx
+server/*.json
+server/*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent worktrees (development tooling)
+.claude/
+
+# Unrelated nested project (not part of this pipeline)
+capstone_upanzi/
+
+# Deployment artifacts
+deployment_*.txt
+data_fetching.log

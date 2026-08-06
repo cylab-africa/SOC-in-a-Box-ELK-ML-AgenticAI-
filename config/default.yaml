@@ -1,0 +1,199 @@
+# Default Configuration — Linux Security Anomaly Detection
+# ========================================================
+# Copy this file and customize for your environment.
+# Values here are overridden by environment variables (see .env.example).
+
+# Elasticsearch index patterns for source event data
+# These power the enrichment pipeline in push_all_anomalies.py
+elasticsearch:
+  indices:
+    process: ".ds-logs-endpoint.events.process-default-*"
+    network: ".ds-logs-endpoint.events.network-default-*"
+    auth: ".ds-logs-system.auth-default-*"
+    discovery: "logs-endpoint.events.process-*"
+    metadata: "logs-endpoint.events.process-*,logs-endpoint.events.network-*"
+    alerts: ".internal.alerts-security.alerts-default-*"
+  scroll_size: 5000
+  scroll_timeout: "2m"
+  timeout: 60
+  verify_certs: false
+  ssl_show_warn: false
+
+# Detection configuration
+detection:
+  time_window_hours: 24
+  threshold_multiplier: 2.0
+  min_baseline_period_days: 30
+  aggregation_interval: "15min"
+  bucket_span: "15m"
+  sensitivity: 0.5
+  max_anomaly_rate: 0.15
+
+  # Data groups and their detection jobs
+  data_groups:
+    process:
+      enabled: true
+      training_period_days: 7
+      jobs:
+        - name: rare_process_on_host
+          threshold: 0.1
+          mitre_techniques: ["T1059", "T1204"]
+        - name: rare_process_host_combo
+          threshold: 0.05
+          mitre_techniques: ["T1059", "T1036"]
+        - name: suspicious_cmd_chains
+          threshold: 0.1
+          mitre_techniques: ["T1059.004"]
+
+    network:
+      enabled: true
+      training_period_days: 5
+      jobs:
+        - name: unusual_connections
+          threshold: 0.1
+          mitre_techniques: ["T1071", "T1572"]
+        - name: anomalous_ports
+          threshold: 0.1
+          mitre_techniques: ["T1571"]
+        - name: rare_dns_queries
+          threshold: 0.1
+          mitre_techniques: ["T1071.004"]
+
+    user:
+      enabled: true
+      training_period_days: 5
+      jobs:
+        - name: rare_user_activity
+          threshold: 0.5
+          mitre_techniques: ["T1078"]
+        - name: rare_sudo_usage
+          threshold: 1.0
+          mitre_techniques: ["T1548.003"]
+        - name: rare_compiler_usage
+          threshold: 2.0
+          mitre_techniques: ["T1027.004"]
+
+    discovery:
+      enabled: true
+      training_period_days: 5
+      jobs:
+        - name: host_discovery_patterns
+          threshold: 5.0
+          mitre_techniques: ["T1046", "T1018"]
+
+    metadata:
+      enabled: true
+      training_period_days: 5
+      jobs:
+        - name: rare_metadata_process
+          threshold: 1.0
+          mitre_techniques: ["T1036"]
+        - name: rare_metadata_user
+          threshold: 2.0
+          mitre_techniques: ["T1078"]
+
+    auth:
+      enabled: true
+      training_period_days: 90
+      jobs:
+        - name: brute_force_detection
+          threshold: 0.5
+          mitre_techniques: ["T1110"]
+        - name: anomalous_login_times
+          threshold: 0.5
+          mitre_techniques: ["T1078"]
+
+    host:
+      enabled: true
+      training_period_days: 7
+      jobs:
+        - name: host_behavior_anomaly
+          threshold: 0.5
+          mitre_techniques: ["T1059", "T1078"]
+
+# Machine learning model configuration
+ml:
+  contamination: 0.05
+  n_estimators: 100
+  lof_neighbors: 20
+  svm_kernel: "rbf"
+  pca_components: 0.95
+  feature_selection: "enhanced"
+  methods:
+    - isolation_forest
+    - lof
+    - ocsvm
+    - pca
+
+# False-positive classification tuning
+fp_classification:
+  enabled: true
+  # Config files loaded from config/ directory:
+  #   benign_processes.txt
+  #   benign_process_prefixes.txt
+  #   service_accounts.txt
+  #   infrastructure_hosts.txt
+  #   public_facing_hosts.txt
+  #   internal_ip_prefixes.txt
+  #   cloud_ip_prefixes.txt
+  #   public_service_ports.txt
+
+# Enrichment configuration
+enrichment:
+  source_enrichment: true
+  mitre_enrichment: true
+  context_enrichment: true
+  max_enrichment_docs: 5
+
+# Dedup configuration
+dedup:
+  window_hours: 4
+  score_escalation_delta: 0.20
+
+# Adaptive thresholds
+adaptive_threshold:
+  base_score: 0.70
+  business_hours_modifier: 0.1   # raise threshold during 8am-6pm
+  weekend_modifier: -0.05        # lower threshold on weekends
+  recent_fp_modifier: 0.05       # raise per recent FP in same entity
+  max_modifier: 0.25
+
+# Output configuration
+output:
+  results_dir: "./results"
+  models_dir: "./results/models"
+  reports_dir: "./results/reports"
+  logs_dir: "./logs"
+  save_results: true
+  save_models: true
+
+# Logging
+logging:
+  level: "INFO"
+  format: "json"  # "json" for production, "text" for development
+  console_output: true
+
+# Performance
+performance:
+  max_workers: 4
+  chunk_size: 1000
+  memory_limit: "4GB"
+  parallel_processing: true
+  cache_enabled: true
+
+# Kill-chain correlation
+correlation:
+  enabled: true
+  min_chain_length: 2
+  max_chain_gap_hours: 24
+  techniques_per_stage:
+    initial_access: ["T1078", "T1190", "T1133"]
+    execution: ["T1059", "T1204"]
+    persistence: ["T1053", "T1543"]
+    privilege_escalation: ["T1548", "T1068"]
+    defense_evasion: ["T1036", "T1027", "T1070"]
+    discovery: ["T1046", "T1018", "T1082"]
+    lateral_movement: ["T1021", "T1563"]
+    collection: ["T1005", "T1560"]
+    exfiltration: ["T1041", "T1567"]
+    command_and_control: ["T1071", "T1572", "T1571"]

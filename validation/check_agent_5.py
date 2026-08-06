@@ -145,19 +145,22 @@ def check_drift_monitor() -> tuple[bool, str]:
     X_baseline = rng.standard_normal((500, 5))
     X_shifted = rng.standard_normal((100, 5)) + 3.0  # 3-sigma shift
 
+    feature_names = [f"f{i}" for i in range(X_baseline.shape[1])]
     monitor = cls()
     try:
-        monitor.fit(X_baseline)
-        detected = monitor.detect(X_shifted)
+        monitor.set_reference(X_baseline, feature_names)
+        report = monitor.check_drift(X_shifted)
+        detected = report.drift_level != "stable"
         if not detected:
             return False, "DriftMonitor did not detect 3-sigma distribution shift"
     except Exception as e:
         return False, f"DriftMonitor failed: {e}"
 
-    # Confirm no false alarm on in-distribution data
-    X_same = rng.standard_normal((100, 5))
+    # Confirm no false alarm on in-distribution data (use same size as reference)
+    X_same = rng.standard_normal((500, 5))
     try:
-        false_alarm = monitor.detect(X_same)
+        report_same = monitor.check_drift(X_same)
+        false_alarm = report_same.drift_level != "stable"
         if false_alarm:
             return False, "DriftMonitor false alarm on in-distribution data"
     except Exception:
@@ -178,7 +181,18 @@ def check_attack_generator() -> tuple[bool, str]:
 
     try:
         gen = cls()
-        output = gen.generate(n_samples=50)
+        scenarios = gen.available_scenarios()
+        if not scenarios:
+            return False, "AttackGenerator.available_scenarios() returned empty"
+        scenario = scenarios[0]
+        background_df = pd.DataFrame({
+            "process.name": ["bash"] * 100,
+            "user.name": ["root"] * 100,
+            "host.name": ["host1"] * 100,
+        })
+        output = gen.generate(
+            scenario=scenario, n_samples=50, background_df=background_df,
+        )
         if not isinstance(output, pd.DataFrame):
             return False, "AttackGenerator.generate() must return DataFrame"
         required = {"is_attack", "attack_technique"}
