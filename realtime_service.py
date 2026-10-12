@@ -864,6 +864,8 @@ ALLOWLIST_HITS_MAX_LINES: int = _env_int("ALLOWLIST_HITS_MAX_LINES", 5000)
 FP_TRACE_MAX_LINES: int = _env_int("FP_TRACE_MAX_LINES", 20000)
 VISUALIZATION_MAX_FILES: int = _env_int("VISUALIZATION_MAX_FILES", 50)
 STALE_LOG_MAX_AGE_HOURS: int = _env_int("STALE_LOG_MAX_AGE_HOURS", 24)
+RESULT_ARTIFACT_MAX_AGE_HOURS: int = _env_int("RESULT_ARTIFACT_MAX_AGE_HOURS", 72)
+RESULT_ARTIFACT_MAX_FILES: int = _env_int("RESULT_ARTIFACT_MAX_FILES", 6000)
 
 
 def _truncate_jsonl(path: Path, keep_lines: int) -> bool:
@@ -882,14 +884,19 @@ def _truncate_jsonl(path: Path, keep_lines: int) -> bool:
         return False
 
 
-def _cleanup_old_results(max_age_hours: int = 4, max_files: int = 5) -> None:
-    """Remove old ML anomaly result files and truncate audit logs."""
-    results_dir = os.path.join(os.getcwd(), "results")
-    patterns = ["ml_only_anomalies_*.json", "ml_only_anomalies_*.csv"]
+def _prune_by_age_and_count(
+    results_dir: str, patterns: list[str], max_age_hours: int, max_files: int
+) -> int:
+    """Delete files in *results_dir* matching *patterns* that are stale or surplus.
+
+    For each pattern the newest files are kept: a file is removed when it is
+    older than *max_age_hours*, or when at least *max_files* newer siblings
+    match the same pattern. Returns the number of files removed.
+    """
     removed = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     for pat in patterns:
         files = sorted(_glob.glob(os.path.join(results_dir, pat)), key=os.path.getmtime, reverse=True)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
         for i, fpath in enumerate(files):
             try:
                 mtime = datetime.fromtimestamp(os.path.getmtime(fpath), tz=timezone.utc)
@@ -898,6 +905,32 @@ def _cleanup_old_results(max_age_hours: int = 4, max_files: int = 5) -> None:
                     removed += 1
             except OSError:
                 pass
+    return removed
+
+
+def _cleanup_old_results(max_age_hours: int = 4, max_files: int = 5) -> None:
+    """Remove old ML anomaly result files and truncate audit logs."""
+    results_dir = os.path.join(os.getcwd(), "results")
+    removed = _prune_by_age_and_count(
+        results_dir,
+        ["ml_only_anomalies_*.json", "ml_only_anomalies_*.csv"],
+        max_age_hours,
+        max_files,
+    )
+    # Per-data-type CSV/markdown artifacts written by visualizer.py on every
+    # detection cycle. The globs above only match "ml_only_anomalies_*", so
+    # these accumulated unbounded and were the dominant consumer of results/.
+    removed += _prune_by_age_and_count(
+        results_dir,
+        [
+            "ml_only_*_data_*.csv",
+            "ml_only_*_report_*.md",
+            "*_anomaly_data_*.csv",
+            "*_anomaly_report_*.md",
+        ],
+        RESULT_ARTIFACT_MAX_AGE_HOURS,
+        RESULT_ARTIFACT_MAX_FILES,
+    )
     # Clean old parquet persistence files (keep latest 10)
     pq_dir = os.path.join(results_dir, "persisted_results")
     if os.path.isdir(pq_dir):
