@@ -13,17 +13,37 @@ allowlists, enriched with the actual command line and IP addresses behind them,
 mapped to MITRE ATT&CK techniques, and grouped into a single story per host
 rather than arriving as a dozen separate alerts.
 
-Here is where it sits. It does not run on the machines being watched — it reads
-their logs out of Elasticsearch and writes alerts back:
+Here is where it sits:
 
+```mermaid
+flowchart LR
+  subgraph HOSTS["Your Linux hosts"]
+    AGENT["Elastic Agent<br/>with Elastic Defend"]
+  end
+
+  subgraph ES["Elasticsearch"]
+    RAW["raw endpoint events<br/>logs-endpoint.events.*"]
+    OUT["triaged alerts<br/>ml-anomalies-custom-*"]
+  end
+
+  subgraph THIS["This project"]
+    ENGINE["learns normal per entity,<br/>flags what does not fit,<br/>filters, enriches, correlates"]
+  end
+
+  KIBANA["Kibana<br/>analyst queue"]
+
+  AGENT -->|"ships process, network<br/>and auth events"| RAW
+  RAW -->|"reads a time window<br/>each cycle"| ENGINE
+  ENGINE -->|"writes enriched alerts"| OUT
+  OUT -->|"displayed in"| KIBANA
+
+  classDef focus stroke:#2f81f7,stroke-width:3px
+  class ENGINE focus
 ```
-  Your Linux hosts          Elasticsearch           This project            Kibana
- +----------------+       +----------------+     +----------------+     +------------+
- | Elastic Agent  | ----> | raw endpoint   | --> | learns what is | --> | triaged    |
- | (Elastic       | ships | event data     |reads| normal, flags  |write| alerts for |
- |  Defend)       | logs  |                |     | what is not    |     | an analyst |
- +----------------+       +----------------+     +----------------+     +------------+
-```
+
+Everything outside the "This project" box already exists in a normal Elastic
+deployment. This project is the one new piece, and it never runs on the machines
+being watched — it only needs network access to Elasticsearch.
 
 **New here?** Read [Before you start](#before-you-start) first. It takes two
 minutes and tells you whether this will work in your environment — most setup
@@ -235,7 +255,24 @@ python realtime_service.py
 ```
 
 It loops detection, pushes results, retrains in the background, and cleans up
-its own old output.
+its own old output. One process, three schedules:
+
+```mermaid
+flowchart TD
+  SYSD["systemd unit<br/>Restart=always"] -->|starts| SVC["realtime_service.py"]
+
+  SVC -->|"every 300s<br/>DETECTION_INTERVAL_SECONDS"| DET["Detection cycle<br/>fetch window from ES, score,<br/>filter, enrich, push alerts back"]
+  SVC -->|"every 72h<br/>RETRAIN_INTERVAL_HOURS"| TRAIN["Background trainer subprocess<br/>train_models_background.py<br/>checkpoint-resume on failure"]
+  SVC -->|"every 1h<br/>ML_CLEANUP_INTERVAL_HOURS"| CLEAN["Retention sweep<br/>drop results/ artifacts older than 72h<br/>or beyond 6000 files per pattern"]
+
+  TRAIN -->|"writes versioned models"| MODELS["models on disk"]
+  MODELS -->|"loaded each cycle"| DET
+```
+
+Detection and training are deliberately separate: training is slow and
+occasional, detection is fast and constant, so a long retrain never stalls the
+detection loop. All three intervals are environment variables — override them in
+the unit file if the defaults do not suit your volume.
 
 For a permanent install, run it under systemd. Save this as
 `/etc/systemd/system/realtime_service.service`, adjusting `User` and the paths:
@@ -364,9 +401,48 @@ false-positive pressure.
 
 ## How it works
 
-For the detection pipeline stage by stage, where this sits in a full SOC
-deployment, and the module map, see
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Eight stages run between "a log lands in Elasticsearch" and "an alert reaches an
+analyst". Stages 6A-6C are drawn in parallel because they are independent
+transformations of the same anomaly set:
+
+```mermaid
+flowchart TD
+  I["1. Ingest<br/>datamanager.py"]
+  P["2. Normalize and resolve entities<br/>data.py, entity_alignment.py"]
+  F["3. Feature engineering<br/>features/"]
+  M["4. Train / load the ensemble<br/>IsolationForest, LOF, OCSVM,<br/>PCA, AutoEncoder<br/>model_manager.py"]
+  S["5. Score and threshold<br/>adaptive, business-hours aware<br/>anomaly_detector.py"]
+
+  A["6A. Filter false positives<br/>graduated allowlists<br/>benign_lists.py"]
+  B["6B. Enrich from raw events<br/>command line, IPs, parent process<br/>push_all_anomalies.py"]
+  C["6C. Map to MITRE techniques<br/>push_all_anomalies.py"]
+
+  K["7. Kill-chain correlation<br/>one story per entity, not N alerts<br/>post_correlation.py"]
+  O["8. Push to Elasticsearch<br/>push_all_anomalies.py, backends/"]
+
+  I --> P --> F --> M --> S
+  S --> A
+  S --> B
+  S --> C
+  A --> K
+  B --> K
+  C --> K
+  K --> O
+  O -.->|"confirmed detections feed allowlist<br/>dampening and threshold adaptation"| I
+
+  classDef focus stroke:#2f81f7,stroke-width:3px
+  class K focus
+```
+
+Stage 7 is the one that decides whether an analyst can actually work the queue.
+A rare process, an odd outbound connection, and an unusual sudo call on the same
+host arrive as one narrative rather than three unrelated alerts.
+
+The dashed arrow is why the system gets quieter over time: what it confirms on
+one cycle shapes what it suppresses on the next.
+
+For each stage in detail, where this sits in a full SOC deployment, and the
+module map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Project structure
 
