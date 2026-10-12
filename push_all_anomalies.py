@@ -1812,18 +1812,15 @@ def enrich_with_context(anomaly: dict[str, Any], es: Any) -> dict[str, Any]:
 def _count_recent_anomalies(es: Any, entity: str, job_id: str, days: int) -> int:
     """Query ES for the anomaly count for an entity over the past N days."""
     query: dict[str, Any] = {
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"entity_value": entity}},
-                    {"term": {"job_id": job_id}},
-                    {"range": {"timestamp": {"gte": f"now-{days}d/d"}}},
-                ]
-            }
-        },
-        "size": 0,
+        "bool": {
+            "filter": [
+                {"term": {"entity_value": entity}},
+                {"term": {"job_id": job_id}},
+                {"range": {"timestamp": {"gte": f"now-{days}d/d"}}},
+            ]
+        }
     }
-    result = es.count(index="ml-anomalies-custom-*", body=query)
+    result = es.count(index="ml-anomalies-custom-*", query=query)
     return int(result.get("count", 0))
 
 
@@ -1835,18 +1832,15 @@ def _compute_trend(es: Any, entity: str, job_id: str) -> str:
     """
     recent = _count_recent_anomalies(es, entity, job_id, days=7)
     prior_query: dict[str, Any] = {
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"entity_value": entity}},
-                    {"term": {"job_id": job_id}},
-                    {"range": {"timestamp": {"gte": "now-14d/d", "lt": "now-7d/d"}}},
-                ]
-            }
-        },
-        "size": 0,
+        "bool": {
+            "filter": [
+                {"term": {"entity_value": entity}},
+                {"term": {"job_id": job_id}},
+                {"range": {"timestamp": {"gte": "now-14d/d", "lt": "now-7d/d"}}},
+            ]
+        }
     }
-    result = es.count(index="ml-anomalies-custom-*", body=prior_query)
+    result = es.count(index="ml-anomalies-custom-*", query=prior_query)
     prior = int(result.get("count", 0))
 
     if prior == 0:
@@ -1866,22 +1860,16 @@ def _compute_percentile(es: Any, score: float, job_id: str) -> float:
     Returns a value in [0.0, 100.0].
     """
     count_below_query: dict[str, Any] = {
-        "query": {
-            "bool": {
-                "filter": [
-                    {"term": {"job_id": job_id}},
-                    {"range": {"anomaly_score": {"lt": score}}},
-                ]
-            }
-        },
-        "size": 0,
+        "bool": {
+            "filter": [
+                {"term": {"job_id": job_id}},
+                {"range": {"anomaly_score": {"lt": score}}},
+            ]
+        }
     }
-    total_query: dict[str, Any] = {
-        "query": {"term": {"job_id": job_id}},
-        "size": 0,
-    }
-    below = int(es.count(index="ml-anomalies-custom-*", body=count_below_query).get("count", 0))
-    total = int(es.count(index="ml-anomalies-custom-*", body=total_query).get("count", 1))
+    total_query: dict[str, Any] = {"term": {"job_id": job_id}}
+    below = int(es.count(index="ml-anomalies-custom-*", query=count_below_query).get("count", 0))
+    total = int(es.count(index="ml-anomalies-custom-*", query=total_query).get("count", 1))
     if total == 0:
         return 0.0
     return round((below / total) * 100.0, 1)
