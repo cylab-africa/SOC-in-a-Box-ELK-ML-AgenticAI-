@@ -286,7 +286,7 @@ Check these four in order. The first one that fails tells you where to look.
 | `401 Unauthorized` / `AuthenticationException` | Bad credentials | Recheck `ES_USERNAME` / `ES_PASSWORD`; confirm with the `curl` command in Step 2 |
 | Detection runs but no alerts in Kibana | Step 6 not run, or no data view | Run `push_all_anomalies.py`, then add `ml-anomalies-custom-*` as a Kibana data view |
 | `results/` growing to tens of GB | Old output not being cleaned | `realtime_service.py` prunes automatically; if you run `main.py` on a cron, delete `results/ml_only_*` files older than a few days yourself |
-| Logs full of `Context enrichment partial failure ... unexpected keyword argument 'size'` | **Known issue.** Alert context enrichment is failing against newer `elasticsearch-py` clients | Detection still works; the `score_percentile` and `entity_anomaly_count_7d` fields will be missing from alerts |
+| Logs full of `Context enrichment partial failure ... unexpected keyword argument 'size'` | You are on a build from before this was fixed | Pull the latest `main`. Alerts were missing `score_percentile` and `entity_anomaly_count_7d`; detection itself was unaffected |
 
 Still stuck? Open an issue with your Python version, Elasticsearch version, and
 the last 50 lines of `logs/linux_anomaly_detection.log`.
