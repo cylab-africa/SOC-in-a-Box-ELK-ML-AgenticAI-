@@ -1,0 +1,17 @@
+[Unit]
+Description=SIEM-MAINTENANCE feedback server (Google Chat webhook receiver)
+After=network-online.target siem-maint.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=siem-maint
+EnvironmentFile=/etc/siem-maint/env
+ExecStart=/opt/siem-maint/venv/bin/python \
+    /opt/siem-maint/Agent-SIEM-maintenance/feedback_server.py \
+    --host 0.0.0.0 --port ${FEEDBACK_SERVER_PORT:-8090}
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
