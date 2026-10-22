@@ -19,7 +19,9 @@ RUN pip install --no-cache-dir --prefix=/install -e "." 2>/dev/null || \
         joblib>=1.3.0 \
         requests>=2.28.0 \
         pyyaml>=6.0 \
-        python-dotenv>=1.0.0
+        python-dotenv>=1.0.0 \
+        matplotlib>=3.5.0 \
+        seaborn>=0.12.0
 
 # Stage 2: Runtime
 FROM python:3.10-slim AS runtime
