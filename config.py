@@ -802,6 +802,10 @@ class ElasticsearchConfig:
     scroll_timeout: str = "2m"
     timeout: int = 60
 
+    # TLS (see es_tls.py): verification stays on unless explicitly disabled
+    verify_certs: bool = True
+    ca_certs: str = ""
+
 
 @dataclass
 class DetectionConfig:
@@ -1098,7 +1102,9 @@ class ConfigManager:
                 alerts_index=self._get_env('ES_ALERTS_INDEX', '.internal.alerts-security.alerts-default-*'),
                 scroll_size=self._get_env('ES_SCROLL_SIZE', 5000, int),
                 scroll_timeout=self._get_env('ES_SCROLL_TIMEOUT', '2m'),
-                timeout=self._get_env('ES_TIMEOUT', 60, int)
+                timeout=self._get_env('ES_TIMEOUT', 60, int),
+                verify_certs=self._get_env('ES_VERIFY_CERTS', True, bool),
+                ca_certs=self._get_env('ES_CA_CERT', '')
             ),
 
             'detection': DetectionConfig(

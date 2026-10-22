@@ -292,8 +292,10 @@ es_check() {
     return 0
   fi
   if [[ -n "${ES_CA_CERT:-}" ]]; then
-    [[ -r "$ES_CA_CERT" ]] || { fail "ES_CA_CERT not readable: $ES_CA_CERT"; return 1; }
-    flags+=(--cacert "$ES_CA_CERT")
+    local ca
+    ca="$(ca_cert_path)"
+    [[ -r "$ca" ]] || { fail "ES_CA_CERT not readable: $ca"; return 1; }
+    flags+=(--cacert "$ca")
   fi
   local cfg=""
   [[ -n "$user" ]] && cfg="user = \"${user//\"/\\\"}:${pass//\"/\\\"}\""
@@ -320,6 +322,44 @@ es_check() {
   return 1
 }
 
+# ES_CA_CERT as an absolute path; relative paths are relative to the repo root,
+# which is the working directory of the detection service and container.
+ca_cert_path() {
+  if [[ "$ES_CA_CERT" == /* ]]; then
+    printf '%s' "$ES_CA_CERT"
+  else
+    printf '%s' "$REPO_ROOT/$ES_CA_CERT"
+  fi
+}
+
+is_false() {
+  [[ "${1,,}" =~ ^(0|false|no|off)$ ]]
+}
+
+# Reconcile TLS settings from flags, environment and .env, and persist them so
+# the pipeline verifies exactly as this script's connectivity check did.
+apply_tls_settings() {
+  load_existing_env "$ENV_FILE" ES_CA_CERT ES_VERIFY_CERTS
+  if (( LOCAL_ES )) && (( ! INSECURE_TLS )); then
+    info "Bundled Elasticsearch uses an auto-generated self-signed certificate; disabling verification"
+    INSECURE_TLS=1
+  fi
+  is_false "${ES_VERIFY_CERTS:-true}" && INSECURE_TLS=1
+  if (( INSECURE_TLS )); then
+    ES_VERIFY_CERTS="false"
+    [[ "$(env_get "$ENV_FILE" ES_VERIFY_CERTS)" == "false" ]] || env_set "$ENV_FILE" ES_VERIFY_CERTS false
+    warn "TLS verification disabled for the pipeline (ES_VERIFY_CERTS=false); lab use only"
+  else
+    ES_VERIFY_CERTS="true"
+  fi
+  if [[ -n "${ES_CA_CERT:-}" ]]; then
+    [[ "$(env_get "$ENV_FILE" ES_CA_CERT)" == "$ES_CA_CERT" ]] || env_set "$ENV_FILE" ES_CA_CERT "$ES_CA_CERT"
+    if [[ "$MODE" == "docker" && "$(ca_cert_path)" != "$REPO_ROOT/config/"* ]]; then
+      warn "ES_CA_CERT is outside config/, so the container cannot see it. Use config/certs/ca.pem."
+    fi
+  fi
+}
+
 # ── Detection pipeline configuration ─────────────────────────────────────────
 configure_detection() {
   step "Detection pipeline configuration (.env)"
@@ -328,6 +368,7 @@ configure_detection() {
       ES_PROCESS_INDEX ES_NETWORK_INDEX ES_DISCOVERY_INDEX
     if ! is_placeholder "${ES_HOST:-}"; then
       ok "Using existing .env (pass --reconfigure to change it)"
+      apply_tls_settings
       es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" \
         || warn "Continuing; fix ES settings in .env before starting the services"
       return
@@ -361,6 +402,7 @@ configure_detection() {
     env_set "$ENV_FILE" "$key" "${!key}"
   done
   ok "Wrote .env"
+  apply_tls_settings
 
   if (( LOCAL_ES )); then
     info "Bundled Elasticsearch is not running yet; skipping connectivity check"
@@ -442,6 +484,8 @@ configure_maintenance() {
       echo "ES_PROCESS_INDEX=$(escape_env "$ES_PROCESS_INDEX")"
       echo "ES_NETWORK_INDEX=$(escape_env "$ES_NETWORK_INDEX")"
       echo "ES_DISCOVERY_INDEX=$(escape_env "$ES_DISCOVERY_INDEX")"
+      echo "ES_VERIFY_CERTS=$ES_VERIFY_CERTS"
+      [[ -n "${ES_CA_CERT:-}" ]] && echo "ES_CA_CERT=$(escape_env "$(ca_cert_path)")"
       echo "ES_QUERY_SLOW_SEC=2.0"
       echo "ES_QUERY_CRITICAL_SEC=10.0"
       echo

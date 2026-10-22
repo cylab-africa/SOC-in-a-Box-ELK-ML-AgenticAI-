@@ -16,8 +16,8 @@ elasticsearch:
   scroll_size: 5000
   scroll_timeout: "2m"
   timeout: 60
-  verify_certs: false
-  ssl_show_warn: false
+  verify_certs: true    # ES_VERIFY_CERTS=false disables (lab only)
+  ca_certs: ""          # ES_CA_CERT, e.g. config/certs/ca.pem
 
 # Detection configuration
 detection:
