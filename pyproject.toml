@@ -103,6 +103,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Root-level modules (es_tls, config, ...) are not packaged; make them importable under bare `pytest`.
+pythonpath = ["."]
 python_files = ["test_*.py"]
 addopts = "-x --tb=short"
 
