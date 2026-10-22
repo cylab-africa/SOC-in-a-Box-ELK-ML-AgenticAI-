@@ -15,3 +15,7 @@ services:
   siem-maintenance:
     environment:
       - ES_HOST=${ES_HOST}
+
+  alert-triage:
+    environment:
+      - ELASTIC_URL=${ES_HOST}

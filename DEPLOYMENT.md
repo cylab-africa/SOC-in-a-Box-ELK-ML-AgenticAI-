@@ -16,6 +16,7 @@ checkout are never replaced without confirmation (or `--replace-units`).
 |---|---|---|
 | Detection pipeline | `.venv/`, `pip install -e .`, `realtime_service.service` | `detection` container |
 | Maintenance add-on (`--with-maintenance`) | `addons/siem-maintenance/.venv/`, `siem-maintenance.service` | `siem-maintenance` container (`maintenance` profile) |
+| Triage add-on (`--with-triage`) | `addons/alert-triage/.venv/`, `alert-triage.service` on `127.0.0.1:8000` | `alert-triage` container (`triage` profile), published on `127.0.0.1:8000` |
 | Elasticsearch | your cluster (`ES_HOST`) | your cluster, or the bundled one with `--local-es` |
 
 Steps it runs:
@@ -228,3 +229,53 @@ nothing with the detection pipeline except the Elasticsearch cluster.
 
   Keep local edits under `addons/` to a minimum so these pulls merge cleanly;
   fix bugs upstream instead.
+
+---
+
+## 8. Optional add-on: Alert Triage Agent
+
+`addons/alert-triage/` is a `git subtree` of
+[Alert-Triage-Agent](https://github.com/masterlion-hash/Alert-Triage-Agent): AI-assisted
+investigation of Elastic Security alerts, served as a web UI, a REST API
+(`/api/triage`, `/api/investigate/<alert_id>`), and an MCP server at `/mcp/mcp`.
+It is a separate process with its own venv, `.env`, and service.
+
+- **Enable:** `./deploy.sh --with-triage`. It writes `addons/alert-triage/.env`
+  from the pipeline's ES settings (the agent uses its own variable names:
+  `ELASTIC_URL`, `ELASTIC_USERNAME`, ...), asks for an AI backend
+  (`none`, `ollama`, `claude`, `openai_compat`) and optional AbuseIPDB /
+  VirusTotal keys, installs it, and starts `alert-triage.service`.
+- **Access control:** the agent has **no authentication**, allows any CORS
+  origin, and disables MCP DNS-rebinding protection. Anyone who can reach the
+  port can list alerts, run investigations with its ES credentials, and spend
+  your LLM API quota. `deploy.sh` binds it to `127.0.0.1` (and the container to
+  `127.0.0.1:<port>` on the host); `--triage-listen ADDR` widens that after a
+  warning. To share it with analysts, put an authenticating reverse proxy in
+  front of the loopback port rather than exposing it directly.
+- **Least privilege:** it only calls `_search` on the alerts index and event
+  indices. Create a read-only role for those indices and enter that user when
+  `deploy.sh` asks for the triage agent's credentials.
+- **TLS:** it follows the pipeline's setting (`ELASTIC_VERIFY_SSL` mirrors
+  `ES_VERIFY_CERTS`). With `ES_CA_CERT`, `deploy.sh` builds
+  `addons/alert-triage/certs/ca-bundle.pem` (system CAs plus your cluster CA) and
+  points `SSL_CERT_FILE` at it. A bundle containing only the cluster CA would
+  break the agent's HTTPS calls to threat-intel and LLM APIs.
+- **Dependency pin:** `addons/alert-triage.constraints.txt` pins `mcp<2`.
+  Upstream requires `mcp>=1.2.0`, which now installs MCP SDK 2.x, where
+  `FastMCP` was renamed, and the agent fails to start. Remove the pin once
+  upstream pins it.
+- **Asset inventory:** copy `assets.example.yml` to `assets.yml` in the add-on
+  directory (gitignored). In Docker it is baked into the image at build time,
+  so rebuild after editing it.
+- **Kibana integration:** `deploy/create_investigate_dashboard.py` and
+  `deploy/create_canvas.py` in the add-on add an "Investigate with Agent"
+  drilldown to Kibana. Those links open the agent in the analyst's browser, so
+  they need the reverse-proxy setup above.
+- **Disable:** `sudo systemctl disable --now alert-triage.service`, or run
+  compose without `--profile triage`.
+- **Update from upstream:**
+
+  ```bash
+  git subtree pull --prefix=addons/alert-triage --squash \
+    https://github.com/masterlion-hash/Alert-Triage-Agent.git main
+  ```
