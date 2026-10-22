@@ -77,6 +77,31 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Optional add-on: only starts with `--profile triage`. It has no
+  # authentication, so it is published on loopback unless TRIAGE_BIND is set.
+  alert-triage:
+    profiles: ["triage"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.triage
+    container_name: alert-triage
+    env_file:
+      # Written by deploy.sh; optional so other setups never need it.
+      - path: ../addons/alert-triage/.env
+        required: false
+    environment:
+      - ELASTIC_URL=https://elasticsearch:9200
+      - HOST=0.0.0.0
+      - PORT=8000
+    ports:
+      - "${TRIAGE_BIND:-127.0.0.1}:${TRIAGE_PORT:-8000}:8000"
+    volumes:
+      - ../addons/alert-triage/certs:/app/certs:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   es-data:
     driver: local

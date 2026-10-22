@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Automated deployment for the Linux anomaly detection pipeline, with the
-# SIEM Maintenance Agent (addons/siem-maintenance) as an optional add-on.
+# Automated deployment for the Linux anomaly detection pipeline, with optional
+# add-ons: the SIEM Maintenance Agent (addons/siem-maintenance) and the Alert
+# Triage Agent (addons/alert-triage).
 #
 # Usage:
-#   ./deploy.sh                          interactive; asks whether to add the maintenance agent
+#   ./deploy.sh                          interactive; asks about each add-on
 #   ./deploy.sh --with-maintenance       detection pipeline + maintenance agent
+#   ./deploy.sh --with-triage            detection pipeline + alert triage agent
 #   ./deploy.sh --mode docker            run under Docker Compose instead of venv + systemd
 #   ES_HOST=... ES_USERNAME=... ES_PASSWORD=... ./deploy.sh --non-interactive --with-maintenance
 #   ./deploy.sh --dry-run                print what would happen, change nothing
@@ -21,6 +23,15 @@ VENV_DIR="$REPO_ROOT/.venv"
 ADDON_VENV_DIR="$ADDON_DIR/.venv"
 DETECTION_UNIT="realtime_service.service"
 MAINTENANCE_UNIT="siem-maintenance.service"
+TRIAGE_DIR="$REPO_ROOT/addons/alert-triage"
+TRIAGE_ENV_FILE="$TRIAGE_DIR/.env"
+TRIAGE_VENV_DIR="$TRIAGE_DIR/.venv"
+TRIAGE_CERT_DIR="$TRIAGE_DIR/certs"
+TRIAGE_UNIT="alert-triage.service"
+# Version pins for the vendored agent, kept outside the subtree.
+TRIAGE_CONSTRAINTS="$REPO_ROOT/addons/alert-triage.constraints.txt"
+# System trust stores, in the order distributions ship them.
+SYSTEM_CA_BUNDLES=(/etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem)
 COMPOSE_FILE="$REPO_ROOT/docker/docker-compose.yml"
 COMPOSE_EXTERNAL_ES="$REPO_ROOT/docker/docker-compose.external-es.yml"
 MIN_PY_MINOR=10
@@ -28,6 +39,11 @@ MIN_PY_MINOR=10
 # ── Options ──────────────────────────────────────────────────────────────────
 MODE="venv"                 # venv | docker
 WITH_MAINTENANCE=""         # "", yes, no  ("" = ask)
+WITH_TRIAGE=""              # "", yes, no  ("" = ask)
+# The triage agent has no authentication of its own, so it listens on loopback
+# unless the operator explicitly chooses otherwise.
+TRIAGE_LISTEN="${TRIAGE_LISTEN:-127.0.0.1}"
+TRIAGE_PORT="${TRIAGE_PORT:-8000}"
 NON_INTERACTIVE=0
 DRY_RUN=0
 INSTALL_SYSTEMD=1
@@ -49,10 +65,19 @@ Components:
   --maintenance-wizard     Configure the add-on with its own full installer
                            (addons/siem-maintenance/install.sh: feedback loop,
                            Google Chat app, LLM presets) instead of the short setup here
+  --with-triage            Also deploy the Alert Triage Agent add-on (AI-assisted
+                           investigation of Elastic Security alerts: web UI, API, MCP)
+  --no-triage              Skip the Alert Triage Agent (skip the question)
+  --triage-listen ADDR     Address the triage agent listens on (default 127.0.0.1).
+                           It has no authentication: anyone who can reach it can read
+                           alerts and run investigations. Only widen this behind an
+                           authenticating reverse proxy or on a trusted network.
+  --triage-port PORT       Triage agent port (default 8000)
 
 Install mode:
   --mode venv|docker       venv = Python venv + systemd units (default)
-                           docker = Docker Compose (add-on runs as the "maintenance" profile)
+                           docker = Docker Compose (add-ons run as the "maintenance"
+                           and "triage" profiles)
   --local-es               docker mode only: also start the bundled Elasticsearch + Kibana
   --extras LIST            Extra pip groups for detection, e.g. "dl,ops" (torch, mlflow)
   --no-systemd             venv mode: install packages and config but no systemd units
@@ -78,6 +103,12 @@ while [[ $# -gt 0 ]]; do
     --with-maintenance)   WITH_MAINTENANCE="yes" ;;
     --no-maintenance)     WITH_MAINTENANCE="no" ;;
     --maintenance-wizard) MAINTENANCE_WIZARD=1; WITH_MAINTENANCE="yes" ;;
+    --with-triage)        WITH_TRIAGE="yes" ;;
+    --no-triage)          WITH_TRIAGE="no" ;;
+    --triage-listen)      TRIAGE_LISTEN="${2:?--triage-listen needs an address}"; shift ;;
+    --triage-listen=*)    TRIAGE_LISTEN="${1#*=}" ;;
+    --triage-port)        TRIAGE_PORT="${2:?--triage-port needs a number}"; shift ;;
+    --triage-port=*)      TRIAGE_PORT="${1#*=}" ;;
     --mode)               MODE="${2:?--mode needs venv or docker}"; shift ;;
     --mode=*)             MODE="${1#*=}" ;;
     --local-es)           LOCAL_ES=1 ;;
@@ -98,6 +129,10 @@ done
 
 if [[ "$MODE" != "venv" && "$MODE" != "docker" ]]; then
   echo "--mode must be venv or docker (got: $MODE)" >&2
+  exit 2
+fi
+if ! [[ "$TRIAGE_PORT" =~ ^[0-9]+$ ]] || (( TRIAGE_PORT < 1 || TRIAGE_PORT > 65535 )); then
+  echo "--triage-port must be 1-65535 (got: $TRIAGE_PORT)" >&2
   exit 2
 fi
 
@@ -216,6 +251,21 @@ env_set() {
   mv "$tmp" "$file"
 }
 
+# Remove KEY from a dotenv file if present.
+env_del() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] && grep -q "^$key=" "$file" || return 0
+  if (( DRY_RUN )); then
+    printf '  [DRY ] remove %s from %s\n' "$key" "${file#"$REPO_ROOT"/}"
+    return
+  fi
+  local tmp
+  tmp="$(mktemp "$file.XXXXXX")"
+  awk -v k="$key" 'index($0, k "=") != 1' "$file" >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
 # Load ES_* settings from an existing .env into the shell, without overriding
 # anything the caller exported.
 load_existing_env() {
@@ -279,6 +329,24 @@ preflight() {
     ok "Maintenance add-on: enabled"
   else
     info "Maintenance add-on: skipped (re-run with --with-maintenance to add it later)"
+  fi
+
+  if [[ -z "$WITH_TRIAGE" ]]; then
+    echo
+    echo "  Optional add-on: Alert Triage Agent"
+    echo "  AI-assisted investigation of Elastic Security alerts (web UI, REST API, and"
+    echo "  an MCP server), with threat-intel and asset context. Runs on Ollama or Claude."
+    if confirm "Deploy the Alert Triage Agent too?" N; then
+      WITH_TRIAGE="yes"
+    else
+      WITH_TRIAGE="no"
+    fi
+  fi
+  if [[ "$WITH_TRIAGE" == "yes" ]]; then
+    [[ -f "$TRIAGE_DIR/server.py" ]] || die "Add-on not found at $TRIAGE_DIR (clone the full repository)"
+    ok "Triage add-on: enabled (listening on $TRIAGE_LISTEN:$TRIAGE_PORT)"
+  else
+    info "Triage add-on: skipped (re-run with --with-triage to add it later)"
   fi
 }
 
@@ -528,6 +596,151 @@ sync_addon_env_copy() {
   run chmod 600 "$ADDON_AGENT_DIR/.env"
 }
 
+# ── Alert triage add-on configuration ────────────────────────────────────────
+is_loopback() {
+  [[ "$1" == "127.0.0.1" || "$1" == "localhost" || "$1" == "::1" ]]
+}
+
+# httpx (used by the triage agent) honours SSL_CERT_FILE, but that file replaces
+# the default trust store, so for a private CA it must also hold the public CAs
+# that threat-intel and LLM APIs are signed by. Build system CAs + ES_CA_CERT.
+build_triage_ca_bundle() {
+  local base="" candidate bundle="$TRIAGE_CERT_DIR/ca-bundle.pem" ca
+  ca="$(ca_cert_path)"
+  for candidate in "${SYSTEM_CA_BUNDLES[@]}"; do
+    if [[ -r "$candidate" ]]; then base="$candidate"; break; fi
+  done
+  [[ -n "$base" ]] || base="$(python3 -c 'import certifi; print(certifi.where())' 2>/dev/null || true)"
+  [[ -n "$base" && -r "$base" ]] || die "No system CA bundle found to combine with ES_CA_CERT"
+  if (( DRY_RUN )); then
+    printf '  [DRY ] build %s from %s + %s\n' "${bundle#"$REPO_ROOT"/}" "$base" "$ca"
+    return
+  fi
+  [[ -r "$ca" ]] || die "ES_CA_CERT not readable: $ca"
+  mkdir -p "$TRIAGE_CERT_DIR"
+  cat "$base" "$ca" >"$bundle"
+  chmod 644 "$bundle"
+  ok "Built ${bundle#"$REPO_ROOT"/} (system CAs + ES_CA_CERT)"
+}
+
+configure_triage() {
+  step "Alert Triage Agent configuration (addons/alert-triage/.env)"
+  if ! is_loopback "$TRIAGE_LISTEN"; then
+    warn "The triage agent will listen on $TRIAGE_LISTEN:$TRIAGE_PORT with NO authentication."
+    warn "Anyone who can reach it can read open alerts and run investigations with its ES credentials."
+    if (( ! NON_INTERACTIVE )) && ! confirm "Expose it on $TRIAGE_LISTEN anyway?" N; then
+      TRIAGE_LISTEN="127.0.0.1"
+      info "Keeping it on 127.0.0.1 (reach it with: ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>)"
+    fi
+  fi
+
+  # Inside a container the agent must listen on all interfaces; the host-side
+  # port mapping carries TRIAGE_LISTEN instead.
+  local listen_in_env="$TRIAGE_LISTEN" ssl_cert_file=""
+  [[ "$MODE" == "docker" ]] && listen_in_env="0.0.0.0"
+  if [[ "$ES_VERIFY_CERTS" == "true" && -n "${ES_CA_CERT:-}" ]]; then
+    build_triage_ca_bundle
+    ssl_cert_file="$TRIAGE_CERT_DIR/ca-bundle.pem"
+    [[ "$MODE" == "docker" ]] && ssl_cert_file="/app/certs/ca-bundle.pem"
+  fi
+
+  if [[ -f "$TRIAGE_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
+    ok "Using existing add-on .env (pass --reconfigure to change it)"
+    # Bind address, port, and TLS always follow this run, so the agent never
+    # keeps an older, weaker TLS setting or another install mode's CA path.
+    [[ "$(env_get "$TRIAGE_ENV_FILE" HOST)" == "$listen_in_env" ]] || env_set "$TRIAGE_ENV_FILE" HOST "$listen_in_env"
+    [[ "$(env_get "$TRIAGE_ENV_FILE" PORT)" == "$TRIAGE_PORT" ]] || env_set "$TRIAGE_ENV_FILE" PORT "$TRIAGE_PORT"
+    [[ "$(env_get "$TRIAGE_ENV_FILE" ELASTIC_VERIFY_SSL)" == "$ES_VERIFY_CERTS" ]] \
+      || env_set "$TRIAGE_ENV_FILE" ELASTIC_VERIFY_SSL "$ES_VERIFY_CERTS"
+    if [[ -n "$ssl_cert_file" ]]; then
+      [[ "$(env_get "$TRIAGE_ENV_FILE" SSL_CERT_FILE)" == "$ssl_cert_file" ]] \
+        || env_set "$TRIAGE_ENV_FILE" SSL_CERT_FILE "$ssl_cert_file"
+    else
+      env_del "$TRIAGE_ENV_FILE" SSL_CERT_FILE
+    fi
+    return
+  fi
+
+  echo "  The agent only runs searches. A read-only Elasticsearch user for the alert and"
+  echo "  event indices is recommended; press Enter to reuse the pipeline's account."
+  TRIAGE_ES_USERNAME="${TRIAGE_ES_USERNAME:-${ES_USERNAME:-}}"
+  TRIAGE_ES_PASSWORD="${TRIAGE_ES_PASSWORD:-${ES_PASSWORD:-}}"
+  prompt TRIAGE_ES_USERNAME "Elasticsearch username for the triage agent" "$TRIAGE_ES_USERNAME"
+  prompt_secret TRIAGE_ES_PASSWORD "Elasticsearch password for the triage agent"
+  require_value TRIAGE_ES_PASSWORD
+  prompt ELASTIC_INDEX "Security alerts index" ".alerts-security.alerts-default"
+
+  AI_PROVIDER="${AI_PROVIDER:-none}"
+  prompt AI_PROVIDER "AI verdicts: none, ollama, claude, openai_compat" "$AI_PROVIDER"
+  OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+  case "$AI_PROVIDER" in
+    ollama)
+      prompt OLLAMA_URL "Ollama URL" "$OLLAMA_URL"
+      prompt OLLAMA_MODEL "Ollama model tag" "llama3.2" ;;
+    claude)
+      prompt_secret ANTHROPIC_API_KEY "Anthropic API key"
+      require_value ANTHROPIC_API_KEY
+      prompt CLAUDE_MODEL "Claude model" "claude-haiku-4-5-20251001" ;;
+    openai_compat)
+      prompt OPENAI_COMPAT_URL "OpenAI-compatible base URL" "http://localhost:1234/v1"
+      prompt_secret OPENAI_COMPAT_KEY "API key (blank if none)"
+      prompt OPENAI_COMPAT_MODEL "Model" "mistral" ;;
+    none) ;;
+    *) die "Unknown AI provider: $AI_PROVIDER" ;;
+  esac
+  if [[ "$MODE" == "docker" && "$AI_PROVIDER" == "ollama" && "$OLLAMA_URL" == *localhost* ]]; then
+    warn "Inside Docker, localhost is the container. Use http://host.docker.internal:11434 or the host IP."
+  fi
+  prompt_secret ABUSEIPDB_API_KEY "AbuseIPDB API key (blank to skip)"
+  prompt_secret VIRUSTOTAL_API_KEY "VirusTotal API key (blank to skip)"
+
+  if (( DRY_RUN )); then
+    printf '  [DRY ] write %s\n' "${TRIAGE_ENV_FILE#"$REPO_ROOT"/}"
+  else
+    local tmp
+    tmp="$(mktemp "$TRIAGE_ENV_FILE.XXXXXX")"
+    {
+      echo "# Generated by deploy.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "# Full option list: addons/alert-triage/.env.example"
+      echo
+      echo "ELASTIC_URL=$(escape_env "$ES_HOST")"
+      echo "ELASTIC_USERNAME=$(escape_env "$TRIAGE_ES_USERNAME")"
+      echo "ELASTIC_PASSWORD=$(escape_env "$TRIAGE_ES_PASSWORD")"
+      echo "ELASTIC_VERIFY_SSL=$ES_VERIFY_CERTS"
+      [[ -n "$ssl_cert_file" ]] && echo "SSL_CERT_FILE=$(escape_env "$ssl_cert_file")"
+      echo "ELASTIC_INDEX=$(escape_env "$ELASTIC_INDEX")"
+      echo "ELASTIC_TIMEOUT=30"
+      echo
+      echo "ABUSEIPDB_API_KEY=$(escape_env "${ABUSEIPDB_API_KEY:-}")"
+      echo "VIRUSTOTAL_API_KEY=$(escape_env "${VIRUSTOTAL_API_KEY:-}")"
+      echo "THREAT_INTEL_TIMEOUT=10"
+      echo
+      echo "AI_PROVIDER=$AI_PROVIDER"
+      [[ -n "${ANTHROPIC_API_KEY:-}" && "$AI_PROVIDER" == "claude" ]] && echo "ANTHROPIC_API_KEY=$(escape_env "$ANTHROPIC_API_KEY")"
+      echo "CLAUDE_MODEL=$(escape_env "${CLAUDE_MODEL:-claude-haiku-4-5-20251001}")"
+      echo "OLLAMA_URL=$(escape_env "$OLLAMA_URL")"
+      echo "OLLAMA_MODEL=$(escape_env "${OLLAMA_MODEL:-llama3.2}")"
+      echo "OPENAI_COMPAT_URL=$(escape_env "${OPENAI_COMPAT_URL:-}")"
+      echo "OPENAI_COMPAT_KEY=$(escape_env "${OPENAI_COMPAT_KEY:-}")"
+      echo "OPENAI_COMPAT_MODEL=$(escape_env "${OPENAI_COMPAT_MODEL:-mistral}")"
+      echo
+      echo "HOST=$listen_in_env"
+      echo "PORT=$TRIAGE_PORT"
+      echo "LOG_LEVEL=INFO"
+      echo "ASSET_INVENTORY_PATH=assets.yml"
+      echo "RELATED_EVENTS_WINDOW_MIN=15"
+      echo "RELATED_EVENTS_MAX=50"
+    } >"$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$TRIAGE_ENV_FILE"
+  fi
+  ok "Wrote add-on .env (AI: $AI_PROVIDER, TLS verification: $ES_VERIFY_CERTS)"
+  if [[ ! -f "$TRIAGE_DIR/assets.yml" ]]; then
+    info "No asset inventory yet. Copy addons/alert-triage/assets.example.yml to assets.yml and"
+    info "describe your hosts; verdicts are much better with host criticality and roles."
+  fi
+}
+
 # ── venv installs ────────────────────────────────────────────────────────────
 make_venv() {
   local dir="$1"
@@ -569,6 +782,22 @@ install_maintenance_venv() {
     ok "Add-on verify_setup.py passed"
   else
     warn "Add-on verify_setup.py reported problems; fix addons/siem-maintenance/.env and re-run it"
+  fi
+}
+
+install_triage_venv() {
+  step "Installing Alert Triage Agent (venv)"
+  make_venv "$TRIAGE_VENV_DIR"
+  run "$TRIAGE_VENV_DIR/bin/python" -m pip install --quiet -r "$TRIAGE_DIR/requirements.txt" \
+    -c "$TRIAGE_CONSTRAINTS"
+  ok "Installed triage dependencies"
+  (( DRY_RUN )) && return
+  # Importing server builds the app, MCP tools, and AI provider from .env without serving.
+  local out
+  if out="$(cd "$TRIAGE_DIR" && "$TRIAGE_VENV_DIR/bin/python" -c 'import server' 2>&1)"; then
+    ok "Triage agent loads with this configuration"
+  else
+    warn "Triage agent failed to load: $(tail -1 <<<"$out")"
   fi
 }
 
@@ -645,6 +874,74 @@ install_maintenance_unit() {
   ok "$MAINTENANCE_UNIT enabled and started (logs: journalctl -u $MAINTENANCE_UNIT -f)"
 }
 
+# Host to probe /health on: the bind address, or loopback when bound to all interfaces.
+triage_probe_host() {
+  if [[ "$TRIAGE_LISTEN" == "0.0.0.0" || "$TRIAGE_LISTEN" == "::" ]] || is_loopback "$TRIAGE_LISTEN"; then
+    printf '127.0.0.1'
+  else
+    printf '%s' "$TRIAGE_LISTEN"
+  fi
+}
+
+wait_for_triage() {
+  (( DRY_RUN )) && return
+  local url i
+  url="http://$(triage_probe_host):$TRIAGE_PORT/health"
+  for i in $(seq 1 15); do
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      ok "Triage agent answering at $url"
+      return
+    fi
+    sleep 1
+  done
+  warn "No answer from $url yet; check the service logs"
+}
+
+install_triage_unit() {
+  step "systemd: $TRIAGE_UNIT"
+  if ! unit_owned_or_absent "$TRIAGE_UNIT" "$TRIAGE_DIR"; then
+    warn "Left $TRIAGE_UNIT unchanged"
+    return
+  fi
+  local unit
+  unit="$(cat <<EOF
+[Unit]
+Description=Alert Triage Agent (SOC-in-a-Box add-on)
+Documentation=https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$TRIAGE_DIR
+# server.py loads $TRIAGE_DIR/.env itself (python-dotenv)
+ExecStart=$TRIAGE_VENV_DIR/bin/python $TRIAGE_DIR/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alert-triage
+
+[Install]
+WantedBy=multi-user.target
+EOF
+)"
+  if (( DRY_RUN )); then
+    printf '  [DRY ] write /etc/systemd/system/%s:\n' "$TRIAGE_UNIT"
+    sed 's/^/           /' <<<"$unit"
+  else
+    printf '%s\n' "$unit" | sudo tee "/etc/systemd/system/$TRIAGE_UNIT" >/dev/null
+  fi
+  run sudo systemctl daemon-reload
+  run sudo systemctl enable "$TRIAGE_UNIT"
+  run sudo systemctl restart "$TRIAGE_UNIT"
+  ok "$TRIAGE_UNIT enabled and started (logs: journalctl -u $TRIAGE_UNIT -f)"
+  wait_for_triage
+}
+
 # ── Docker ───────────────────────────────────────────────────────────────────
 deploy_docker() {
   step "Docker Compose"
@@ -660,12 +957,22 @@ deploy_docker() {
     args+=(--profile maintenance)
     (( LOCAL_ES )) || services+=(siem-maintenance)
   fi
+  if [[ "$WITH_TRIAGE" == "yes" ]]; then
+    args+=(--profile triage)
+    (( LOCAL_ES )) || services+=(alert-triage)
+    run mkdir -p "$TRIAGE_CERT_DIR"
+  fi
+  # The triage port mapping is interpolated from these; compose defaults to 127.0.0.1:8000.
+  local compose_env=(env TRIAGE_BIND="$TRIAGE_LISTEN" TRIAGE_PORT="$TRIAGE_PORT")
   if (( LOCAL_ES )); then
-    run docker compose "${args[@]}" up -d --build
+    run "${compose_env[@]}" docker compose "${args[@]}" up -d --build
   else
-    run docker compose "${args[@]}" up -d --build --no-deps "${services[@]}"
+    run "${compose_env[@]}" docker compose "${args[@]}" up -d --build --no-deps "${services[@]}"
   fi
   ok "Containers started"
+  if [[ "$WITH_TRIAGE" == "yes" ]]; then
+    wait_for_triage
+  fi
   info "Status: docker compose ${args[*]} ps"
   info "Logs:   docker compose ${args[*]} logs -f"
 }
@@ -676,6 +983,14 @@ summary() {
   (( DRY_RUN )) && echo "  Dry run: nothing was changed."
   echo "  Detection pipeline:   $MODE"
   echo "  Maintenance add-on:   $WITH_MAINTENANCE"
+  echo "  Triage add-on:        $WITH_TRIAGE"
+  if [[ "$WITH_TRIAGE" == "yes" ]]; then
+    echo "    Web UI / API:       http://$(triage_probe_host):$TRIAGE_PORT/"
+    echo "    MCP endpoint:       http://$(triage_probe_host):$TRIAGE_PORT/mcp/mcp"
+    if is_loopback "$TRIAGE_LISTEN"; then
+      echo "    From another machine: ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>"
+    fi
+  fi
   if [[ "$MODE" == "venv" ]]; then
     echo
     echo "  Sanity checks (see DEPLOYMENT.md section 6):"
@@ -691,13 +1006,16 @@ summary() {
       if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
         echo "    addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py"
       fi
+      if [[ "$WITH_TRIAGE" == "yes" ]]; then
+        echo "    (cd addons/alert-triage && .venv/bin/python server.py)"
+      fi
     fi
   fi
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
-  echo "Linux Anomaly Detection deployment ($REPO_ROOT)"
+  echo "SOC-in-a-Box deployment ($REPO_ROOT)"
   (( DRY_RUN )) && echo "DRY RUN: no changes will be made"
   preflight
   configure_detection
@@ -712,6 +1030,7 @@ main() {
       configure_maintenance
     fi
   fi
+  [[ "$WITH_TRIAGE" == "yes" ]] && configure_triage
 
   if [[ "$MODE" == "docker" ]]; then
     deploy_docker
@@ -720,10 +1039,14 @@ main() {
     if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
       install_maintenance_venv
     fi
+    [[ "$WITH_TRIAGE" == "yes" ]] && install_triage_venv
     if (( INSTALL_SYSTEMD )) && have_systemd; then
       install_detection_unit
       if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
         install_maintenance_unit
+      fi
+      if [[ "$WITH_TRIAGE" == "yes" ]]; then
+        install_triage_unit
       fi
     elif (( INSTALL_SYSTEMD )); then
       warn "systemd not available; skipping service units"

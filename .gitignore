@@ -10,6 +10,9 @@ build/
 *.whl
 
 # Environment & secrets
+# Triage add-on: local asset inventory and generated CA bundle
+addons/alert-triage/assets.yml
+addons/alert-triage/certs/
 config/certs/
 .venv/
 .env

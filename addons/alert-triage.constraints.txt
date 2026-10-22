@@ -1,0 +1,8 @@
+# pip constraints applied when SOC-in-a-Box installs addons/alert-triage.
+# Kept outside the subtree so upstream pulls stay clean; drop entries once
+# upstream pins them itself.
+#
+# server.py imports mcp.server.fastmcp.FastMCP, which MCP SDK 2.x renamed
+# (FastMCP -> MCPServer). Upstream's "mcp[cli]>=1.2.0" now resolves to 2.x and
+# the agent fails to start.
+mcp<2

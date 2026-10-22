@@ -33,17 +33,18 @@ Stack. The detection engine is always installed; add-ons are optional, and
 | **Elastic Stack** (Elasticsearch, Kibana, Fleet, Elastic Agent with Elastic Defend, Suricata) | Collects and stores endpoint, network, and authentication telemetry; analyst UI | Deployed separately ([Elastic Security docs](https://www.elastic.co/docs/solutions/security/get-started)), or the bundled demo stack via `deploy.sh --mode docker --local-es` | Foundation |
 | **ML anomaly detection engine** | Learns normal behavior per host, user, and process; turns what does not fit into filtered, enriched, ATT&CK-mapped alerts in Kibana | Repository root (described below) | Core |
 | **SIEM Maintenance Agent** | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | [`addons/siem-maintenance/`](addons/siem-maintenance/) | Optional add-on |
+| **Alert Triage Agent** | AI-assisted investigation of Elastic Security alerts: pulls related events, threat intel, and asset context, and gives a TP/FP verdict; web UI, REST API, and an MCP server for AI clients | [`addons/alert-triage/`](addons/alert-triage/) | Optional add-on |
 | DPI plugins (MOSIP first), playbooks, training scenarios | Sector-specific detection content and exercises | Not in this repository yet | Planned |
 
 ```bash
 ./deploy.sh                       # detection engine; asks about each add-on
 ./deploy.sh --with-maintenance    # detection engine + SIEM Maintenance Agent
+./deploy.sh --with-triage         # detection engine + Alert Triage Agent
 ```
 
 The rest of this README covers the detection engine, which is the core of this
 repository. See [Automated install](#automated-install) for `deploy.sh` and
-[Optional add-on: SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
-for the agent.
+[Add-ons](#add-ons) for the agents.
 
 ## Contents
 
@@ -57,7 +58,8 @@ problems are really "the data isn't there yet."
   [How it works](#how-it-works) · [Quickstart (manual install)](#quickstart) ·
   [Running it continuously](#running-it-continuously) · [Did it work?](#did-it-work) ·
   [Configuration](#configuration)
-- **Add-ons:** [SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
+- **Add-ons:** [SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent) ·
+  [Alert Triage Agent](#optional-add-on-alert-triage-agent)
 - **Reference:** [Troubleshooting](#troubleshooting) ·
   [Project structure](#project-structure) · [Development](#development) ·
   [Contributing](#contributing) · [License](#license)
@@ -534,6 +536,43 @@ git subtree pull --prefix=addons/siem-maintenance --squash \
   https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring.git main
 ```
 
+### Optional add-on: Alert Triage Agent
+
+[`addons/alert-triage/`](addons/alert-triage/) is the
+[Alert Triage Agent](https://github.com/masterlion-hash/Alert-Triage-Agent). Give
+it an alert ID and it investigates: it pulls the alert, the related process and
+network events around it, AbuseIPDB / VirusTotal reputation for its indicators,
+and your asset inventory, then asks an LLM (local Ollama, Claude, or any
+OpenAI-compatible API) for a true-positive / false-positive verdict with its
+reasoning. You use it through a web UI, a REST API, or as an MCP server, so an
+AI client such as Claude Desktop can run the investigation tools itself.
+
+```bash
+./deploy.sh --with-triage                        # reuses the ES settings from .env
+./deploy.sh --with-triage --triage-port 8080     # different port
+```
+
+Then open `http://127.0.0.1:8000/` (MCP endpoint: `http://127.0.0.1:8000/mcp/mcp`).
+
+**It has no login.** Anyone who can reach its port can read every open alert
+and run investigations with its Elasticsearch credentials. `deploy.sh`
+therefore binds it to `127.0.0.1` only. Reach it from another machine with an
+SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <host>`), or put it behind a reverse
+proxy that does authentication. Only use `--triage-listen 0.0.0.0` on a network
+you trust. It only ever runs searches, so give it a read-only Elasticsearch user
+(`deploy.sh` asks for separate credentials).
+
+For better verdicts, copy `addons/alert-triage/assets.example.yml` to
+`addons/alert-triage/assets.yml` and describe your hosts (criticality, role,
+owner). That file stays out of git.
+
+The directory is a `git subtree`. To pull upstream changes:
+
+```bash
+git subtree pull --prefix=addons/alert-triage --squash \
+  https://github.com/masterlion-hash/Alert-Triage-Agent.git main
+```
+
 ## Reference
 
 ### Troubleshooting
@@ -571,6 +610,7 @@ linux-anomaly-detection/
 ├── benign_lists.py         # Graduated allowlist with dampening
 ├── deploy.sh               # Automated deployment (venv/systemd or Docker)
 ├── addons/siem-maintenance/  # Optional SIEM Maintenance Agent (git subtree)
+├── addons/alert-triage/      # Optional Alert Triage Agent (git subtree)
 ├── backends/               # SIEM backend interface (Elasticsearch)
 ├── features/               # Modular feature extractors
 ├── models/                 # ML model wrappers (PyOD, ensemble)
