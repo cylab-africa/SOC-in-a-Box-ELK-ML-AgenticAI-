@@ -45,6 +45,120 @@ repository. See [Automated install](#automated-install) for `deploy.sh` and
 [Optional add-on: SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
 for the agent.
 
+## Contents
+
+**New here?** Read [Before you start](#before-you-start) first. It takes two
+minutes and tells you whether this will work in your environment — most setup
+problems are really "the data isn't there yet."
+
+- **Getting started:** [Before you start](#before-you-start) ·
+  [Automated install](#automated-install) · [Docker](#docker)
+- **Detection engine:** [What it detects](#what-it-detects) ·
+  [How it works](#how-it-works) · [Quickstart (manual install)](#quickstart) ·
+  [Running it continuously](#running-it-continuously) · [Did it work?](#did-it-work) ·
+  [Configuration](#configuration)
+- **Add-ons:** [SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
+- **Reference:** [Troubleshooting](#troubleshooting) ·
+  [Project structure](#project-structure) · [Development](#development) ·
+  [Contributing](#contributing) · [License](#license)
+
+## Getting started
+
+### Before you start
+
+This is **not** a standalone tool. It reads from an existing Elasticsearch
+cluster and does nothing useful without one. Here is the honest list.
+
+#### You must have
+
+| Requirement | Why | How to check |
+|---|---|---|
+| **Python 3.10 or newer** | Uses 3.10+ type syntax | `python3 --version` |
+| **An Elasticsearch 8.x cluster** you can reach, with a username and password | This is both the input and the output | `curl -u USER:PASS https://YOUR_ES:9200` |
+| **Elastic Agent installed on the Linux machines you want to watch**, with the **Elastic Defend** integration enabled | Produces the process and network events the models learn from | See the next section |
+| **At least 7 days of that data already collected** | Models need history to learn "normal"; 7 days is the default training window for process data | See the next section |
+
+#### The part people miss
+
+The models do not read `/var/log` or run on the machine being monitored. They
+read **Elastic Agent data streams** out of Elasticsearch. Specifically:
+
+| Data stream | Comes from | Used for |
+|---|---|---|
+| `.ds-logs-endpoint.events.process-default-*` | Elastic Defend integration | process detection |
+| `.ds-logs-endpoint.events.network-default-*` | Elastic Defend integration | network detection |
+| `.ds-logs-endpoint.events.file-default-*` | Elastic Defend integration | file activity |
+| `.ds-logs-system.auth-default-*` | System integration | login / sudo detection |
+
+So before anything here will work, you need Elastic Agent enrolled in Fleet on
+your Linux hosts with **Elastic Defend** (for endpoint events) and **System**
+(for auth logs) added to its policy. That is standard Elastic setup and is
+documented by Elastic — this project assumes it is already done.
+
+Run this to confirm you have the data. It should return a non-zero count:
+
+```bash
+curl -u "$ES_USERNAME:$ES_PASSWORD" \
+  "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"
+```
+
+- **A number in the thousands or more** → you are ready.
+- **`{"count":0,...}`** → Elastic Agent is not shipping endpoint data yet. Fix
+  that first; nothing downstream will produce results.
+- **`index_not_found_exception`** → the integration has never run, or your
+  cluster names its indices differently (see [Step 3](#step-3--check-your-index-names-match)).
+
+#### If you don't have this yet
+
+Be aware of what each shortcut does and does not give you:
+
+- **No Elasticsearch at all?** The bundled Docker setup starts Elasticsearch
+  8.12 and Kibana 8.12 for you (see [Docker](#docker)). It does **not** include
+  Elastic Agent, so you will still need to enroll an agent against it to get
+  endpoint data.
+- **Have the cluster but no history yet?** Install the agent, then come back in
+  a week. You can still complete steps 1-3 now and verify your configuration
+  with `--dry-run`, which needs no data.
+- **Just want to read the code?** Steps 1-2 plus the
+  [architecture guide](docs/ARCHITECTURE.md) will make sense without a cluster.
+
+### Automated install
+
+`deploy.sh` does the install, `.env` setup, connectivity check, and systemd
+units in one pass, and asks whether to add the optional
+[SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent):
+
+```bash
+git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
+cd SOC-in-a-Box-ELK-ML-AgenticAI-
+./deploy.sh --dry-run        # see what it would do first
+./deploy.sh                  # interactive
+./deploy.sh --with-maintenance --mode docker   # or: everything in containers
+```
+
+Run `./deploy.sh --help` for all options, including `--non-interactive` for
+CI/automation. [DEPLOYMENT.md](DEPLOYMENT.md#0-automated-deployment-deploysh)
+covers it in full. The manual steps below are what the script automates.
+Models are not trained by the script: the service starts a background
+training run on its first cycle, and detections begin once it finishes. To
+train up front instead, run Step 4 before starting the service.
+
+### Docker
+
+Starts Elasticsearch 8.12, Kibana 8.12, and the detection container together:
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up
+```
+
+This does **not** include Elastic Agent, so you still need to enroll an agent
+to get endpoint data into it. See
+[DEPLOYMENT.md](DEPLOYMENT.md#5-docker-deployment) for pointing the detection
+container at an existing production cluster instead.
+
+Add `--profile maintenance` to also start the SIEM Maintenance Agent
+container (needs `addons/siem-maintenance/.env`, which `deploy.sh` writes).
+
 ## The detection engine
 
 **Finds suspicious activity on Linux servers that rule-based detection misses, and sends it to Kibana as triaged alerts.**
@@ -92,106 +206,83 @@ Everything outside the "This project" box already exists in a normal Elastic
 deployment. The detection engine is the new piece, and it never runs on the machines
 being watched — it only needs network access to Elasticsearch.
 
-**New here?** Read [Before you start](#before-you-start) first. It takes two
-minutes and tells you whether this will work in your environment — most setup
-problems are really "the data isn't there yet."
+### What it detects
 
-- [What is in this repository](#what-is-in-this-repository)
-- [Automated install](#automated-install)
-- [Before you start](#before-you-start)
-- [Quickstart](#quickstart)
-- [Did it work?](#did-it-work)
-- [Troubleshooting](#troubleshooting)
-- [Configuration](#configuration)
-- [What it detects](#what-it-detects)
-- [How it works](#how-it-works)
+7 data groups (process, network, user, discovery, metadata, auth, host) across
+20 detection jobs, using an ensemble of Isolation Forest, Local Outlier Factor,
+One-Class SVM, PCA, and an AutoEncoder. Every detection maps to at least one
+MITRE ATT&CK technique:
 
----
+| Technique | ID | Detection Job |
+|-----------|----|---------------|
+| Command and Scripting Interpreter | T1059 | rare_process_on_host, suspicious_cmd_chains |
+| Valid Accounts | T1078 | rare_user_activity, anomalous_login_times |
+| Abuse Elevation Control | T1548 | rare_sudo_usage |
+| Network Service Scanning | T1046 | host_discovery_patterns |
+| Application Layer Protocol | T1071 | unusual_connections |
+| Non-Standard Port | T1571 | anomalous_ports |
+| Ingress Tool Transfer | T1105 | (suspicious command regex) |
+| Brute Force | T1110 | brute_force_detection |
+| Masquerading | T1036 | rare_process_host_combo, rare_metadata_process |
+| DNS over Application Layer | T1071.004 | rare_dns_queries |
+| Protocol Tunneling | T1572 | unusual_connections |
 
-## Before you start
+Other capabilities: source-event enrichment (pulls the real command line and IPs
+behind each anomaly), graduated allowlists that dampen repeat benign behavior
+instead of permanently whitelisting it, kill-chain correlation across ATT&CK
+stages, and adaptive thresholds that account for business hours and recent
+false-positive pressure.
 
-This is **not** a standalone tool. It reads from an existing Elasticsearch
-cluster and does nothing useful without one. Here is the honest list.
+### How it works
 
-### You must have
+Eight stages run between "a log lands in Elasticsearch" and "an alert reaches an
+analyst". Stages 6A-6C are drawn in parallel because they are independent
+transformations of the same anomaly set:
 
-| Requirement | Why | How to check |
-|---|---|---|
-| **Python 3.10 or newer** | Uses 3.10+ type syntax | `python3 --version` |
-| **An Elasticsearch 8.x cluster** you can reach, with a username and password | This is both the input and the output | `curl -u USER:PASS https://YOUR_ES:9200` |
-| **Elastic Agent installed on the Linux machines you want to watch**, with the **Elastic Defend** integration enabled | Produces the process and network events the models learn from | See the next section |
-| **At least 7 days of that data already collected** | Models need history to learn "normal"; 7 days is the default training window for process data | See the next section |
+```mermaid
+flowchart TD
+  I["1. Ingest<br/>datamanager.py"]
+  P["2. Normalize and resolve entities<br/>data.py, entity_alignment.py"]
+  F["3. Feature engineering<br/>features/"]
+  M["4. Train / load the ensemble<br/>IsolationForest, LOF, OCSVM,<br/>PCA, AutoEncoder<br/>model_manager.py"]
+  S["5. Score and threshold<br/>adaptive, business-hours aware<br/>anomaly_detector.py"]
 
-### The part people miss
+  A["6A. Filter false positives<br/>graduated allowlists<br/>benign_lists.py"]
+  B["6B. Enrich from raw events<br/>command line, IPs, parent process<br/>push_all_anomalies.py"]
+  C["6C. Map to MITRE techniques<br/>push_all_anomalies.py"]
 
-The models do not read `/var/log` or run on the machine being monitored. They
-read **Elastic Agent data streams** out of Elasticsearch. Specifically:
+  K["7. Kill-chain correlation<br/>one story per entity, not N alerts<br/>post_correlation.py"]
+  O["8. Push to Elasticsearch<br/>push_all_anomalies.py, backends/"]
 
-| Data stream | Comes from | Used for |
-|---|---|---|
-| `.ds-logs-endpoint.events.process-default-*` | Elastic Defend integration | process detection |
-| `.ds-logs-endpoint.events.network-default-*` | Elastic Defend integration | network detection |
-| `.ds-logs-endpoint.events.file-default-*` | Elastic Defend integration | file activity |
-| `.ds-logs-system.auth-default-*` | System integration | login / sudo detection |
+  I --> P --> F --> M --> S
+  S --> A
+  S --> B
+  S --> C
+  A --> K
+  B --> K
+  C --> K
+  K --> O
+  O -.->|"confirmed detections feed allowlist<br/>dampening and threshold adaptation"| I
 
-So before anything here will work, you need Elastic Agent enrolled in Fleet on
-your Linux hosts with **Elastic Defend** (for endpoint events) and **System**
-(for auth logs) added to its policy. That is standard Elastic setup and is
-documented by Elastic — this project assumes it is already done.
-
-Run this to confirm you have the data. It should return a non-zero count:
-
-```bash
-curl -u "$ES_USERNAME:$ES_PASSWORD" \
-  "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"
+  classDef focus stroke:#2f81f7,stroke-width:3px
+  class K focus
 ```
 
-- **A number in the thousands or more** → you are ready.
-- **`{"count":0,...}`** → Elastic Agent is not shipping endpoint data yet. Fix
-  that first; nothing downstream will produce results.
-- **`index_not_found_exception`** → the integration has never run, or your
-  cluster names its indices differently (see [Step 3](#step-3--check-your-index-names-match)).
+Stage 7 is the one that decides whether an analyst can actually work the queue.
+A rare process, an odd outbound connection, and an unusual sudo call on the same
+host arrive as one narrative rather than three unrelated alerts.
 
-### If you don't have this yet
+The dashed arrow is why the system gets quieter over time: what it confirms on
+one cycle shapes what it suppresses on the next.
 
-Be aware of what each shortcut does and does not give you:
+For each stage in detail, where this sits in a full SOC deployment, and the
+module map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-- **No Elasticsearch at all?** The bundled Docker setup starts Elasticsearch
-  8.12 and Kibana 8.12 for you (see [Docker](#docker)). It does **not** include
-  Elastic Agent, so you will still need to enroll an agent against it to get
-  endpoint data.
-- **Have the cluster but no history yet?** Install the agent, then come back in
-  a week. You can still complete steps 1-3 now and verify your configuration
-  with `--dry-run`, which needs no data.
-- **Just want to read the code?** Steps 1-2 plus the
-  [architecture guide](docs/ARCHITECTURE.md) will make sense without a cluster.
-
-## Automated install
-
-`deploy.sh` does the install, `.env` setup, connectivity check, and systemd
-units in one pass, and asks whether to add the optional
-[SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent):
-
-```bash
-git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
-cd SOC-in-a-Box-ELK-ML-AgenticAI-
-./deploy.sh --dry-run        # see what it would do first
-./deploy.sh                  # interactive
-./deploy.sh --with-maintenance --mode docker   # or: everything in containers
-```
-
-Run `./deploy.sh --help` for all options, including `--non-interactive` for
-CI/automation. [DEPLOYMENT.md](DEPLOYMENT.md#0-automated-deployment-deploysh)
-covers it in full. The manual steps below are what the script automates.
-Models are not trained by the script: the service starts a background
-training run on its first cycle, and detections begin once it finishes. To
-train up front instead, run Step 4 before starting the service.
-
-## Quickstart
+### Quickstart
 
 Six steps. Each one ends with how to tell it worked before you move on.
 
-### Step 1 — Install
+#### Step 1 — Install
 
 ```bash
 git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
@@ -202,7 +293,7 @@ pip install -e ".[dev]"
 
 **Worked if:** `python -c "import anomaly_detector"` prints nothing (no error).
 
-### Step 2 — Point it at Elasticsearch
+#### Step 2 — Point it at Elasticsearch
 
 ```bash
 cp .env.example .env
@@ -223,7 +314,7 @@ don't use MLflow.
 [The part people miss](#the-part-people-miss) returns a count using these
 credentials.
 
-### Step 3 — Check your index names match
+#### Step 3 — Check your index names match
 
 This is the single most common reason a run produces nothing. The defaults in
 `.env.example` match a standard Elastic Agent install. If your cluster names
@@ -246,7 +337,7 @@ curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/_cat/indices/*endpoint*?h=index"
 **Worked if:** every pattern above matches at least one real index on your
 cluster. `DEPLOYMENT.md` section 2 walks through field-name differences too.
 
-### Step 4 — Train the models
+#### Step 4 — Train the models
 
 Start with a dry run. It confirms the tool and your data-group configuration
 load correctly without touching Elasticsearch or training anything:
@@ -275,7 +366,7 @@ Seeing `Insufficient samples for <name>: 1 < 50` is **normal** — that entity
 doesn't have enough history for its own model yet. Only worry if *every* entity
 reports it, which means not enough data overall.
 
-### Step 5 — Run detection once
+#### Step 5 — Run detection once
 
 ```bash
 python main.py
@@ -299,7 +390,7 @@ Detection Summary:
 and new files appear in `results/` named `ml_only_<group>_data_*.csv` and
 `ml_only_<group>_report_*.md`.
 
-### Step 6 — Send alerts to Kibana
+#### Step 6 — Send alerts to Kibana
 
 ```bash
 python push_all_anomalies.py
@@ -315,6 +406,7 @@ curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/ml-anomalies-custom-*/_count"
 ```
 
 Then add `ml-anomalies-custom-*` as a data view in Kibana to see them.
+
 
 ### Running it continuously
 
@@ -370,7 +462,8 @@ Then `sudo systemctl enable --now realtime_service`. Note that with
 `StandardOutput=null` and reading `logs/` instead, or capping journal size with
 `SystemMaxUse` in `/etc/systemd/journald.conf`.
 
-## Did it work?
+
+### Did it work?
 
 Check these four in order. The first one that fails tells you where to look.
 
@@ -381,25 +474,7 @@ Check these four in order. The first one that fails tells you where to look.
 | 3 | Detection ran | `grep "Anomalies detected" logs/linux_anomaly_detection.log \| tail -1` | a non-zero number |
 | 4 | Output reached ES | `curl -u U:P "$ES_HOST/ml-anomalies-custom-*/_count"` | count > 0 |
 
-## Troubleshooting
-
-| What you see | What it means | What to do |
-|---|---|---|
-| `index_not_found_exception` | Index pattern in `.env` doesn't match your cluster | Run the `_cat/indices` command in [Step 3](#step-3--check-your-index-names-match) and correct the patterns |
-| `{"count":0}` on the input check | Elastic Agent isn't shipping endpoint data | Confirm the agent is healthy in Fleet and that **Elastic Defend** is in its policy |
-| `ERROR - process_detection: no results produced for v3_...` | The job found no matching data | Usually wrong index pattern, or the time window has no events. Check 1 and 3 in [Did it work?](#did-it-work) |
-| `Insufficient samples for X: 1 < 50` | That entity lacks history for its own model | Normal in small or new environments. Collect more data, or lower `ml.min_samples` in `config/default.yaml` |
-| `ERROR - Missing model for entity <name>` | Scoring ran before that group was trained | Run `python train_models_background.py --all` and re-run detection |
-| `TLS certificate verification failed. Set ES_CA_CERT=...` | The cluster's certificate is signed by a CA this host doesn't trust (the default for self-managed Elasticsearch) | Copy the node's `config/certs/http_ca.crt` to `config/certs/ca.pem` and set `ES_CA_CERT=config/certs/ca.pem` in `.env`. `ES_VERIFY_CERTS=false` also works but is lab-only |
-| `401 Unauthorized` / `AuthenticationException` | Bad credentials | Recheck `ES_USERNAME` / `ES_PASSWORD`; confirm with the `curl` command in Step 2 |
-| Detection runs but no alerts in Kibana | Step 6 not run, or no data view | Run `push_all_anomalies.py`, then add `ml-anomalies-custom-*` as a Kibana data view |
-| `results/` growing to tens of GB | Old output not being cleaned | `realtime_service.py` prunes automatically; if you run `main.py` on a cron, delete `results/ml_only_*` files older than a few days yourself |
-| Logs full of `Context enrichment partial failure ... unexpected keyword argument 'size'` | You are on a build from before this was fixed | Pull the latest `main`. Alerts were missing `score_percentile` and `entity_anomaly_count_7d`; detection itself was unaffected |
-
-Still stuck? Open an issue with your Python version, Elasticsearch version, and
-the last 50 lines of `logs/linux_anomaly_detection.log`.
-
-## Configuration
+### Configuration
 
 Start with [DEPLOYMENT.md](DEPLOYMENT.md) — it walks through every file you need
 to touch, which are required and which are optional, and what to put in each.
@@ -430,23 +505,9 @@ ml:
 
 **All environment variables.** See [.env.example](.env.example).
 
-## Docker
+## Add-ons
 
-Starts Elasticsearch 8.12, Kibana 8.12, and the detection container together:
-
-```bash
-docker compose --env-file .env -f docker/docker-compose.yml up
-```
-
-This does **not** include Elastic Agent, so you still need to enroll an agent
-to get endpoint data into it. See
-[DEPLOYMENT.md](DEPLOYMENT.md#5-docker-deployment) for pointing the detection
-container at an existing production cluster instead.
-
-Add `--profile maintenance` to also start the SIEM Maintenance Agent
-container (needs `addons/siem-maintenance/.env`, which `deploy.sh` writes).
-
-## Optional add-on: SIEM Maintenance Agent
+### Optional add-on: SIEM Maintenance Agent
 
 [`addons/siem-maintenance/`](addons/siem-maintenance/) is the
 [SIEM Maintenance Agent](https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring):
@@ -473,79 +534,27 @@ git subtree pull --prefix=addons/siem-maintenance --squash \
   https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring.git main
 ```
 
-## What it detects
+## Reference
 
-7 data groups (process, network, user, discovery, metadata, auth, host) across
-20 detection jobs, using an ensemble of Isolation Forest, Local Outlier Factor,
-One-Class SVM, PCA, and an AutoEncoder. Every detection maps to at least one
-MITRE ATT&CK technique:
+### Troubleshooting
 
-| Technique | ID | Detection Job |
-|-----------|----|---------------|
-| Command and Scripting Interpreter | T1059 | rare_process_on_host, suspicious_cmd_chains |
-| Valid Accounts | T1078 | rare_user_activity, anomalous_login_times |
-| Abuse Elevation Control | T1548 | rare_sudo_usage |
-| Network Service Scanning | T1046 | host_discovery_patterns |
-| Application Layer Protocol | T1071 | unusual_connections |
-| Non-Standard Port | T1571 | anomalous_ports |
-| Ingress Tool Transfer | T1105 | (suspicious command regex) |
-| Brute Force | T1110 | brute_force_detection |
-| Masquerading | T1036 | rare_process_host_combo, rare_metadata_process |
-| DNS over Application Layer | T1071.004 | rare_dns_queries |
-| Protocol Tunneling | T1572 | unusual_connections |
+| What you see | What it means | What to do |
+|---|---|---|
+| `index_not_found_exception` | Index pattern in `.env` doesn't match your cluster | Run the `_cat/indices` command in [Step 3](#step-3--check-your-index-names-match) and correct the patterns |
+| `{"count":0}` on the input check | Elastic Agent isn't shipping endpoint data | Confirm the agent is healthy in Fleet and that **Elastic Defend** is in its policy |
+| `ERROR - process_detection: no results produced for v3_...` | The job found no matching data | Usually wrong index pattern, or the time window has no events. Check 1 and 3 in [Did it work?](#did-it-work) |
+| `Insufficient samples for X: 1 < 50` | That entity lacks history for its own model | Normal in small or new environments. Collect more data, or lower `ml.min_samples` in `config/default.yaml` |
+| `ERROR - Missing model for entity <name>` | Scoring ran before that group was trained | Run `python train_models_background.py --all` and re-run detection |
+| `TLS certificate verification failed. Set ES_CA_CERT=...` | The cluster's certificate is signed by a CA this host doesn't trust (the default for self-managed Elasticsearch) | Copy the node's `config/certs/http_ca.crt` to `config/certs/ca.pem` and set `ES_CA_CERT=config/certs/ca.pem` in `.env`. `ES_VERIFY_CERTS=false` also works but is lab-only |
+| `401 Unauthorized` / `AuthenticationException` | Bad credentials | Recheck `ES_USERNAME` / `ES_PASSWORD`; confirm with the `curl` command in Step 2 |
+| Detection runs but no alerts in Kibana | Step 6 not run, or no data view | Run `push_all_anomalies.py`, then add `ml-anomalies-custom-*` as a Kibana data view |
+| `results/` growing to tens of GB | Old output not being cleaned | `realtime_service.py` prunes automatically; if you run `main.py` on a cron, delete `results/ml_only_*` files older than a few days yourself |
+| Logs full of `Context enrichment partial failure ... unexpected keyword argument 'size'` | You are on a build from before this was fixed | Pull the latest `main`. Alerts were missing `score_percentile` and `entity_anomaly_count_7d`; detection itself was unaffected |
 
-Other capabilities: source-event enrichment (pulls the real command line and IPs
-behind each anomaly), graduated allowlists that dampen repeat benign behavior
-instead of permanently whitelisting it, kill-chain correlation across ATT&CK
-stages, and adaptive thresholds that account for business hours and recent
-false-positive pressure.
+Still stuck? Open an issue with your Python version, Elasticsearch version, and
+the last 50 lines of `logs/linux_anomaly_detection.log`.
 
-## How it works
-
-Eight stages run between "a log lands in Elasticsearch" and "an alert reaches an
-analyst". Stages 6A-6C are drawn in parallel because they are independent
-transformations of the same anomaly set:
-
-```mermaid
-flowchart TD
-  I["1. Ingest<br/>datamanager.py"]
-  P["2. Normalize and resolve entities<br/>data.py, entity_alignment.py"]
-  F["3. Feature engineering<br/>features/"]
-  M["4. Train / load the ensemble<br/>IsolationForest, LOF, OCSVM,<br/>PCA, AutoEncoder<br/>model_manager.py"]
-  S["5. Score and threshold<br/>adaptive, business-hours aware<br/>anomaly_detector.py"]
-
-  A["6A. Filter false positives<br/>graduated allowlists<br/>benign_lists.py"]
-  B["6B. Enrich from raw events<br/>command line, IPs, parent process<br/>push_all_anomalies.py"]
-  C["6C. Map to MITRE techniques<br/>push_all_anomalies.py"]
-
-  K["7. Kill-chain correlation<br/>one story per entity, not N alerts<br/>post_correlation.py"]
-  O["8. Push to Elasticsearch<br/>push_all_anomalies.py, backends/"]
-
-  I --> P --> F --> M --> S
-  S --> A
-  S --> B
-  S --> C
-  A --> K
-  B --> K
-  C --> K
-  K --> O
-  O -.->|"confirmed detections feed allowlist<br/>dampening and threshold adaptation"| I
-
-  classDef focus stroke:#2f81f7,stroke-width:3px
-  class K focus
-```
-
-Stage 7 is the one that decides whether an analyst can actually work the queue.
-A rare process, an odd outbound connection, and an unusual sudo call on the same
-host arrive as one narrative rather than three unrelated alerts.
-
-The dashed arrow is why the system gets quieter over time: what it confirms on
-one cycle shapes what it suppresses on the next.
-
-For each stage in detail, where this sits in a full SOC deployment, and the
-module map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
-
-## Project structure
+### Project structure
 
 ```
 linux-anomaly-detection/
@@ -575,7 +584,7 @@ linux-anomaly-detection/
 └── benchmarks/             # Performance benchmarking
 ```
 
-## Development
+### Development
 
 ```bash
 # Install with dev dependencies
@@ -591,10 +600,10 @@ ruff check .
 mypy --ignore-missing-imports *.py
 ```
 
-## Contributing
+### Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## License
+### License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
