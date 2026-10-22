@@ -1,4 +1,51 @@
-# Linux Security Anomaly Detection
+# SOC-in-a-Box
+
+**An open-source, AI-enabled security operations platform for Digital Public Infrastructure, built by the Upanzi Network at CMU-Africa.**
+
+SOC-in-a-Box packages what an organization needs to run a Security Operations
+Center into something that can be deployed and adapted quickly. It is aimed at
+Digital Public Infrastructure (DPI), Digital Public Goods (DPGs), e-government
+platforms, and financial services across African markets, where security teams
+are small and most organizations cannot build a SOC from scratch for every system
+they run.
+
+It is designed around four ideas:
+
+- **Runs on modest hardware.** Lightweight, containerized, and resource-efficient
+  enough for local CPU infrastructure, so data can stay in-country.
+- **AI assists the analyst, it does not replace them.** Machine learning and
+  agents handle triage, correlation, and routine maintenance. High-impact actions
+  stay behind human approval or dry-run defaults.
+- **One core, many plugins.** DPI- and sector-specific telemetry, detection rules,
+  dashboards, and playbooks (for example, for MOSIP) plug into the core without
+  changing it.
+- **A training lab as well as a platform.** The same tools serve as a hands-on
+  defensive-security lab for students and SOC analysts.
+
+## What is in this repository
+
+This repository holds the SOC-in-a-Box components that sit on top of the Elastic
+Stack. The detection engine is always installed; add-ons are optional, and
+`./deploy.sh` installs the ones you choose.
+
+| Component | What it does | Where | Status |
+|---|---|---|---|
+| **Elastic Stack** (Elasticsearch, Kibana, Fleet, Elastic Agent with Elastic Defend, Suricata) | Collects and stores endpoint, network, and authentication telemetry; analyst UI | Deployed separately ([Elastic Security docs](https://www.elastic.co/docs/solutions/security/get-started)), or the bundled demo stack via `deploy.sh --mode docker --local-es` | Foundation |
+| **ML anomaly detection engine** | Learns normal behavior per host, user, and process; turns what does not fit into filtered, enriched, ATT&CK-mapped alerts in Kibana | Repository root (described below) | Core |
+| **SIEM Maintenance Agent** | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | [`addons/siem-maintenance/`](addons/siem-maintenance/) | Optional add-on |
+| DPI plugins (MOSIP first), playbooks, training scenarios | Sector-specific detection content and exercises | Not in this repository yet | Planned |
+
+```bash
+./deploy.sh                       # detection engine; asks about each add-on
+./deploy.sh --with-maintenance    # detection engine + SIEM Maintenance Agent
+```
+
+The rest of this README covers the detection engine, which is the core of this
+repository. See [Automated install](#automated-install) for `deploy.sh` and
+[Optional add-on: SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
+for the agent.
+
+## The detection engine
 
 **Finds suspicious activity on Linux servers that rule-based detection misses, and sends it to Kibana as triaged alerts.**
 
@@ -42,13 +89,15 @@ flowchart LR
 ```
 
 Everything outside the "This project" box already exists in a normal Elastic
-deployment. This project is the one new piece, and it never runs on the machines
+deployment. The detection engine is the new piece, and it never runs on the machines
 being watched — it only needs network access to Elasticsearch.
 
 **New here?** Read [Before you start](#before-you-start) first. It takes two
 minutes and tells you whether this will work in your environment — most setup
 problems are really "the data isn't there yet."
 
+- [What is in this repository](#what-is-in-this-repository)
+- [Automated install](#automated-install)
 - [Before you start](#before-you-start)
 - [Quickstart](#quickstart)
 - [Did it work?](#did-it-work)
