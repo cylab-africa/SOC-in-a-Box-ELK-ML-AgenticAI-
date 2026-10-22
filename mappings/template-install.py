@@ -79,7 +79,11 @@ def main() -> None:
         print("ES_USER and ES_PASSWORD environment variables required", file=sys.stderr)
         sys.exit(1)
 
-    es = Elasticsearch(host, basic_auth=(user, password), verify_certs=False)
+    # Run as a script from mappings/, so make the repo-root helper importable.
+    sys.path.insert(0, str(MAPPINGS_DIR.parent))
+    from es_tls import es_tls_kwargs
+
+    es = Elasticsearch(host, basic_auth=(user, password), **es_tls_kwargs())
 
     logging.basicConfig(level=logging.INFO)
     ok = install_all_templates(es)

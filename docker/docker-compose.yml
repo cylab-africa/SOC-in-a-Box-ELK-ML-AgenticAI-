@@ -57,6 +57,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Optional add-on: only starts with `--profile maintenance`.
+  siem-maintenance:
+    profiles: ["maintenance"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.maintenance
+    container_name: siem-maintenance
+    env_file:
+      # Written by deploy.sh; optional so detection-only setups never need it.
+      - path: ../addons/siem-maintenance/.env
+        required: false
+    environment:
+      - ES_HOST=https://elasticsearch:9200
+    volumes:
+      - ../addons/siem-maintenance/Agent-SIEM-maintenance/results:/app/Agent-SIEM-maintenance/results
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   es-data:
     driver: local

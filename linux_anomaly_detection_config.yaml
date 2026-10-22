@@ -12,8 +12,8 @@ elasticsearch:
   host: "${ES_HOST}"
   username: "${ES_USERNAME}"
   password: "${ES_PASSWORD}"
-  verify_certs: false
-  ssl_show_warn: false
+  verify_certs: "${ES_VERIFY_CERTS}"
+  ca_certs: "${ES_CA_CERT}"
   timeout: 60
   scroll_size: 5000
   scroll_timeout: "2m"

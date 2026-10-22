@@ -5,6 +5,57 @@ Elasticsearch cluster and environment. It covers every file you need to
 edit, what format it expects, and what happens if you leave it at its
 default.
 
+## 0. Automated deployment (`deploy.sh`)
+
+`deploy.sh` at the repo root automates sections 1, 5 and 6's setup work. It
+is safe to re-run: existing `.env` files are kept unless you pass
+`--reconfigure`, and existing systemd units that point at a different
+checkout are never replaced without confirmation (or `--replace-units`).
+
+| What | venv mode (default) | `--mode docker` |
+|---|---|---|
+| Detection pipeline | `.venv/`, `pip install -e .`, `realtime_service.service` | `detection` container |
+| Maintenance add-on (`--with-maintenance`) | `addons/siem-maintenance/.venv/`, `siem-maintenance.service` | `siem-maintenance` container (`maintenance` profile) |
+| Elasticsearch | your cluster (`ES_HOST`) | your cluster, or the bundled one with `--local-es` |
+
+Steps it runs:
+
+1. Preflight: Python 3.10+ and venv support (or Docker Compose v2), curl.
+2. Asks whether to add the SIEM Maintenance Agent (skip with
+   `--with-maintenance` / `--no-maintenance`).
+3. Writes `.env` from `.env.example` with your ES URL, credentials, and index
+   patterns, then checks the cluster answers. Credentials are passed to curl
+   on stdin, never on the command line, and are only sent over a verified TLS
+   connection. For a private CA set `ES_CA_CERT=/path/to/ca.pem`; for a lab
+   cluster with a self-signed certificate pass `--insecure-tls` (or
+   `ES_INSECURE_TLS=1`). Without either, an untrusted certificate is reported
+   and no credentials are sent.
+4. If the add-on is chosen: writes `addons/siem-maintenance/.env` reusing the
+   same ES settings, plus Chat webhook, timezone, report time, and an optional
+   LLM provider. Auto-remediation starts in dry-run unless you opt in.
+5. Installs dependencies and (venv mode) systemd units, or builds and starts
+   the containers.
+
+Unattended example (CI, Ansible, cloud-init):
+
+```bash
+ES_HOST=https://10.0.4.12:9200 ES_USERNAME=detector ES_PASSWORD="$ES_PASSWORD" \
+GC_ALERT_WEBHOOK="$CHAT_WEBHOOK" MAINTENANCE_IANA_TIMEZONE=Africa/Kigali \
+  ./deploy.sh --non-interactive --with-maintenance
+```
+
+In `--non-interactive` mode every prompt takes its value from the environment
+variable of the same name (`ES_HOST`, `ES_USERNAME`, `ES_PASSWORD`,
+`ES_PROCESS_INDEX`, `KIBANA_HOST`, `GC_ALERT_WEBHOOK`, `LLM_PROVIDER`,
+`LLM_MODEL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AUTO_REMEDIATION_DRY_RUN`,
+...) or its default. Use `--dry-run` to print every action without changing
+anything.
+
+The rest of this guide describes what the script configures, for when you
+want to set things up by hand or tune past the defaults.
+
+---
+
 Two tiers of configuration:
 
 - **Required** — the pipeline will not connect to Elasticsearch or will
@@ -27,6 +78,8 @@ Then edit `.env`. The fields that matter most:
 |---|---|---|
 | `ES_HOST` | Your Elasticsearch URL, e.g. `https://10.0.4.12:9200` | Yes |
 | `ES_USERNAME` / `ES_PASSWORD` | Credentials for an account with read access to your endpoint/network/auth indices and write access to `.ml-anomalies-custom-*` | Yes |
+| `ES_CA_CERT` | Path to the CA that signed the cluster's HTTP certificate. For a self-managed cluster copy the node's `config/certs/http_ca.crt` to `config/certs/ca.pem` (gitignored, and visible inside the Docker image because `config/` is bind-mounted) and set `ES_CA_CERT=config/certs/ca.pem`. Not needed if the certificate is from a public CA | If your cluster uses a private or self-signed CA |
+| `ES_VERIFY_CERTS` | TLS certificate verification, on by default. `false` disables it and logs a warning: credentials then go to whoever answers on `ES_HOST`, so use it only for lab clusters | No |
 | `ES_PROCESS_INDEX`, `ES_NETWORK_INDEX`, `ES_DISCOVERY_INDEX`, `ES_METADATA_INDEX`, `ES_ALERTS_INDEX` | Index patterns matching your data source naming. Defaults assume Elastic Agent/Endpoint's standard `logs-endpoint.events.*` naming — change these if your ingest pipeline names indices differently | Yes, if your index names differ from the defaults |
 | `DAGSHUB_USERNAME` / `DAGSHUB_REPO_NAME` / `DAGSHUB_TOKEN` | Only needed if you want MLflow experiment tracking via DagsHub. Leave blank to skip — `setup_mlflow()` in `main.py` will attempt the connection, fail, log a warning, and detection continues without MLflow tracking (this adds a short connection-timeout delay at startup rather than failing instantly; pass `--disable-mlflow` to skip the attempt entirely) | No |
 | `TRAINING_PERIOD_DAYS`, `THRESHOLD_MULTIPLIER`, `SENSITIVITY`, etc. | Detection tuning knobs — safe to leave at defaults for a first run | No |
@@ -140,3 +193,38 @@ python push_all_anomalies.py --dry-run                # shows what would be push
 
 Once those look right, drop `--dry-run` and/or switch to
 `realtime_service.py` for continuous operation.
+
+---
+
+## 7. Optional add-on: SIEM Maintenance Agent
+
+`addons/siem-maintenance/` is a `git subtree` of
+[Siem-Maintenance-Agent-Monitoring](https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring).
+It is a separate process with its own venv, `.env`, and service, and shares
+nothing with the detection pipeline except the Elasticsearch cluster.
+
+- **Enable:** `./deploy.sh --with-maintenance` (short setup) or
+  `./deploy.sh --maintenance-wizard` (the add-on's own `install.sh`, which
+  also sets up the Google Chat app, feedback loop, and feedback services).
+- **Configure:** `addons/siem-maintenance/.env`. The agent also reads
+  `addons/siem-maintenance/Agent-SIEM-maintenance/.env`; `deploy.sh` keeps the
+  two identical, so after editing by hand copy the root one over the other.
+  Full variable list: [addons/siem-maintenance/README.md](addons/siem-maintenance/README.md).
+- **Auto-remediation:** clears caches, restarts stopped ML jobs, and removes
+  old snapshots / empty non-essential indices. `deploy.sh` sets
+  `AUTO_REMEDIATION_DRY_RUN=true`; review the dry-run entries in
+  `Agent-SIEM-maintenance/results/auto_remediation_log.jsonl` before setting
+  it to `false`.
+- **Docker + Ollama:** inside a container `localhost` is the container itself;
+  point `OLLAMA_URL` at `http://host.docker.internal:11434` or the host IP.
+- **Disable:** `sudo systemctl disable --now siem-maintenance.service`, or run
+  compose without `--profile maintenance`.
+- **Update from upstream:**
+
+  ```bash
+  git subtree pull --prefix=addons/siem-maintenance --squash \
+    https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring.git main
+  ```
+
+  Keep local edits under `addons/` to a minimum so these pulls merge cleanly;
+  fix bugs upstream instead.

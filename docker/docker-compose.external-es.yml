@@ -1,0 +1,17 @@
+# Override for running against an existing Elasticsearch cluster instead of
+# the bundled one. Use together with the base file and --no-deps:
+#
+#   docker compose --env-file .env \
+#     -f docker/docker-compose.yml -f docker/docker-compose.external-es.yml \
+#     up -d --build --no-deps detection
+#
+# deploy.sh --mode docker does this for you. ES_HOST comes from .env.
+
+services:
+  detection:
+    environment:
+      - ES_HOST=${ES_HOST}
+
+  siem-maintenance:
+    environment:
+      - ES_HOST=${ES_HOST}

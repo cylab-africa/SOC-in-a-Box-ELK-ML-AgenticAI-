@@ -34,6 +34,7 @@ from typing import Any
 
 from benign_lists import AllowlistManager
 from config import AdaptiveThreshold
+from es_tls import diagnose_connection_failure, es_tls_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -2111,8 +2112,7 @@ def _connect_es(force: bool = False) -> Any:
         "timeout": timeout,
         "max_retries": 3,
         "retry_on_timeout": True,
-        "verify_certs": False,
-        "ssl_show_warn": False,
+        **es_tls_kwargs(),
     }
     if username and password:
         kwargs["basic_auth"] = (username, password)
@@ -2126,7 +2126,7 @@ def _connect_es(force: bool = False) -> Any:
             logger.warning("ES ping failed but --force-push set; returning client")
             return es
         else:
-            logger.error("Elasticsearch ping failed at %s", host)
+            logger.error("Elasticsearch ping failed at %s. %s", host, diagnose_connection_failure(es) or "")
             return None
     except Exception as exc:
         if force:

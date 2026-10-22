@@ -1,0 +1,21 @@
+# Local Claude Code / IDE metadata (worktrees may live under here)
+.claude/
+.venv/
+__pycache__/
+*.pyc
+.env
+Agent-SIEM-maintenance/.env
+# Runtime artifacts may contain cluster IPs, hostnames, and operational detail
+Agent-SIEM-maintenance/results/*.json
+!Agent-SIEM-maintenance/results/.gitkeep
+# Installer-started scheduler logs and PID
+logs/
+
+# Service account keys — never commit
+*-key.json
+Agent-SIEM-maintenance/*-key.json
+
+# Feedback runtime artifacts (contain user identifiers + alert content)
+Agent-SIEM-maintenance/results/feedback_log.jsonl
+Agent-SIEM-maintenance/results/feedback_alert_context.json
+Agent-SIEM-maintenance/SYSTEM_MEMORY.md

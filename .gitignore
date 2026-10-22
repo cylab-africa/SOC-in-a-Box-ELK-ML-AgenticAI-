@@ -10,6 +10,8 @@ build/
 *.whl
 
 # Environment & secrets
+config/certs/
+.venv/
 .env
 .env.*
 !.env.example

@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from elasticsearch import Elasticsearch
 
+from es_tls import diagnose_connection_failure, es_tls_kwargs
+
 
 class OptimizedRetriever:
     """Optimized data retrieval with search_after for large datasets."""
@@ -325,8 +327,6 @@ def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
         host = es_config.get("host", "localhost:9200")
         username = es_config.get("username")
         password = es_config.get("password")
-        verify_certs = es_config.get("verify_certs", False)
-        ssl_show_warn = es_config.get("ssl_show_warn", False)
         timeout = es_config.get("timeout", 60)
 
         # Build Elasticsearch client configuration
@@ -340,9 +340,10 @@ def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
         if username and password:
             es_client_config["http_auth"] = (username, password)
 
-        if not verify_certs:
-            es_client_config["verify_certs"] = False
-            es_client_config["ssl_show_warn"] = ssl_show_warn
+        # Verification is on unless ES_VERIFY_CERTS=false; ES_CA_CERT supplies a private CA.
+        es_client_config.update(
+            es_tls_kwargs(es_config.get("verify_certs"), es_config.get("ca_certs") or None)
+        )
 
         # Create Elasticsearch client
         es = Elasticsearch(**es_client_config)
@@ -352,7 +353,8 @@ def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
             logger.info(f"Successfully connected to Elasticsearch at {host}")
             return es
         else:
-            logger.error("Failed to connect to Elasticsearch.")
+            hint = diagnose_connection_failure(es)
+            logger.error(f"Failed to connect to Elasticsearch. {hint or ''}".strip())
             return None
 
     except Exception as e:

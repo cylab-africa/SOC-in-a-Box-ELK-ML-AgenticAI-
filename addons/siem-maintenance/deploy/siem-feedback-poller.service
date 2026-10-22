@@ -1,0 +1,20 @@
+[Unit]
+Description=SIEM feedback poller (reads Google Sheet, runs judge, updates SYSTEM_MEMORY.md)
+Documentation=https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/noah/Siem-Maintenance-Agent-Monitoring/Agent-SIEM-maintenance
+User=noah
+Group=noah
+ExecStart=/home/noah/Siem-Maintenance-Agent-Monitoring/.venv/bin/python /home/noah/Siem-Maintenance-Agent-Monitoring/Agent-SIEM-maintenance/feedback_poller.py --loop 60
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=siem-feedback-poller
+
+[Install]
+WantedBy=multi-user.target

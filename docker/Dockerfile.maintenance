@@ -1,0 +1,30 @@
+# SIEM Maintenance Agent (optional add-on)
+# ========================================
+# Built from the repository root so it can be driven by docker/docker-compose.yml:
+#   docker compose --env-file .env -f docker/docker-compose.yml --profile maintenance up -d
+#
+# Source lives in addons/siem-maintenance (git subtree of
+# https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring).
+
+FROM python:3.10-slim
+
+LABEL description="SIEM Maintenance Agent: Elasticsearch health, ingestion freshness, daily Chat report"
+
+RUN groupadd -r siemmaint && useradd -r -g siemmaint -d /app siemmaint
+
+WORKDIR /app
+
+COPY addons/siem-maintenance/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY addons/siem-maintenance/Agent-SIEM-maintenance/ Agent-SIEM-maintenance/
+COPY addons/siem-maintenance/verify_setup.py addons/siem-maintenance/ollama_preflight.py ./
+
+RUN mkdir -p Agent-SIEM-maintenance/results logs \
+    && chown -R siemmaint:siemmaint /app
+
+USER siemmaint
+WORKDIR /app/Agent-SIEM-maintenance
+
+# Configuration comes from env_file (addons/siem-maintenance/.env) in compose.
+CMD ["python", "maintenance_service.py"]
