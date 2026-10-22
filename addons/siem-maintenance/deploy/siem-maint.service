@@ -1,0 +1,16 @@
+[Unit]
+Description=SIEM-MAINTENANCE infrastructure monitor
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=siem-maint
+EnvironmentFile=/etc/siem-maint/env
+ExecStart=/opt/siem-maint/venv/bin/python -m siem_maint.monitor
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
