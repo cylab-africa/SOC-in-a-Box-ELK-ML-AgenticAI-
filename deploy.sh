@@ -251,6 +251,21 @@ env_set() {
   mv "$tmp" "$file"
 }
 
+# Remove KEY from a dotenv file if present.
+env_del() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] && grep -q "^$key=" "$file" || return 0
+  if (( DRY_RUN )); then
+    printf '  [DRY ] remove %s from %s\n' "$key" "${file#"$REPO_ROOT"/}"
+    return
+  fi
+  local tmp
+  tmp="$(mktemp "$file.XXXXXX")"
+  awk -v k="$key" 'index($0, k "=") != 1' "$file" >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
 # Load ES_* settings from an existing .env into the shell, without overriding
 # anything the caller exported.
 load_existing_env() {
@@ -631,8 +646,18 @@ configure_triage() {
 
   if [[ -f "$TRIAGE_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
     ok "Using existing add-on .env (pass --reconfigure to change it)"
+    # Bind address, port, and TLS always follow this run, so the agent never
+    # keeps an older, weaker TLS setting or another install mode's CA path.
     [[ "$(env_get "$TRIAGE_ENV_FILE" HOST)" == "$listen_in_env" ]] || env_set "$TRIAGE_ENV_FILE" HOST "$listen_in_env"
     [[ "$(env_get "$TRIAGE_ENV_FILE" PORT)" == "$TRIAGE_PORT" ]] || env_set "$TRIAGE_ENV_FILE" PORT "$TRIAGE_PORT"
+    [[ "$(env_get "$TRIAGE_ENV_FILE" ELASTIC_VERIFY_SSL)" == "$ES_VERIFY_CERTS" ]] \
+      || env_set "$TRIAGE_ENV_FILE" ELASTIC_VERIFY_SSL "$ES_VERIFY_CERTS"
+    if [[ -n "$ssl_cert_file" ]]; then
+      [[ "$(env_get "$TRIAGE_ENV_FILE" SSL_CERT_FILE)" == "$ssl_cert_file" ]] \
+        || env_set "$TRIAGE_ENV_FILE" SSL_CERT_FILE "$ssl_cert_file"
+    else
+      env_del "$TRIAGE_ENV_FILE" SSL_CERT_FILE
+    fi
     return
   fi
 
