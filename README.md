@@ -117,6 +117,27 @@ Be aware of what each shortcut does and does not give you:
 - **Just want to read the code?** Steps 1-2 plus the
   [architecture guide](docs/ARCHITECTURE.md) will make sense without a cluster.
 
+## Automated install
+
+`deploy.sh` does the install, `.env` setup, connectivity check, and systemd
+units in one pass, and asks whether to add the optional
+[SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent):
+
+```bash
+git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
+cd SOC-in-a-Box-ELK-ML-AgenticAI-
+./deploy.sh --dry-run        # see what it would do first
+./deploy.sh                  # interactive
+./deploy.sh --with-maintenance --mode docker   # or: everything in containers
+```
+
+Run `./deploy.sh --help` for all options, including `--non-interactive` for
+CI/automation. [DEPLOYMENT.md](DEPLOYMENT.md#0-automated-deployment-deploysh)
+covers it in full. The manual steps below are what the script automates.
+Models are not trained by the script: the service starts a background
+training run on its first cycle, and detections begin once it finishes. To
+train up front instead, run Step 4 before starting the service.
+
 ## Quickstart
 
 Six steps. Each one ends with how to tell it worked before you move on.
@@ -372,6 +393,36 @@ to get endpoint data into it. See
 [DEPLOYMENT.md](DEPLOYMENT.md#5-docker-deployment) for pointing the detection
 container at an existing production cluster instead.
 
+Add `--profile maintenance` to also start the SIEM Maintenance Agent
+container (needs `addons/siem-maintenance/.env`, which `deploy.sh` writes).
+
+## Optional add-on: SIEM Maintenance Agent
+
+[`addons/siem-maintenance/`](addons/siem-maintenance/) is the
+[SIEM Maintenance Agent](https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring):
+it watches the health of the cluster this pipeline depends on (node heap/disk/CPU,
+thread-pool rejections, ingestion freshness on the same endpoint indices), sends
+a daily Google Chat report, and can run guarded auto-remediation. It is off
+unless you choose it:
+
+```bash
+./deploy.sh --with-maintenance            # reuses the ES settings from .env
+./deploy.sh --maintenance-wizard          # the add-on's full installer (feedback loop, Chat app, LLM presets)
+```
+
+It runs as its own process (`siem-maintenance.service`, or the `siem-maintenance`
+container) with its own venv and `.env`, so it can be added, upgraded, or removed
+without touching detection. `deploy.sh` starts auto-remediation in **dry-run**
+mode; set `AUTO_REMEDIATION_DRY_RUN=false` in `addons/siem-maintenance/.env`
+when you want it to act.
+
+The directory is a `git subtree`. To pull upstream changes:
+
+```bash
+git subtree pull --prefix=addons/siem-maintenance --squash \
+  https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring.git main
+```
+
 ## What it detects
 
 7 data groups (process, network, user, discovery, metadata, auth, host) across
@@ -459,6 +510,8 @@ linux-anomaly-detection/
 ├── realtime_service.py     # Continuous detection service
 ├── train_models_background.py  # Background training with checkpoints
 ├── benign_lists.py         # Graduated allowlist with dampening
+├── deploy.sh               # Automated deployment (venv/systemd or Docker)
+├── addons/siem-maintenance/  # Optional SIEM Maintenance Agent (git subtree)
 ├── backends/               # SIEM backend interface (Elasticsearch)
 ├── features/               # Modular feature extractors
 ├── models/                 # ML model wrappers (PyOD, ensemble)

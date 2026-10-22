@@ -1,0 +1,19 @@
+# Keep secrets, runtime output, and local environments out of the build context.
+.git
+.env
+.env.*
+!.env.example
+**/.env
+.venv
+**/.venv
+results
+logs
+mlruns
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+capstone_upanzi
+addons/siem-maintenance/Agent-SIEM-maintenance/results
+addons/siem-maintenance/Agent-SIEM-maintenance/*-key.json
+addons/siem-maintenance/Agent-SIEM-maintenance/SYSTEM_MEMORY.md
