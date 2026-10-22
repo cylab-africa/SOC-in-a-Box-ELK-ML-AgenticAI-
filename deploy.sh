@@ -36,6 +36,7 @@ MAINTENANCE_WIZARD=0
 LOCAL_ES=0
 REPLACE_UNITS=0
 EXTRAS=""
+INSECURE_TLS="${ES_INSECURE_TLS:-0}"
 SERVICE_USER="${SUDO_USER:-$(id -un)}"
 
 usage() {
@@ -59,6 +60,9 @@ Install mode:
   --replace-units          Overwrite existing systemd units that point at another checkout
 
 Configuration:
+  --insecure-tls           Allow sending ES credentials without TLS certificate
+                           verification (lab clusters with self-signed certs only;
+                           prefer ES_CA_CERT=/path/to/ca.pem)
   --non-interactive        Never prompt; read values from the environment
                            (ES_HOST, ES_USERNAME, ES_PASSWORD, GC_ALERT_WEBHOOK, ...)
   --reconfigure            Re-ask settings even if .env files already exist
@@ -84,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --replace-units)      REPLACE_UNITS=1 ;;
     --non-interactive)    NON_INTERACTIVE=1 ;;
     --reconfigure)        RECONFIGURE=1 ;;
+    --insecure-tls)       INSECURE_TLS=1 ;;
     --dry-run)            DRY_RUN=1 ;;
     -h|--help)            usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -278,12 +283,17 @@ preflight() {
 }
 
 # ── Elasticsearch connectivity ───────────────────────────────────────────────
-# Credentials go to curl on stdin so they never appear in the process list.
+# Credentials go to curl on stdin so they never appear in the process list, and
+# are only sent over a verified TLS connection unless --insecure-tls is given.
 es_check() {
   local host="$1" user="$2" pass="$3" out flags=(-sS --max-time 10)
   if (( DRY_RUN )); then
     printf '  [DRY ] check Elasticsearch at %s\n' "$host"
     return 0
+  fi
+  if [[ -n "${ES_CA_CERT:-}" ]]; then
+    [[ -r "$ES_CA_CERT" ]] || { fail "ES_CA_CERT not readable: $ES_CA_CERT"; return 1; }
+    flags+=(--cacert "$ES_CA_CERT")
   fi
   local cfg=""
   [[ -n "$user" ]] && cfg="user = \"${user//\"/\\\"}:${pass//\"/\\\"}\""
@@ -291,9 +301,20 @@ es_check() {
     ok "Elasticsearch reachable at $host (TLS verified)"
     return 0
   fi
-  if out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -k -K - "$host" 2>&1)" && [[ "$out" == *cluster_name* ]]; then
-    warn "Elasticsearch reachable at $host, but only with TLS verification disabled"
-    return 0
+  if (( INSECURE_TLS )); then
+    if out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -k -K - "$host" 2>&1)" && [[ "$out" == *cluster_name* ]]; then
+      warn "Elasticsearch reachable at $host with TLS verification disabled (--insecure-tls)"
+      return 0
+    fi
+  elif [[ "$host" == https://* ]]; then
+    # Diagnose a certificate problem without sending credentials.
+    local code
+    code="$(curl -sS --max-time 10 -k -o /dev/null -w '%{http_code}' "$host" 2>/dev/null || true)"
+    if [[ -n "$code" && "$code" != "000" ]]; then
+      fail "Elasticsearch at $host answers, but its TLS certificate is not trusted"
+      info "Set ES_CA_CERT=/path/to/ca.pem, or pass --insecure-tls for a lab cluster"
+      return 1
+    fi
   fi
   fail "Could not reach Elasticsearch at $host: ${out:0:200}"
   return 1

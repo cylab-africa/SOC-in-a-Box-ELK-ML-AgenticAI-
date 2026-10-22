@@ -25,7 +25,11 @@ Steps it runs:
    `--with-maintenance` / `--no-maintenance`).
 3. Writes `.env` from `.env.example` with your ES URL, credentials, and index
    patterns, then checks the cluster answers. Credentials are passed to curl
-   on stdin, never on the command line.
+   on stdin, never on the command line, and are only sent over a verified TLS
+   connection. For a private CA set `ES_CA_CERT=/path/to/ca.pem`; for a lab
+   cluster with a self-signed certificate pass `--insecure-tls` (or
+   `ES_INSECURE_TLS=1`). Without either, an untrusted certificate is reported
+   and no credentials are sent.
 4. If the add-on is chosen: writes `addons/siem-maintenance/.env` reusing the
    same ES settings, plus Chat webhook, timezone, report time, and an optional
    LLM provider. Auto-remediation starts in dry-run unless you opt in.
