@@ -1,2 +1,2 @@
-elasticsearch>=8.0.0
+elasticsearch>=8.0.0,<9
 requests>=2.28.0
