@@ -17,27 +17,51 @@ checkout are never replaced without confirmation (or `--replace-units`).
 | Detection pipeline | `.venv/`, `pip install -e .`, `realtime_service.service` | `detection` container |
 | Maintenance add-on (`--with-maintenance`) | `addons/siem-maintenance/.venv/`, `siem-maintenance.service` | `siem-maintenance` container (`maintenance` profile) |
 | Triage add-on (`--with-triage`) | `addons/alert-triage/.venv/`, `alert-triage.service` on `127.0.0.1:8000` | `alert-triage` container (`triage` profile), published on `127.0.0.1:8000` |
-| Elasticsearch | your cluster (`ES_HOST`) | your cluster, or the bundled one with `--local-es` |
+| Elastic Security (base) | installed on this host with `--install-elastic` (`installers/elastic-soc.sh`), or your cluster (`ES_HOST`, `--external-es`) | the same, or the bundled demo cluster with `--local-es` |
 
 Steps it runs:
 
 1. Preflight: Python 3.10+ and venv support (or Docker Compose v2), curl.
+   Decides the base: install Elastic Security here, reuse an earlier install
+   (`/etc/elastic-soc/connection.env` exists), or use an existing cluster (an
+   `ES_HOST` is already set, or Elasticsearch already runs here). If none of
+   those applies, it asks. `--install-elastic` / `--external-es` skip the
+   question; `--non-interactive` never installs Elastic unless you pass
+   `--install-elastic`.
 2. Asks whether to add the SIEM Maintenance Agent (skip with
-   `--with-maintenance` / `--no-maintenance`).
-3. Writes `.env` from `.env.example` with your ES URL, credentials, and index
+   `--with-maintenance` / `--no-maintenance`) and the Alert Triage Agent
+   (`--with-triage` / `--no-triage`).
+3. Base install (`--install-elastic`): runs `sudo bash installers/elastic-soc.sh`,
+   which installs Elasticsearch and Kibana from Elastic's apt repository,
+   serves Kibana over HTTPS with a certificate from a private SOC CA, installs
+   Elastic Agent as Fleet Server with Elastic Defend and System on its policy,
+   creates a "SOC Linux Endpoints" policy and enrollment token for other hosts,
+   and enables Elastic's prebuilt Linux rules (`ELASTIC_RULES=linux|all|none`).
+   Secrets stay root-only under `/etc/elastic-soc/`. `deploy.sh` then copies
+   the cluster CA to `config/certs/ca.pem` and writes `ES_HOST`, the `elastic`
+   credentials, and `ES_CA_CERT` into `.env`. Re-running is safe: finished
+   steps are skipped, and it refuses to touch an Elasticsearch it did not
+   install. It targets Ubuntu 24.04 (`ELASTIC_SOC_ALLOW_UNSUPPORTED_OS=1` to
+   try another release).
+4. Writes `.env` from `.env.example` with your ES URL, credentials, and index
    patterns, then checks the cluster answers. Credentials are passed to curl
    on stdin, never on the command line, and are only sent over a verified TLS
    connection. For a private CA set `ES_CA_CERT=/path/to/ca.pem`; for a lab
    cluster with a self-signed certificate pass `--insecure-tls` (or
    `ES_INSECURE_TLS=1`). Without either, an untrusted certificate is reported
    and no credentials are sent.
-4. If the add-on is chosen: writes `addons/siem-maintenance/.env` reusing the
+5. If the add-on is chosen: writes `addons/siem-maintenance/.env` reusing the
    same ES settings, plus Chat webhook, timezone, report time, and an optional
    LLM provider. Auto-remediation starts in dry-run unless you opt in.
-5. Installs dependencies and (venv mode) systemd units, or builds and starts
+6. Installs dependencies and (venv mode) systemd units, or builds and starts
    the containers.
 
-Unattended example (CI, Ansible, cloud-init):
+Unattended examples (CI, Ansible, cloud-init):
+
+```bash
+# New Ubuntu 24.04 host: Elastic Security + detection engine + triage agent
+SOC_ADVERTISE_ADDR=soc.example.org ./deploy.sh --non-interactive --install-elastic --with-triage
+```
 
 ```bash
 ES_HOST=https://10.0.4.12:9200 ES_USERNAME=detector ES_PASSWORD="$ES_PASSWORD" \

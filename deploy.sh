@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Automated deployment for the Linux anomaly detection pipeline, with optional
-# add-ons: the SIEM Maintenance Agent (addons/siem-maintenance) and the Alert
-# Triage Agent (addons/alert-triage).
+# Automated deployment for SOC-in-a-Box. The base is Elastic Security
+# (installers/elastic-soc.sh: Elasticsearch, Kibana, Fleet Server, Elastic
+# Defend) plus the ML anomaly detection engine. Optional add-ons: the SIEM
+# Maintenance Agent (addons/siem-maintenance) and the Alert Triage Agent
+# (addons/alert-triage).
 #
 # Usage:
-#   ./deploy.sh                          interactive; asks about each add-on
+#   ./deploy.sh                          interactive; asks about the base and each add-on
+#   ./deploy.sh --install-elastic        install Elastic Security on this host, then the engine
+#   ./deploy.sh --external-es            use an Elasticsearch cluster you already run
 #   ./deploy.sh --with-maintenance       detection pipeline + maintenance agent
 #   ./deploy.sh --with-triage            detection pipeline + alert triage agent
 #   ./deploy.sh --mode docker            run under Docker Compose instead of venv + systemd
@@ -35,9 +39,14 @@ SYSTEM_CA_BUNDLES=(/etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bund
 COMPOSE_FILE="$REPO_ROOT/docker/docker-compose.yml"
 COMPOSE_EXTERNAL_ES="$REPO_ROOT/docker/docker-compose.external-es.yml"
 MIN_PY_MINOR=10
+# Base Elastic Security installer and the connection details it leaves behind.
+ELASTIC_INSTALLER="$REPO_ROOT/installers/elastic-soc.sh"
+ELASTIC_CONNECTION_FILE="/etc/elastic-soc/connection.env"
+ELASTIC_CA_REL="config/certs/ca.pem"
 
 # ── Options ──────────────────────────────────────────────────────────────────
 MODE="venv"                 # venv | docker
+ELASTIC_BASE=""             # "", install, installed, external, bundled  ("" = decide/ask)
 WITH_MAINTENANCE=""         # "", yes, no  ("" = ask)
 WITH_TRIAGE=""              # "", yes, no  ("" = ask)
 # The triage agent has no authentication of its own, so it listens on loopback
@@ -59,7 +68,14 @@ usage() {
   cat <<'EOF'
 Usage: ./deploy.sh [options]
 
-Components:
+Base (Elastic Security + detection engine):
+  --install-elastic        Install Elastic Security on this host first
+                           (installers/elastic-soc.sh, Ubuntu 24.04, run with sudo):
+                           Elasticsearch, Kibana, Fleet Server, Elastic Defend, and an
+                           enrollment policy for other Linux hosts. Re-running it is safe.
+  --external-es            Use an Elasticsearch cluster you already run (ES_HOST)
+
+Add-ons:
   --with-maintenance       Also deploy the SIEM Maintenance Agent add-on
   --no-maintenance         Deploy the detection pipeline only (skip the question)
   --maintenance-wizard     Configure the add-on with its own full installer
@@ -100,6 +116,8 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --install-elastic)    ELASTIC_BASE="install" ;;
+    --external-es)        ELASTIC_BASE="external" ;;
     --with-maintenance)   WITH_MAINTENANCE="yes" ;;
     --no-maintenance)     WITH_MAINTENANCE="no" ;;
     --maintenance-wizard) MAINTENANCE_WIZARD=1; WITH_MAINTENANCE="yes" ;;
@@ -129,6 +147,10 @@ done
 
 if [[ "$MODE" != "venv" && "$MODE" != "docker" ]]; then
   echo "--mode must be venv or docker (got: $MODE)" >&2
+  exit 2
+fi
+if (( LOCAL_ES )) && [[ -n "$ELASTIC_BASE" ]]; then
+  echo "--local-es starts its own demo cluster; drop --install-elastic/--external-es" >&2
   exit 2
 fi
 if ! [[ "$TRIAGE_PORT" =~ ^[0-9]+$ ]] || (( TRIAGE_PORT < 1 || TRIAGE_PORT > 65535 )); then
@@ -312,6 +334,8 @@ preflight() {
   fi
   command -v curl >/dev/null || die "curl not found"
 
+  choose_elastic_base
+
   if [[ -z "$WITH_MAINTENANCE" ]]; then
     echo
     echo "  Optional add-on: SIEM Maintenance Agent"
@@ -348,6 +372,115 @@ preflight() {
   else
     info "Triage add-on: skipped (re-run with --with-triage to add it later)"
   fi
+}
+
+# ── Base: Elastic Security ───────────────────────────────────────────────────
+# Decide whether to install Elastic Security here, reuse an earlier install, or
+# point at an existing cluster.
+choose_elastic_base() {
+  if (( LOCAL_ES )); then
+    ELASTIC_BASE="bundled"
+    info "Elastic stack: bundled demo containers (--local-es)"
+    return
+  fi
+  if [[ -z "$ELASTIC_BASE" ]]; then
+    if [[ -f "$ELASTIC_CONNECTION_FILE" ]]; then
+      ELASTIC_BASE="installed"
+    elif ! is_placeholder "${ES_HOST:-}" || ! is_placeholder "$(env_get "$ENV_FILE" ES_HOST)"; then
+      ELASTIC_BASE="external"
+    elif systemctl is-active --quiet elasticsearch 2>/dev/null; then
+      info "Elasticsearch already runs on this host; using it as an existing cluster"
+      ELASTIC_BASE="external"
+    elif (( NON_INTERACTIVE )); then
+      info "No ES_HOST given; pass --install-elastic to install Elastic Security here"
+      ELASTIC_BASE="external"
+    else
+      echo
+      echo "  Base: Elastic Security"
+      echo "  Elasticsearch, Kibana, Fleet Server, and Elastic Defend, installed on this"
+      echo "  host by installers/elastic-soc.sh (Ubuntu 24.04, 8 GiB RAM, 30 GiB free disk)."
+      echo "  Answer no to point the detection engine at an Elasticsearch you already run."
+      if confirm "Install Elastic Security on this host?" Y; then
+        ELASTIC_BASE="install"
+      else
+        ELASTIC_BASE="external"
+      fi
+    fi
+  fi
+  case "$ELASTIC_BASE" in
+    install)
+      [[ -f "$ELASTIC_INSTALLER" ]] || die "Installer not found at $ELASTIC_INSTALLER (clone the full repository)"
+      local os
+      os="$(. /etc/os-release 2>/dev/null; printf '%s %s' "${ID:-unknown}" "${VERSION_ID:-}")"
+      if [[ "$os" != "ubuntu 24.04" && "${ELASTIC_SOC_ALLOW_UNSUPPORTED_OS:-0}" != 1 ]]; then
+        local msg="installers/elastic-soc.sh supports Ubuntu 24.04 (found: $os). Use --external-es, or set ELASTIC_SOC_ALLOW_UNSUPPORTED_OS=1 to try anyway"
+        if (( DRY_RUN )); then warn "$msg"; else die "$msg"; fi
+      fi
+      command -v sudo >/dev/null || die "sudo not found (the Elastic installer runs as root)"
+      ok "Elastic stack: install on this host"
+      ;;
+    installed) ok "Elastic stack: installed on this host earlier ($ELASTIC_CONNECTION_FILE)" ;;
+    external)  info "Elastic stack: existing cluster (ES_HOST)" ;;
+  esac
+}
+
+# Run the base installer (if chosen) and point .env at the cluster it created,
+# with the cluster CA copied to config/certs/ca.pem so TLS stays verified.
+setup_elastic_base() {
+  [[ "$ELASTIC_BASE" == "install" || "$ELASTIC_BASE" == "installed" ]] || return 0
+  step "Base: Elastic Security"
+  if [[ "$ELASTIC_BASE" == "install" ]]; then
+    local env_args=() args=() var
+    for var in ELASTIC_MAJOR SOC_HOSTNAME SOC_ADVERTISE_ADDR ELASTIC_RULES ES_PORT KIBANA_PORT FLEET_PORT \
+               ELASTIC_SOC_ALLOW_UNSUPPORTED_OS; do
+      if [[ -n "${!var:-}" ]]; then
+        env_args+=("$var=${!var}")
+      fi
+    done
+    (( NON_INTERACTIVE )) && args=(--yes)
+    run sudo env "${env_args[@]}" bash "$ELASTIC_INSTALLER" "${args[@]}"
+  fi
+
+  if (( DRY_RUN )) && [[ ! -f "$ELASTIC_CONNECTION_FILE" ]]; then
+    info "Would read ES_HOST, credentials and the CA from $ELASTIC_CONNECTION_FILE"
+    ES_HOST="https://localhost:9200" ES_USERNAME="elastic" ES_PASSWORD="(set by the installer)"
+    return 0
+  fi
+  local tmp ca_src host_key="ES_HOST"
+  [[ "$MODE" == "docker" ]] && host_key="ES_HOST_LAN"   # containers reach the host by its address
+  tmp="$(mktemp)"
+  if ! sudo cat "$ELASTIC_CONNECTION_FILE" >"$tmp"; then
+    rm -f "$tmp"
+    die "Cannot read $ELASTIC_CONNECTION_FILE"
+  fi
+  ES_HOST="$(env_get "$tmp" "$host_key")"
+  ES_USERNAME="$(env_get "$tmp" ES_USERNAME)"
+  ES_PASSWORD="$(env_get "$tmp" ES_PASSWORD)"
+  ELASTIC_KIBANA_URL="$(env_get "$tmp" KIBANA_URL)"
+  KIBANA_HOST="${KIBANA_HOST:-$ELASTIC_KIBANA_URL}"
+  ca_src="$(env_get "$tmp" ES_CA_CERT)"
+  rm -f "$tmp"
+  [[ -n "$ES_HOST" && -n "$ES_PASSWORD" && -n "$ca_src" ]] \
+    || die "$ELASTIC_CONNECTION_FILE is incomplete; re-run with --install-elastic"
+
+  run mkdir -p "$REPO_ROOT/config/certs"
+  if (( DRY_RUN )); then
+    printf '  [DRY ] copy %s to %s\n' "$ca_src" "$ELASTIC_CA_REL"
+  else
+    sudo cat "$ca_src" >"$REPO_ROOT/$ELASTIC_CA_REL"
+    chmod 644 "$REPO_ROOT/$ELASTIC_CA_REL"
+  fi
+  ES_CA_CERT="$ELASTIC_CA_REL"
+  ES_VERIFY_CERTS="true"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    run cp "$REPO_ROOT/.env.example" "$ENV_FILE"
+    run chmod 600 "$ENV_FILE"
+  fi
+  local key
+  for key in ES_HOST ES_USERNAME ES_PASSWORD ES_CA_CERT ES_VERIFY_CERTS; do
+    env_set "$ENV_FILE" "$key" "${!key}"
+  done
+  ok "Detection engine points at this host's Elasticsearch ($ES_HOST, CA $ELASTIC_CA_REL)"
 }
 
 # ── Elasticsearch connectivity ───────────────────────────────────────────────
@@ -981,6 +1114,16 @@ deploy_docker() {
 summary() {
   step "Done"
   (( DRY_RUN )) && echo "  Dry run: nothing was changed."
+  case "$ELASTIC_BASE" in
+    install|installed)
+      echo "  Elastic Security:     this host"
+      echo "    Kibana:             ${ELASTIC_KIBANA_URL:-see $ELASTIC_CONNECTION_FILE}"
+      echo "    elastic password:   sudo cat /etc/elastic-soc/elastic-password"
+      echo "    Enroll Linux hosts: sudo cat /root/elastic-soc-deployment-summary.txt"
+      ;;
+    bundled) echo "  Elastic stack:        bundled demo containers" ;;
+    *)       echo "  Elastic stack:        existing cluster (${ES_HOST:-ES_HOST})" ;;
+  esac
   echo "  Detection pipeline:   $MODE"
   echo "  Maintenance add-on:   $WITH_MAINTENANCE"
   echo "  Triage add-on:        $WITH_TRIAGE"
@@ -990,6 +1133,11 @@ summary() {
     if is_loopback "$TRIAGE_LISTEN"; then
       echo "    From another machine: ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>"
     fi
+  fi
+  if [[ "$ELASTIC_BASE" == "install" ]]; then
+    echo
+    echo "  New cluster: the models learn from history, so the first useful training run"
+    echo "  needs about 7 days of Elastic Defend data from the enrolled hosts."
   fi
   if [[ "$MODE" == "venv" ]]; then
     echo
@@ -1018,6 +1166,7 @@ main() {
   echo "SOC-in-a-Box deployment ($REPO_ROOT)"
   (( DRY_RUN )) && echo "DRY RUN: no changes will be made"
   preflight
+  setup_elastic_base
   configure_detection
 
   if [[ "$WITH_MAINTENANCE" == "yes" ]]; then

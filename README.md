@@ -24,22 +24,26 @@ It is designed around four ideas:
 
 ## What is in this repository
 
-This repository holds the SOC-in-a-Box components that sit on top of the Elastic
-Stack. The detection engine is always installed; add-ons are optional, and
-`./deploy.sh` installs the ones you choose.
+This repository holds SOC-in-a-Box and the installer for the Elastic Stack it
+runs on. The base is Elastic Security plus the ML detection engine: `./deploy.sh`
+installs Elastic Security on the host (or points at a cluster you already run),
+then the detection engine. Add-ons are optional, and `./deploy.sh` installs the
+ones you choose.
 
 | Component | What it does | Where | Status |
 |---|---|---|---|
-| **Elastic Stack** (Elasticsearch, Kibana, Fleet, Elastic Agent with Elastic Defend, Suricata) | Collects and stores endpoint, network, and authentication telemetry; analyst UI | Deployed separately ([Elastic Security docs](https://www.elastic.co/docs/solutions/security/get-started)), or the bundled demo stack via `deploy.sh --mode docker --local-es` | Foundation |
-| **ML anomaly detection engine** | Learns normal behavior per host, user, and process; turns what does not fit into filtered, enriched, ATT&CK-mapped alerts in Kibana | Repository root (described below) | Core |
+| **Elastic Security** (Elasticsearch, Kibana, Fleet Server, Elastic Agent with Elastic Defend and System) | Collects and stores endpoint and authentication telemetry; analyst UI and prebuilt detection rules | [`installers/elastic-soc.sh`](installers/elastic-soc.sh), run by `deploy.sh` on Ubuntu 24.04; or a cluster you already run | Base |
+| **ML anomaly detection engine** | Learns normal behavior per host, user, and process; turns what does not fit into filtered, enriched, ATT&CK-mapped alerts in Kibana | Repository root (described below) | Base |
 | **SIEM Maintenance Agent** | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | [`addons/siem-maintenance/`](addons/siem-maintenance/) | Optional add-on |
 | **Alert Triage Agent** | AI-assisted investigation of Elastic Security alerts: pulls related events, threat intel, and asset context, and gives a TP/FP verdict; web UI, REST API, and an MCP server for AI clients | [`addons/alert-triage/`](addons/alert-triage/) | Optional add-on |
+| Network sensor (Suricata) | Network IDS telemetry | Not installed yet; deploy separately | Planned |
 | DPI plugins (MOSIP first), playbooks, training scenarios | Sector-specific detection content and exercises | Not in this repository yet | Planned |
 
 ```bash
-./deploy.sh                       # detection engine; asks about each add-on
-./deploy.sh --with-maintenance    # detection engine + SIEM Maintenance Agent
-./deploy.sh --with-triage         # detection engine + Alert Triage Agent
+./deploy.sh                       # base; asks about Elastic and each add-on
+./deploy.sh --install-elastic     # Elastic Security on this host + detection engine
+./deploy.sh --external-es         # detection engine against your existing cluster
+./deploy.sh --install-elastic --with-maintenance --with-triage   # everything
 ```
 
 The rest of this README covers the detection engine, which is the core of this
@@ -68,15 +72,17 @@ problems are really "the data isn't there yet."
 
 ### Before you start
 
-This is **not** a standalone tool. It reads from an existing Elasticsearch
-cluster and does nothing useful without one. Here is the honest list.
+The detection engine reads from Elasticsearch and does nothing useful without
+it. If you do not have a cluster yet, `deploy.sh --install-elastic` installs one
+on this host (see [If you don't have this yet](#if-you-dont-have-this-yet)).
+Here is the honest list.
 
 #### You must have
 
 | Requirement | Why | How to check |
 |---|---|---|
 | **Python 3.10 or newer** | Uses 3.10+ type syntax | `python3 --version` |
-| **An Elasticsearch 8.x cluster** you can reach, with a username and password | This is both the input and the output | `curl -u USER:PASS https://YOUR_ES:9200` |
+| **An Elasticsearch 8.x cluster** you can reach, with a username and password, or an Ubuntu 24.04 host (8 GiB RAM, 30 GiB free disk) for `--install-elastic` to build one on | This is both the input and the output | `curl -u USER:PASS https://YOUR_ES:9200` |
 | **Elastic Agent installed on the Linux machines you want to watch**, with the **Elastic Defend** integration enabled | Produces the process and network events the models learn from | See the next section |
 | **At least 7 days of that data already collected** | Models need history to learn "normal"; 7 days is the default training window for process data | See the next section |
 
@@ -114,10 +120,18 @@ curl -u "$ES_USERNAME:$ES_PASSWORD" \
 
 Be aware of what each shortcut does and does not give you:
 
-- **No Elasticsearch at all?** The bundled Docker setup starts Elasticsearch
-  8.12 and Kibana 8.12 for you (see [Docker](#docker)). It does **not** include
-  Elastic Agent, so you will still need to enroll an agent against it to get
-  endpoint data.
+- **No Elasticsearch at all?** On Ubuntu 24.04, `./deploy.sh --install-elastic`
+  runs [`installers/elastic-soc.sh`](installers/elastic-soc.sh). It installs
+  Elasticsearch, Kibana (over HTTPS), and Fleet Server, puts Elastic Defend and
+  System on this host's agent, creates a "SOC Linux Endpoints" policy for your
+  other hosts, enables Elastic's prebuilt Linux rules, and points the detection
+  engine at the new cluster with TLS verified. The enrollment command for other
+  hosts is in `/root/elastic-soc-deployment-summary.txt`. You can also run the
+  installer on its own: `sudo bash installers/elastic-soc.sh`.
+- **Just want to try it?** The bundled Docker setup starts Elasticsearch 8.12
+  and Kibana 8.12 (see [Docker](#docker)). It does **not** include Elastic
+  Agent, so you will still need to enroll an agent against it to get endpoint
+  data.
 - **Have the cluster but no history yet?** Install the agent, then come back in
   a week. You can still complete steps 1-3 now and verify your configuration
   with `--dry-run`, which needs no data.
@@ -126,16 +140,19 @@ Be aware of what each shortcut does and does not give you:
 
 ### Automated install
 
-`deploy.sh` does the install, `.env` setup, connectivity check, and systemd
-units in one pass, and asks whether to add the optional
-[SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent):
+`deploy.sh` installs the base (Elastic Security, unless you point it at an
+existing cluster, then the detection engine), writes `.env`, checks the
+connection, and sets up systemd units in one pass. It then asks whether to add
+the optional [SIEM Maintenance Agent](#optional-add-on-siem-maintenance-agent)
+and [Alert Triage Agent](#optional-add-on-alert-triage-agent):
 
 ```bash
 git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
 cd SOC-in-a-Box-ELK-ML-AgenticAI-
 ./deploy.sh --dry-run        # see what it would do first
 ./deploy.sh                  # interactive
-./deploy.sh --with-maintenance --mode docker   # or: everything in containers
+./deploy.sh --install-elastic --with-triage                 # new Ubuntu 24.04 host
+./deploy.sh --external-es --with-maintenance --mode docker  # existing cluster, containers
 ```
 
 Run `./deploy.sh --help` for all options, including `--non-interactive` for
@@ -609,6 +626,7 @@ linux-anomaly-detection/
 ├── train_models_background.py  # Background training with checkpoints
 ├── benign_lists.py         # Graduated allowlist with dampening
 ├── deploy.sh               # Automated deployment (venv/systemd or Docker)
+├── installers/elastic-soc.sh  # Base Elastic Security installer (Ubuntu 24.04)
 ├── addons/siem-maintenance/  # Optional SIEM Maintenance Agent (git subtree)
 ├── addons/alert-triage/      # Optional Alert Triage Agent (git subtree)
 ├── backends/               # SIEM backend interface (Elasticsearch)
