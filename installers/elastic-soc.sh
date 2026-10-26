@@ -26,7 +26,6 @@ KIBANA_PORT="${KIBANA_PORT:-5601}"
 ELASTIC_RULES="${ELASTIC_RULES:-linux}"
 ASSUME_YES="${ELASTIC_SOC_ASSUME_YES:-0}"
 
-WORKDIR="/var/tmp/elastic-soc-installer"      # downloads only; nothing secret
 STATE_DIR="/etc/elastic-soc"                  # credentials and certificates
 CERT_DIR="$STATE_DIR/certs"
 PASSWORD_FILE="$STATE_DIR/elastic-password"
@@ -98,7 +97,10 @@ if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != "24.04" ]]; then
 fi
 case "$ELASTIC_RULES" in linux|all|none) ;; *) die "ELASTIC_RULES must be linux, all, or none" ;; esac
 
-mkdir -p "$WORKDIR"
+# Downloads and CSRs go in a fresh root-only directory: a fixed path under the
+# world-writable /var/tmp could be pre-created by another user.
+WORKDIR="$(mktemp -d /var/tmp/elastic-soc-installer.XXXXXX)"
+trap 'rm -rf "$WORKDIR"' EXIT
 install -d -m 0755 "$STATE_DIR"
 install -d -m 0700 "$CERT_DIR"
 touch "$LOG_FILE"
