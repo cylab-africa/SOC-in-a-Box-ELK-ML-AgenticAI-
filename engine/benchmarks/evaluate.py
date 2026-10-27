@@ -22,7 +22,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCENARIO_DIR: Path = Path("benchmarks/attack_scenarios")
+SCENARIO_DIR: Path = Path(__file__).resolve().parent / "attack_scenarios"
 RESULTS_DIR: Path = Path("benchmarks/results")
 
 

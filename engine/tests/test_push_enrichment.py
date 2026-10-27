@@ -12,13 +12,15 @@ from pathlib import Path
 
 import pytest
 
+_ENGINE_DIR = Path(__file__).resolve().parent.parent
+
 
 class TestMITREEnrichment:
     """Test MITRE ATT&CK field enrichment."""
 
     def test_attack_mapping_json_valid(self) -> None:
         """attack_mapping.json must be valid JSON with required structure."""
-        mapping_path = Path("mappings/attack_mapping.json")
+        mapping_path = _ENGINE_DIR / "mappings" / "attack_mapping.json"
         if not mapping_path.exists():
             pytest.skip("attack_mapping.json not found")
 

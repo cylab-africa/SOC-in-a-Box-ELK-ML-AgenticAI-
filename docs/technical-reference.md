@@ -8,7 +8,8 @@
 > does not use yet: the YAML configuration (`config/default.yaml`, removed — all
 > settings come from `.env`), and the `features/`, `models/`, `dl_models/` and
 > `adversarial/` packages. Line counts and test totals are from an earlier
-> snapshot.
+> snapshot. The engine's code now lives in `engine/`: run commands shown here as
+> `python engine/<script>.py` from the repo root.
 
 ---
 
