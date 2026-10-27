@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Automated deployment for the Linux anomaly detection pipeline, with optional
-# add-ons: the SIEM Maintenance Agent (addons/siem-maintenance) and the Alert
-# Triage Agent (addons/alert-triage).
+# SOC-in-a-Box installer. Installs the detection engine on this machine, connects
+# it to your Elasticsearch, and runs it as a background service, with optional
+# add-ons: the SIEM Maintenance Agent (addons/siem-maintenance), the Alert Triage
+# Agent (addons/alert-triage) and the Greenbone results push (addons/greenbone).
 #
 # Usage:
 #   ./deploy.sh                          interactive; asks about each add-on
 #   ./deploy.sh --with-maintenance       detection pipeline + maintenance agent
 #   ./deploy.sh --with-triage            detection pipeline + alert triage agent
+#   ./deploy.sh --with-greenbone         detection pipeline + Greenbone results push
 #   ./deploy.sh --mode docker            run under Docker Compose instead of venv + systemd
 #   ES_HOST=... ES_USERNAME=... ES_PASSWORD=... ./deploy.sh --non-interactive --with-maintenance
 #   ./deploy.sh --dry-run                print what would happen, change nothing
@@ -30,6 +32,19 @@ TRIAGE_CERT_DIR="$TRIAGE_DIR/certs"
 TRIAGE_UNIT="alert-triage.service"
 # Version pins for the vendored agent, kept outside the subtree.
 TRIAGE_CONSTRAINTS="$REPO_ROOT/addons/alert-triage.constraints.txt"
+GREENBONE_DIR="$REPO_ROOT/addons/greenbone"
+GREENBONE_ENV_FILE="$GREENBONE_DIR/.env"
+GREENBONE_VENV_DIR="$GREENBONE_DIR/.venv"
+GREENBONE_SERVICE="gvm-siem-push.service"
+GREENBONE_TIMER="gvm-siem-push.timer"
+# systemd OnCalendar expression for the push; daily at 06:00 unless overridden.
+GREENBONE_SCHEDULE="${GREENBONE_SCHEDULE:-*-*-* 06:00:00}"
+# gvmd's socket in the Greenbone Community Edition Docker Compose install.
+GVM_DEFAULT_SOCKET="/var/lib/docker/volumes/greenbone-community-edition_gvmd_socket_vol/_data/gvmd.sock"
+# Where the bundled TLS trust step saves a cluster's CA (relative to the repo root).
+TRUSTED_CA_PATH="config/certs/ca.pem"
+# Index patterns written to .env, with Elastic Agent's standard names as defaults.
+INDEX_KEYS=(ES_PROCESS_INDEX ES_NETWORK_INDEX ES_DISCOVERY_INDEX ES_METADATA_INDEX ES_ALERTS_INDEX)
 # System trust stores, in the order distributions ship them.
 SYSTEM_CA_BUNDLES=(/etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem)
 COMPOSE_FILE="$REPO_ROOT/docker/docker-compose.yml"
@@ -40,6 +55,7 @@ MIN_PY_MINOR=10
 MODE="venv"                 # venv | docker
 WITH_MAINTENANCE=""         # "", yes, no  ("" = ask)
 WITH_TRIAGE=""              # "", yes, no  ("" = ask)
+WITH_GREENBONE=""           # "", yes, no  ("" = ask)
 # The triage agent has no authentication of its own, so it listens on loopback
 # unless the operator explicitly chooses otherwise.
 TRIAGE_LISTEN="${TRIAGE_LISTEN:-127.0.0.1}"
@@ -59,6 +75,11 @@ usage() {
   cat <<'EOF'
 Usage: ./deploy.sh [options]
 
+Installs SOC-in-a-Box on this machine: checks the prerequisites, asks for your
+Elasticsearch address and login (saved in .env), installs the detection engine
+and any add-ons you choose, and starts them as background services. Safe to
+re-run. Try --dry-run first to see every step without changing anything.
+
 Components:
   --with-maintenance       Also deploy the SIEM Maintenance Agent add-on
   --no-maintenance         Deploy the detection pipeline only (skip the question)
@@ -73,6 +94,10 @@ Components:
                            alerts and run investigations. Only widen this behind an
                            authenticating reverse proxy or on a trusted network.
   --triage-port PORT       Triage agent port (default 8000)
+  --with-greenbone         Also install the Greenbone results push (needs Greenbone
+                           on this server). Sends finished vulnerability scans to
+                           Elasticsearch daily.
+  --no-greenbone           Skip the Greenbone results push (skip the question)
 
 Install mode:
   --mode venv|docker       venv = Python venv + systemd units (default)
@@ -85,9 +110,10 @@ Install mode:
   --replace-units          Overwrite existing systemd units that point at another checkout
 
 Configuration:
-  --insecure-tls           Allow sending ES credentials without TLS certificate
-                           verification (lab clusters with self-signed certs only;
-                           prefer ES_CA_CERT=/path/to/ca.pem)
+  --insecure-tls           Don't verify Elasticsearch's TLS certificate (lab or
+                           classroom clusters only). Without this flag, an untrusted
+                           certificate is shown with its fingerprint and you choose
+                           whether to trust it.
   --non-interactive        Never prompt; read values from the environment
                            (ES_HOST, ES_USERNAME, ES_PASSWORD, GC_ALERT_WEBHOOK, ...)
   --reconfigure            Re-ask settings even if .env files already exist
@@ -105,6 +131,8 @@ while [[ $# -gt 0 ]]; do
     --maintenance-wizard) MAINTENANCE_WIZARD=1; WITH_MAINTENANCE="yes" ;;
     --with-triage)        WITH_TRIAGE="yes" ;;
     --no-triage)          WITH_TRIAGE="no" ;;
+    --with-greenbone)     WITH_GREENBONE="yes" ;;
+    --no-greenbone)       WITH_GREENBONE="no" ;;
     --triage-listen)      TRIAGE_LISTEN="${2:?--triage-listen needs an address}"; shift ;;
     --triage-listen=*)    TRIAGE_LISTEN="${1#*=}" ;;
     --triage-port)        TRIAGE_PORT="${2:?--triage-port needs a number}"; shift ;;
@@ -348,11 +376,39 @@ preflight() {
   else
     info "Triage add-on: skipped (re-run with --with-triage to add it later)"
   fi
+
+  if [[ -z "$WITH_GREENBONE" ]]; then
+    echo
+    echo "  Optional add-on: Greenbone vulnerability results"
+    echo "  Sends finished Greenbone / OpenVAS scan results to Elasticsearch once a day,"
+    echo "  labelled new, fixed or unchanged since the previous scan. Needs Greenbone"
+    echo "  installed on this server."
+    if confirm "Install the Greenbone results push too?" N; then
+      WITH_GREENBONE="yes"
+    else
+      WITH_GREENBONE="no"
+    fi
+  fi
+  if [[ "$WITH_GREENBONE" == "yes" ]]; then
+    [[ -f "$GREENBONE_DIR/gvm_siem_push.py" ]] || die "Add-on not found at $GREENBONE_DIR (clone the full repository)"
+    # It reads gvmd's socket on this host, so it always runs from a host venv,
+    # even when the detection engine runs in Docker.
+    if [[ "$MODE" == "docker" ]]; then
+      command -v python3 >/dev/null || die "The Greenbone add-on needs python3 on this host (with venv support)"
+      python3 -c 'import ensurepip, venv' 2>/dev/null \
+        || die "python3 venv support missing. On Debian/Ubuntu: sudo apt install -y python3-venv"
+    fi
+    ok "Greenbone add-on: enabled"
+  else
+    info "Greenbone add-on: skipped (re-run with --with-greenbone to add it later)"
+  fi
 }
 
 # ── Elasticsearch connectivity ───────────────────────────────────────────────
 # Credentials go to curl on stdin so they never appear in the process list, and
 # are only sent over a verified TLS connection unless --insecure-tls is given.
+# Returns 0 when connected, 2 when the cluster answers but its certificate is
+# not trusted, and 1 for anything else.
 es_check() {
   local host="$1" user="$2" pass="$3" out flags=(-sS --max-time 10)
   if (( DRY_RUN )); then
@@ -365,29 +421,148 @@ es_check() {
     [[ -r "$ca" ]] || { fail "ES_CA_CERT not readable: $ca"; return 1; }
     flags+=(--cacert "$ca")
   fi
-  local cfg=""
+  local cfg="" rc=0
   [[ -n "$user" ]] && cfg="user = \"${user//\"/\\\"}:${pass//\"/\\\"}\""
-  if out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -K - "$host" 2>&1)" && [[ "$out" == *cluster_name* ]]; then
-    ok "Elasticsearch reachable at $host (TLS verified)"
-    return 0
+  out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -K - "$host" 2>&1)" || rc=$?
+  if (( rc == 0 )); then
+    es_response_ok "$host" "$out" "(TLS verified)"
+    return
   fi
   if (( INSECURE_TLS )); then
-    if out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -k -K - "$host" 2>&1)" && [[ "$out" == *cluster_name* ]]; then
-      warn "Elasticsearch reachable at $host with TLS verification disabled (--insecure-tls)"
-      return 0
+    rc=0
+    out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -k -K - "$host" 2>&1)" || rc=$?
+    if (( rc == 0 )); then
+      es_response_ok "$host" "$out" "with TLS verification off (lab use only)"
+      return
     fi
   elif [[ "$host" == https://* ]]; then
     # Diagnose a certificate problem without sending credentials.
     local code
     code="$(curl -sS --max-time 10 -k -o /dev/null -w '%{http_code}' "$host" 2>/dev/null || true)"
     if [[ -n "$code" && "$code" != "000" ]]; then
-      fail "Elasticsearch at $host answers, but its TLS certificate is not trusted"
-      info "Set ES_CA_CERT=/path/to/ca.pem, or pass --insecure-tls for a lab cluster"
-      return 1
+      if [[ -n "${ES_CA_CERT:-}" && "$out" == *"subject name"* ]]; then
+        warn "The certificate is trusted, but it was issued for a different name than the one in $host."
+        info "Use the hostname or IP address the certificate was issued for, or continue without verification."
+      else
+        warn "Elasticsearch at $host answers, but its TLS certificate is not trusted"
+      fi
+      if (( NON_INTERACTIVE )); then
+        info "Set ES_CA_CERT=/path/to/ca.pem, or pass --insecure-tls for a lab cluster"
+      fi
+      return 2
     fi
   fi
   fail "Could not reach Elasticsearch at $host: ${out:0:200}"
   return 1
+}
+
+# The TLS connection worked and Elasticsearch answered; check what it said.
+es_response_ok() {
+  local host="$1" out="$2" how="$3"
+  if [[ "$out" == *cluster_name* ]]; then
+    if [[ "$how" == "(TLS verified)" ]]; then
+      ok "Elasticsearch reachable at $host $how"
+    else
+      warn "Elasticsearch reachable at $host $how"
+    fi
+    return 0
+  fi
+  if [[ "$out" == *security_exception* ]]; then
+    fail "Elasticsearch at $host rejected the username or password"
+  else
+    fail "Unexpected answer from Elasticsearch at $host: ${out:0:200}"
+  fi
+  return 1
+}
+
+# host:port from an https:// URL, for openssl.
+url_host_port() {
+  local rest="${1#*://}"
+  rest="${rest%%/*}"
+  if [[ "$rest" == *:* ]]; then
+    printf '%s' "$rest"
+  else
+    printf '%s:443' "$rest"
+  fi
+}
+
+# Self-managed Elasticsearch signs its own certificates, so most first installs
+# land here. Show the CA's fingerprint and let the user choose: trust it (saved
+# to config/certs/ca.pem, verification stays on) or continue unverified (labs).
+# Returns 0 when a choice was made, 1 to stop.
+resolve_untrusted_cert() {
+  local host="$1" chain="" ca="" fp="" choice
+  (( NON_INTERACTIVE )) && return 1
+  if command -v openssl >/dev/null; then
+    chain="$(openssl s_client -connect "$(url_host_port "$host")" -showcerts </dev/null 2>/dev/null || true)"
+    # The last certificate in the chain is the self-signed CA that issued the others.
+    ca="$(awk '/-----BEGIN CERTIFICATE-----/ { c = ""; inside = 1 }
+               inside { c = c $0 "\n" }
+               /-----END CERTIFICATE-----/ { inside = 0; last = c }
+               END { printf "%s", last }' <<<"$chain")"
+    if [[ -n "$ca" ]]; then
+      fp="$(openssl x509 -noout -fingerprint -sha256 <<<"$ca" 2>/dev/null | cut -d= -f2)"
+    fi
+  fi
+
+  echo
+  echo "  This is normal for a self-managed cluster: Elasticsearch signs its own certificates."
+  if [[ -n "$fp" ]]; then
+    echo "  The certificate authority's SHA-256 fingerprint is:"
+    echo "    $fp"
+    echo "  To be sure you are talking to your own cluster, compare it with the fingerprint"
+    echo "  Elasticsearch printed when it was installed, or run this on the Elasticsearch server"
+    echo "  (ignore colons and upper/lower case):"
+    echo "    sudo openssl x509 -noout -fingerprint -sha256 -in /etc/elasticsearch/certs/http_ca.crt"
+  fi
+  echo
+  if [[ -n "$fp" ]]; then
+    echo "  1) Trust this certificate (recommended; the connection stays verified)"
+  else
+    echo "  1) Trust the certificate: unavailable, it could not be downloaded. Copy http_ca.crt"
+    echo "     from the server to $TRUSTED_CA_PATH and set ES_CA_CERT=$TRUSTED_CA_PATH in .env."
+  fi
+  echo "  2) Continue without verifying the certificate (lab or classroom only)"
+  echo "  3) Stop here"
+  read -r -p "  Choose [1/2/3]: " choice
+  case "$choice" in
+    1)
+      [[ -n "$fp" ]] || return 1
+      run mkdir -p "$REPO_ROOT/$(dirname "$TRUSTED_CA_PATH")"
+      if (( DRY_RUN )); then
+        printf '  [DRY ] write %s\n' "$TRUSTED_CA_PATH"
+      else
+        printf '%s' "$ca" >"$REPO_ROOT/$TRUSTED_CA_PATH"
+        chmod 644 "$REPO_ROOT/$TRUSTED_CA_PATH"
+      fi
+      ES_CA_CERT="$TRUSTED_CA_PATH"
+      ES_VERIFY_CERTS="true"
+      env_set "$ENV_FILE" ES_VERIFY_CERTS true
+      ok "Saved the cluster's certificate to $TRUSTED_CA_PATH"
+      ;;
+    2)
+      INSECURE_TLS=1
+      ;;
+    *)
+      die "Stopped. Your settings so far are in .env; run ./deploy.sh again when ready."
+      ;;
+  esac
+}
+
+# Check the connection; while the certificate is the problem, offer the trust
+# choice again (e.g. trusting worked but the hostname does not match).
+connect_es() {
+  local rc=0 attempts=0
+  es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+  while (( rc == 2 && attempts < 3 )) && resolve_untrusted_cert "$ES_HOST"; do
+    attempts=$((attempts + 1))
+    apply_tls_settings
+    rc=0
+    es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+  done
+  if (( rc != 0 )); then
+    warn "Continuing; fix ES settings in .env before starting the services"
+  fi
 }
 
 # ES_CA_CERT as an absolute path; relative paths are relative to the repo root,
@@ -401,7 +576,9 @@ ca_cert_path() {
 }
 
 is_false() {
-  [[ "${1,,}" =~ ^(0|false|no|off)$ ]]
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  [[ "$value" =~ ^(0|false|no|off)$ ]]
 }
 
 # Reconcile TLS settings from flags, environment and .env, and persist them so
@@ -432,13 +609,11 @@ apply_tls_settings() {
 configure_detection() {
   step "Detection pipeline configuration (.env)"
   if [[ -f "$ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
-    load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD \
-      ES_PROCESS_INDEX ES_NETWORK_INDEX ES_DISCOVERY_INDEX
+    load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
     if ! is_placeholder "${ES_HOST:-}"; then
       ok "Using existing .env (pass --reconfigure to change it)"
       apply_tls_settings
-      es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" \
-        || warn "Continuing; fix ES settings in .env before starting the services"
+      connect_es
       return
     fi
     info ".env still has placeholder values; asking for them now"
@@ -448,8 +623,7 @@ configure_detection() {
     run cp "$REPO_ROOT/.env.example" "$ENV_FILE"
     run chmod 600 "$ENV_FILE"
   fi
-  load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD \
-    ES_PROCESS_INDEX ES_NETWORK_INDEX ES_DISCOVERY_INDEX
+  load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
   is_placeholder "${ES_HOST:-}" && ES_HOST=""
   is_placeholder "${ES_USERNAME:-}" && ES_USERNAME=""
   is_placeholder "${ES_PASSWORD:-}" && ES_PASSWORD=""
@@ -459,14 +633,19 @@ configure_detection() {
   prompt ES_HOST "Elasticsearch URL (ES_HOST)" "$default_host"
   prompt ES_USERNAME "Elasticsearch username" "elastic"
   prompt_secret ES_PASSWORD "Elasticsearch password"
-  prompt ES_PROCESS_INDEX "Process events index pattern" ".ds-logs-endpoint.events.process-default-*"
-  prompt ES_NETWORK_INDEX "Network events index pattern" ".ds-logs-endpoint.events.network-default-*"
-  prompt ES_DISCOVERY_INDEX "Discovery events index pattern" "logs-endpoint.events.process-*"
   require_value ES_HOST
   require_value ES_PASSWORD
 
+  # Index patterns are not asked for: the defaults match a standard Elastic Agent
+  # install. The summary lists them so they can be checked and edited in .env.
+  : "${ES_PROCESS_INDEX:=.ds-logs-endpoint.events.process-default-*}"
+  : "${ES_NETWORK_INDEX:=.ds-logs-endpoint.events.network-default-*}"
+  : "${ES_DISCOVERY_INDEX:=logs-endpoint.events.process-*}"
+  : "${ES_METADATA_INDEX:=logs-endpoint.events.process-*,logs-endpoint.events.network-*}"
+  : "${ES_ALERTS_INDEX:=.internal.alerts-security.alerts-default-*}"
+
   local key
-  for key in ES_HOST ES_USERNAME ES_PASSWORD ES_PROCESS_INDEX ES_NETWORK_INDEX ES_DISCOVERY_INDEX; do
+  for key in ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"; do
     env_set "$ENV_FILE" "$key" "${!key}"
   done
   ok "Wrote .env"
@@ -475,8 +654,7 @@ configure_detection() {
   if (( LOCAL_ES )); then
     info "Bundled Elasticsearch is not running yet; skipping connectivity check"
   else
-    es_check "$ES_HOST" "$ES_USERNAME" "$ES_PASSWORD" \
-      || warn "Continuing; fix ES settings in .env before starting the services"
+    connect_es
   fi
 }
 
@@ -741,6 +919,81 @@ configure_triage() {
   fi
 }
 
+# ── Greenbone add-on configuration ───────────────────────────────────────────
+# The push script reads ES_CA_CERTS; it must be an absolute path because the
+# timer runs it from the add-on directory.
+greenbone_ca_value() {
+  if [[ "$ES_VERIFY_CERTS" == "true" && -n "${ES_CA_CERT:-}" ]]; then
+    ca_cert_path
+  fi
+}
+
+# The push runs on the host. The bundled Elasticsearch's "elasticsearch" name only
+# resolves inside Docker, but its port is published on the host.
+greenbone_es_host() {
+  if (( LOCAL_ES )); then
+    printf 'https://localhost:9200'
+  else
+    printf '%s' "$ES_HOST"
+  fi
+}
+
+configure_greenbone() {
+  step "Greenbone add-on configuration (addons/greenbone/.env)"
+  local ca
+  ca="$(greenbone_ca_value)"
+  if [[ -f "$GREENBONE_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
+    ok "Using existing add-on .env (pass --reconfigure to change it)"
+    # TLS always follows this run, like the other add-ons.
+    [[ "$(env_get "$GREENBONE_ENV_FILE" ES_VERIFY_CERTS)" == "$ES_VERIFY_CERTS" ]] \
+      || env_set "$GREENBONE_ENV_FILE" ES_VERIFY_CERTS "$ES_VERIFY_CERTS"
+    if [[ -n "$ca" ]]; then
+      [[ "$(env_get "$GREENBONE_ENV_FILE" ES_CA_CERTS)" == "$ca" ]] || env_set "$GREENBONE_ENV_FILE" ES_CA_CERTS "$ca"
+    else
+      env_del "$GREENBONE_ENV_FILE" ES_CA_CERTS
+    fi
+    return
+  fi
+
+  echo "  Elasticsearch settings are reused from the detection pipeline. Scan results go"
+  echo "  to the gvm-vulnerabilities index, so that account needs write access to it."
+  prompt GVM_SOCKET "Path to Greenbone's gvmd socket" "${GVM_SOCKET:-$GVM_DEFAULT_SOCKET}"
+  if (( ! DRY_RUN )) && [[ ! -S "$GVM_SOCKET" ]] && ! sudo test -S "$GVM_SOCKET" 2>/dev/null; then
+    warn "No socket at $GVM_SOCKET. Find it with: sudo find / -name gvmd.sock 2>/dev/null"
+  fi
+  prompt GVM_USERNAME "Greenbone username" "admin"
+  prompt_secret GVM_PASSWORD "Greenbone password"
+  require_value GVM_PASSWORD
+
+  if (( DRY_RUN )); then
+    printf '  [DRY ] write %s\n' "${GREENBONE_ENV_FILE#"$REPO_ROOT"/}"
+  else
+    local tmp
+    tmp="$(mktemp "$GREENBONE_ENV_FILE.XXXXXX")"
+    {
+      echo "# Generated by deploy.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "# Full option list: addons/greenbone/README.md"
+      echo
+      echo "GVM_SOCKET=$(escape_env "$GVM_SOCKET")"
+      echo "GVM_USERNAME=$(escape_env "$GVM_USERNAME")"
+      echo "GVM_PASSWORD=$(escape_env "$GVM_PASSWORD")"
+      echo
+      echo "ES_HOST=$(escape_env "$(greenbone_es_host)")"
+      echo "ES_USERNAME=$(escape_env "${ES_USERNAME:-}")"
+      echo "ES_PASSWORD=$(escape_env "${ES_PASSWORD:-}")"
+      echo "ES_INDEX=gvm-vulnerabilities"
+      echo "ES_VERIFY_CERTS=$ES_VERIFY_CERTS"
+      [[ -n "$ca" ]] && echo "ES_CA_CERTS=$(escape_env "$ca")"
+      echo
+      echo "STATE_FILE=$(escape_env "$GREENBONE_DIR/state/last_run")"
+      echo "LOG_FILE=$(escape_env "$REPO_ROOT/logs/greenbone-push.log")"
+    } >"$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$GREENBONE_ENV_FILE"
+  fi
+  ok "Wrote add-on .env (TLS verification: $ES_VERIFY_CERTS)"
+}
+
 # ── venv installs ────────────────────────────────────────────────────────────
 make_venv() {
   local dir="$1"
@@ -798,6 +1051,30 @@ install_triage_venv() {
     ok "Triage agent loads with this configuration"
   else
     warn "Triage agent failed to load: $(tail -1 <<<"$out")"
+  fi
+}
+
+# Run the Greenbone push as root: gvmd's socket is root-owned in the Docker Compose install.
+greenbone_push_cmd() {
+  printf '%s %s --env-file %s' "$GREENBONE_VENV_DIR/bin/python" "$GREENBONE_DIR/gvm_siem_push.py" "$GREENBONE_ENV_FILE"
+}
+
+install_greenbone_venv() {
+  step "Installing Greenbone add-on (venv)"
+  make_venv "$GREENBONE_VENV_DIR"
+  run "$GREENBONE_VENV_DIR/bin/python" -m pip install --quiet -r "$GREENBONE_DIR/requirements.txt"
+  run mkdir -p "$GREENBONE_DIR/state" "$REPO_ROOT/logs"
+  ok "Installed Greenbone add-on dependencies"
+  (( DRY_RUN )) && return
+  # A dry run logs in to Greenbone and reads every task's latest report, sending nothing.
+  info "Checking the Greenbone connection with a dry run (needs sudo; sends nothing)"
+  local out
+  if out="$(sudo "$GREENBONE_VENV_DIR/bin/python" "$GREENBONE_DIR/gvm_siem_push.py" \
+      --env-file "$GREENBONE_ENV_FILE" --dry-run 2>&1)"; then
+    ok "Greenbone dry run passed"
+  else
+    warn "Greenbone dry run failed: $(grep -m1 ERROR <<<"$out" || tail -1 <<<"$out")"
+    warn "Fix addons/greenbone/.env, then check again with: sudo $(greenbone_push_cmd) --dry-run"
   fi
 }
 
@@ -942,6 +1219,58 @@ EOF
   wait_for_triage
 }
 
+# A oneshot service plus a timer: the push runs once a day, not as a daemon.
+install_greenbone_timer() {
+  step "systemd: $GREENBONE_TIMER"
+  if ! unit_owned_or_absent "$GREENBONE_SERVICE" "$GREENBONE_DIR"; then
+    warn "Left $GREENBONE_SERVICE unchanged"
+    return
+  fi
+  local service timer
+  service="$(cat <<EOF
+[Unit]
+Description=Push Greenbone scan results to Elasticsearch (SOC-in-a-Box add-on)
+Documentation=https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: the gvmd socket is root-owned in the Greenbone Docker Compose install.
+WorkingDirectory=$GREENBONE_DIR
+ExecStart=$(greenbone_push_cmd)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gvm-siem-push
+EOF
+)"
+  timer="$(cat <<EOF
+[Unit]
+Description=Daily Greenbone results push (SOC-in-a-Box add-on)
+
+[Timer]
+OnCalendar=$GREENBONE_SCHEDULE
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
+)"
+  if (( DRY_RUN )); then
+    printf '  [DRY ] write /etc/systemd/system/%s:\n' "$GREENBONE_SERVICE"
+    sed 's/^/           /' <<<"$service"
+    printf '  [DRY ] write /etc/systemd/system/%s:\n' "$GREENBONE_TIMER"
+    sed 's/^/           /' <<<"$timer"
+  else
+    printf '%s\n' "$service" | sudo tee "/etc/systemd/system/$GREENBONE_SERVICE" >/dev/null
+    printf '%s\n' "$timer" | sudo tee "/etc/systemd/system/$GREENBONE_TIMER" >/dev/null
+  fi
+  run sudo systemctl daemon-reload
+  run sudo systemctl enable --now "$GREENBONE_TIMER"
+  ok "$GREENBONE_TIMER enabled ($GREENBONE_SCHEDULE; logs: journalctl -u $GREENBONE_SERVICE)"
+}
+
 # ── Docker ───────────────────────────────────────────────────────────────────
 deploy_docker() {
   step "Docker Compose"
@@ -978,6 +1307,27 @@ deploy_docker() {
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────────
+# The index patterns are not asked for during install; list them here so the
+# user can check them against the cluster and edit .env if they differ.
+summary_data_sources() {
+  local key value auth_flag=""
+  echo
+  echo "  Data sources the engine reads (index patterns in .env):"
+  for key in "${INDEX_KEYS[@]}"; do
+    value="$(env_get "$ENV_FILE" "$key")"
+    printf '    %-20s %s\n' "$key" "${value:-${!key:-}}"
+  done
+  if [[ "$ES_VERIFY_CERTS" == "false" ]]; then
+    auth_flag="-k "
+  elif [[ -n "${ES_CA_CERT:-}" ]]; then
+    auth_flag="--cacert $ES_CA_CERT "
+  fi
+  echo "  These are the standard Elastic Agent names. Check each one matches an index on"
+  echo "  your cluster (list them with the command below). If one differs, edit .env and"
+  echo "  restart the detection service."
+  echo "    curl ${auth_flag}-u ${ES_USERNAME:-USER} \"$ES_HOST/_cat/indices/*endpoint*,*system*?h=index&expand_wildcards=all\""
+}
+
 summary() {
   step "Done"
   (( DRY_RUN )) && echo "  Dry run: nothing was changed."
@@ -991,6 +1341,18 @@ summary() {
       echo "    From another machine: ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>"
     fi
   fi
+  echo "  Greenbone add-on:     $WITH_GREENBONE"
+  if [[ "$WITH_GREENBONE" == "yes" ]]; then
+    echo "    Results index:      gvm-vulnerabilities (add it as a data view in Kibana)"
+    if (( INSTALL_SYSTEMD )) && have_systemd; then
+      echo "    Schedule:           daily ($GREENBONE_SCHEDULE); see: systemctl list-timers $GREENBONE_TIMER"
+      echo "    Push now:           sudo systemctl start $GREENBONE_SERVICE"
+    else
+      echo "    No timer installed. Add to root's crontab (sudo crontab -e):"
+      echo "      0 6 * * * $(greenbone_push_cmd)"
+    fi
+  fi
+  summary_data_sources
   if [[ "$MODE" == "venv" ]]; then
     echo
     echo "  Sanity checks (see docs/installation.md, Step 3):"
@@ -1014,9 +1376,28 @@ summary() {
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-main() {
-  echo "SOC-in-a-Box deployment ($REPO_ROOT)"
+intro() {
+  cat <<EOF
+SOC-in-a-Box installer ($REPO_ROOT)
+
+This script sets up SOC-in-a-Box on this machine. It will:
+  1. Check that this machine has what it needs (Python 3.10+ or Docker, and curl).
+  2. Ask which optional add-ons you want.
+  3. Ask for your Elasticsearch address and login, save them in .env, and test the
+     connection.
+  4. Install the detection engine and the add-ons you chose.
+  5. Start them as background services that keep running after you log out.
+At the end it lists the data sources the engine will read, for you to check.
+
+It only talks to your own Elasticsearch. It is safe to run again, and
+./deploy.sh --dry-run shows every step without changing anything.
+EOF
   (( DRY_RUN )) && echo "DRY RUN: no changes will be made"
+  return 0
+}
+
+main() {
+  intro
   preflight
   configure_detection
 
@@ -1031,15 +1412,24 @@ main() {
     fi
   fi
   [[ "$WITH_TRIAGE" == "yes" ]] && configure_triage
+  [[ "$WITH_GREENBONE" == "yes" ]] && configure_greenbone
 
   if [[ "$MODE" == "docker" ]]; then
     deploy_docker
+    # Greenbone's push reads gvmd's socket on this host, so it runs from a host venv and timer.
+    if [[ "$WITH_GREENBONE" == "yes" ]]; then
+      install_greenbone_venv
+      if (( INSTALL_SYSTEMD )) && have_systemd; then
+        install_greenbone_timer
+      fi
+    fi
   else
     install_detection_venv
     if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
       install_maintenance_venv
     fi
     [[ "$WITH_TRIAGE" == "yes" ]] && install_triage_venv
+    [[ "$WITH_GREENBONE" == "yes" ]] && install_greenbone_venv
     if (( INSTALL_SYSTEMD )) && have_systemd; then
       install_detection_unit
       if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
@@ -1047,6 +1437,9 @@ main() {
       fi
       if [[ "$WITH_TRIAGE" == "yes" ]]; then
         install_triage_unit
+      fi
+      if [[ "$WITH_GREENBONE" == "yes" ]]; then
+        install_greenbone_timer
       fi
     elif (( INSTALL_SYSTEMD )); then
       warn "systemd not available; skipping service units"

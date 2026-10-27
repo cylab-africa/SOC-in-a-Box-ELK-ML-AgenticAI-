@@ -173,7 +173,7 @@ def read_config():
         "es_password":       os.getenv("ES_PASSWORD"),
         "es_index":          os.getenv("ES_INDEX", "gvm-vulnerabilities"),
         "es_verify_certs":   _bool(os.getenv("ES_VERIFY_CERTS"), True),
-        "es_ca_certs":       os.getenv("ES_CA_CERTS"),
+        "es_ca_certs":       os.getenv("ES_CA_CERTS") or os.getenv("ES_CA_CERT"),
         "es_compat_version": os.getenv("ES_COMPAT_VERSION"),
         "state_file":        os.path.expanduser(os.getenv("STATE_FILE", "~/.gvm_last_run")),
         "apply_overrides":   1 if _bool(os.getenv("APPLY_OVERRIDES"), True) else 0,
@@ -632,9 +632,15 @@ def main():
             log.info(f"{task_name}: report {report_id} (finished {scan_end or 'unknown'})")
 
             # A fresh session per task, so a timeout on one task cannot affect the next.
-            with open_gmp(cfg) as gmp:
-                gmp.authenticate(cfg["gvm_username"], cfg["gvm_password"])
-                docs = build_documents(gmp, cfg, task_id, task_name, report_id, scan_end)
+            # A failed task is retried on the next run; the other tasks still go out now.
+            try:
+                with open_gmp(cfg) as gmp:
+                    gmp.authenticate(cfg["gvm_username"], cfg["gvm_password"])
+                    docs = build_documents(gmp, cfg, task_id, task_name, report_id, scan_end)
+            except Exception as e:
+                log.error(f"  Could not read this report from GVM ({e}) - skipping it this run")
+                failed = True
+                continue
 
             if args.dry_run:
                 log.info(f"  Dry run: would index {len(docs)} document(s)")
@@ -650,11 +656,14 @@ def main():
         return 1
 
     if args.dry_run:
+        if failed:
+            log.error("Dry run finished with errors. Nothing was sent.")
+            return 1
         log.info("Dry run finished. Nothing was sent and the timestamp was not changed.")
         return 0
 
     if failed:
-        log.error("Some documents failed to index. Timestamp not saved, so the next run will retry.")
+        log.error("Some reports could not be read or indexed. Timestamp not saved, so the next run will retry.")
         return 1
 
     save_last_run(cfg["state_file"], run_start)

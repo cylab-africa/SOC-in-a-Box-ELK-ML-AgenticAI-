@@ -35,6 +35,7 @@ flowchart LR
 | **Detection engine** | Learns normal behavior per host, user, and process, and turns what does not fit into filtered, enriched, ATT&CK-mapped alerts in Kibana | Core |
 | **SIEM Maintenance Agent** | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | Optional |
 | **Alert Triage Agent** | AI-assisted investigation of Elastic Security alerts with a true/false-positive verdict; web UI, REST API, and MCP server | Optional |
+| **Greenbone results push** | Sends Greenbone / OpenVAS vulnerability scan results to Elasticsearch daily, labelled new, fixed or unchanged since the previous scan | Optional |
 
 All of it sits on top of the Elastic Stack (Elasticsearch, Kibana, Fleet, and
 Elastic Agent with Elastic Defend).
@@ -51,16 +52,16 @@ No cluster yet? See [Step 1 of the installation guide](docs/installation.md#step
 
 ## Quick start
 
-**1. Check that endpoint data is reaching Elasticsearch**
+SOC-in-a-Box installs with one script, `deploy.sh`. Run it on the Linux machine
+that will host SOC-in-a-Box. It walks you through the setup:
 
-```bash
-curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"
-```
-
-✅ A count in the thousands or more. `{"count":0}` means Elastic Agent isn't
-shipping data yet; fix that first.
-
-**2. Install**
+1. Checks the machine has what it needs (Python 3.10+, or Docker).
+2. Asks which optional add-ons you want.
+3. Asks for your Elasticsearch address, username and password, and tests the
+   connection.
+4. Installs the detection engine and your add-ons, and starts them as services
+   that keep running in the background.
+5. Ends with a summary, including the data sources the engine will read.
 
 ```bash
 git clone https://github.com/cylab-africa/SOC-in-a-Box-ELK-ML-AgenticAI-.git
@@ -68,26 +69,28 @@ cd SOC-in-a-Box-ELK-ML-AgenticAI-
 ./deploy.sh
 ```
 
-It asks for your Elasticsearch URL and credentials, checks the connection,
-offers each add-on, and starts the service.
+To see what it would do without changing anything, run `./deploy.sh --dry-run`
+first. It is safe to run again later, for example to add an add-on.
 
-✅ `[ OK ]` lines for each stage, ending in:
+**Elasticsearch certificate.** A self-managed Elasticsearch signs its own
+certificate, so the script shows the certificate's fingerprint and asks what to
+do. Choose **1** to trust it (recommended), or **2** to continue without
+checking it (fine for a lab or classroom).
+
+**When it finishes**, you will see:
 
 ```
 == Done ==
   Detection pipeline:   venv
 ```
 
-**3. See the alerts**
+followed by the data sources (index patterns) the engine reads. They match a
+standard Elastic Agent install; if your cluster names them differently, edit
+them in `.env`.
 
-Models train on the first cycle; detections start once training finishes. Then:
-
-```bash
-curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/ml-anomalies-custom-*/_count"
-```
-
-✅ A count above zero. Add `ml-anomalies-custom-*` as a data view in Kibana to
-work the alerts.
+**Then**, in Kibana, create a data view for `ml-anomalies-custom-*`. Alerts
+appear there once the models have trained on your data, which happens
+automatically on the first cycle.
 
 Something not right? See [Troubleshooting](docs/troubleshooting.md).
 

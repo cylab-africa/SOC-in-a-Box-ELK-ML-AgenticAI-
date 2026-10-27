@@ -1,11 +1,11 @@
 # gvm-siem-push
 
-Send finished [Greenbone / OpenVAS](https://www.greenbone.net/) scan results to Elasticsearch, labelled with what changed since the previous scan, so a SOC Analyst can search analyse them from the dashboard in Kibana.
+Send finished [Greenbone / OpenVAS](https://www.greenbone.net/) scan results to Elasticsearch, labelled with what changed since the previous scan, so SOC analysts can search and analyse them in Kibana.
 
 - Reads each scan task's latest finished report through gvmd's local socket.
 - Filters findings like Greenbone's own report view: severity above 0, Quality of Detection at least 70, overrides applied.
 - Compares each report with the same task's previous report and labels every finding `new`, `same`, `changed` or `fixed`.
-- Only sends reports that finished since the last successful run, and never creates duplicates.
+- Sends each task's latest report if it finished since the last successful run, and never creates duplicates.
 - Runs by hand or from cron; all settings and secrets live in an env file.
 
 ## How it works
@@ -33,13 +33,18 @@ Each finding is stored under its Greenbone result ID, so sending the same report
 ## Requirements
 
 - Python 3.9 or later.
-- Runs on the Greenbone server, with read and write access to the gvmd Unix socket. In the Docker Compose install the socket is root-owned, so the script normally runs as root.
+- Runs on the same server as Greenbone, with read and write access to the gvmd Unix socket. In the Docker Compose install the socket is root-owned, so the script normally runs as root.
 - A Greenbone user that can see the scan tasks and reports.
 - An Elasticsearch 8 user that can create and write to the target index. It does not need to be a superuser.
 
 Tested with Greenbone Community Edition (Docker Compose, feed release 24.10) and Elasticsearch 8.
 
 ## Installation
+
+**With SOC-in-a-Box:** run `./deploy.sh --with-greenbone` from the repository root on the
+server where SOC-in-a-Box and Greenbone are installed. It reuses the Elasticsearch settings, asks for the Greenbone login, installs
+the script, and schedules a daily push with a systemd timer. The rest of this section is the
+manual install.
 
 The paths below are a suggested layout. Any paths work as long as the env file and cron lines point to them.
 
@@ -67,9 +72,9 @@ Settings come from environment variables or an env file passed with `--env-file`
 | `ES_USERNAME` | Yes | | Elasticsearch user |
 | `ES_PASSWORD` | Yes | | Elasticsearch password |
 | `ES_INDEX` | No | `gvm-vulnerabilities` | Target index |
-| `ES_CA_CERTS` | No | | CA certificate for Elasticsearch's TLS certificate |
+| `ES_CA_CERTS` | No | | CA certificate for Elasticsearch's TLS certificate (`ES_CA_CERT` also works) |
 | `ES_VERIFY_CERTS` | No | `true` | Set `false` only if no CA certificate is available |
-| `ES_COMPAT_VERSION` | No | | Set `8` when the Python client is newer than an Elasticsearch 8 server |
+| `ES_COMPAT_VERSION` | No | | Only needed if you installed a 9.x Python client against an Elasticsearch 8 server; `requirements.txt` pins 8.x |
 | `MIN_SEVERITY` | No | `0.0` | Only send findings above this severity |
 | `MIN_QOD` | No | `70` | Minimum Quality of Detection |
 | `APPLY_OVERRIDES` | No | `true` | Apply overrides set in Greenbone |
@@ -148,6 +153,7 @@ Dashboards that count open vulnerabilities should exclude `delta_status : fixed`
 | `Elasticsearch error: ...` | Check `ES_HOST`, credentials and `ES_CA_CERTS` |
 | `Could not compare with the previous scan (timed out)` | Raise `GVM_TIMEOUT`; findings are still sent, labelled `unknown` |
 | `Some documents failed to index` | Read the first error in the log; the next run retries |
+| `Could not read this report from GVM` | That task is skipped and retried next run; the other tasks are still sent |
 | Every task says `latest report already pushed` but data is missing | Run once with `--full` |
 
 ## Security notes

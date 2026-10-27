@@ -65,10 +65,14 @@ Choose one:
   include Elastic Agent, so you still need to enroll an agent against it to get
   endpoint data.
 
-**✅ Check:** this returns a count in the thousands or more.
+**Check (optional):** in Kibana, open **Discover** with the
+`logs-endpoint.events.process-*` data view and confirm events from your Linux
+hosts are arriving. From the command line, this returns a count in the
+thousands or more (`-k` skips the certificate check, which is fine for a quick
+look on your own network; see [Your cluster's certificate](#your-clusters-certificate)):
 
 ```bash
-curl -u "$ES_USERNAME:$ES_PASSWORD" \
+curl -k -u "$ES_USERNAME" \
   "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"
 ```
 
@@ -94,18 +98,54 @@ cd SOC-in-a-Box-ELK-ML-AgenticAI-
 ./deploy.sh                  # interactive
 ```
 
-It asks for your Elasticsearch URL and credentials, checks the cluster answers,
-installs the engine in `.venv/`, and starts `realtime_service.service` under
-systemd.
+It starts by explaining what it will do, then asks for your Elasticsearch URL
+and credentials, checks the cluster answers, installs the engine in `.venv/`,
+and starts `realtime_service.service` under systemd. It does not ask for index
+names: it uses the standard Elastic Agent ones and lists them at the end.
 
-**✅ You should see** `[ OK ]` lines for each stage and a summary at the end:
+**You should see** `[ OK ]` lines for each stage and a summary at the end:
 
 ```
 == Done ==
   Detection pipeline:   venv
   Maintenance add-on:   no
   Triage add-on:        no
+  Greenbone add-on:     no
+
+  Data sources the engine reads (index patterns in .env):
+    ES_PROCESS_INDEX     .ds-logs-endpoint.events.process-default-*
+    ES_NETWORK_INDEX     .ds-logs-endpoint.events.network-default-*
+    ...
 ```
+
+Check those data sources against your cluster; the summary prints the command
+to list its indices. If one differs, edit it in `.env` and restart the service
+(`sudo systemctl restart realtime_service`).
+
+### Your cluster's certificate
+
+A self-managed Elasticsearch signs its own TLS certificate, so on a first
+install `deploy.sh` usually stops at this question:
+
+```
+  The certificate authority's SHA-256 fingerprint is:
+    79:16:08:02:...:8F:ED:9B
+  1) Trust this certificate (recommended; the connection stays verified)
+  2) Continue without verifying the certificate (lab or classroom only)
+  3) Stop here
+```
+
+| | 1 — Trust the certificate | 2 — Don't verify |
+|---|---|---|
+| Use for | Any real deployment | A classroom or throwaway lab |
+| What happens | The certificate is saved to `config/certs/ca.pem` and every connection is verified | `ES_VERIFY_CERTS=false` is set; connections are encrypted but not checked |
+| Before choosing | Compare the fingerprint with the one Elasticsearch printed at install, or run `sudo openssl x509 -noout -fingerprint -sha256 -in /etc/elasticsearch/certs/http_ca.crt` on the Elasticsearch server | Nothing |
+| Manual `curl` commands | `curl --cacert config/certs/ca.pem ...` | `curl -k ...` |
+
+If you trust the certificate and the script then says it *was issued for a
+different name*, connect using the hostname or IP address the certificate lists
+(often the server's own hostname), or choose option 2. For unattended installs,
+set `ES_CA_CERT=/path/to/ca.pem` or pass `--insecure-tls`.
 
 A `[FAIL]` line stops the script and says what went wrong. It is safe to re-run:
 existing `.env` files are kept unless you pass `--reconfigure`.
@@ -121,23 +161,23 @@ front instead, see [Manual install](#manual-install), step 4.
 | Detection engine | `.venv/`, `pip install -e .`, `realtime_service.service` | `detection` container |
 | Maintenance add-on (`--with-maintenance`) | `addons/siem-maintenance/.venv/`, `siem-maintenance.service` | `siem-maintenance` container (`maintenance` profile) |
 | Triage add-on (`--with-triage`) | `addons/alert-triage/.venv/`, `alert-triage.service` on `127.0.0.1:8000` | `alert-triage` container (`triage` profile), published on `127.0.0.1:8000` |
+| Greenbone add-on (`--with-greenbone`) | `addons/greenbone/.venv/`, `gvm-siem-push.timer` (daily push) | the same, on the host next to the containers (it reads Greenbone's socket on this server) |
 | Elasticsearch | your cluster (`ES_HOST`) | your cluster, or the bundled one with `--local-es` |
 
 Steps it runs:
 
 1. Preflight: Python 3.10+ and venv support (or Docker Compose v2), curl.
 2. Asks which add-ons to install (skip the questions with `--with-maintenance` /
-   `--no-maintenance` and `--with-triage` / `--no-triage`).
-3. Writes `.env` from `.env.example` with your ES URL, credentials, and index
-   patterns, then checks the cluster answers. Credentials are passed to curl
-   on stdin, never on the command line, and are only sent over a verified TLS
-   connection. For a private CA set `ES_CA_CERT=/path/to/ca.pem`; for a lab
-   cluster with a self-signed certificate pass `--insecure-tls` (or
-   `ES_INSECURE_TLS=1`). Without either, an untrusted certificate is reported
-   and no credentials are sent.
+   `--no-maintenance`, `--with-triage` / `--no-triage`, and `--with-greenbone` /
+   `--no-greenbone`).
+3. Writes `.env` from `.env.example` with your ES URL and credentials, then
+   checks the cluster answers. Credentials are passed to curl on stdin, never on
+   the command line, and are only sent once the certificate question above is
+   settled.
 4. For each add-on chosen, writes its `.env` reusing the same ES settings.
 5. Installs dependencies and (venv mode) systemd units, or builds and starts
    the containers.
+6. Prints a summary, including the data sources (index patterns) to check.
 
 Unattended example (CI, Ansible, cloud-init):
 
@@ -157,12 +197,15 @@ variable of the same name (`ES_HOST`, `ES_USERNAME`, `ES_PASSWORD`,
 
 Check these four in order. The first one that fails tells you where to look.
 
-| # | Check | Command | ✅ Expected |
+| # | Check | Command | Expected |
 |---|---|---|---|
-| 1 | Input data exists | `curl -u U:P "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"` | count > 0 |
+| 1 | Input data exists | `curl --cacert config/certs/ca.pem -u USER "$ES_HOST/.ds-logs-endpoint.events.process-default-*/_count"` | count > 0 |
 | 2 | Models trained | `grep "Successfully trained" logs/trainer.log` | one line per group |
 | 3 | Detection ran | `grep "Anomalies detected" logs/linux_anomaly_detection.log \| tail -1` | a non-zero number |
-| 4 | Output reached ES | `curl -u U:P "$ES_HOST/ml-anomalies-custom-*/_count"` | count > 0 |
+| 4 | Output reached ES | `curl --cacert config/certs/ca.pem -u USER "$ES_HOST/ml-anomalies-custom-*/_count"` | count > 0 |
+
+Use `-k` instead of `--cacert config/certs/ca.pem` if you chose not to verify the
+certificate.
 
 Then add `ml-anomalies-custom-*` as a data view in Kibana to see the alerts.
 
@@ -221,7 +264,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-**✅ Worked if:** `python -c "import anomaly_detector"` prints nothing (no error).
+**Worked if:** `python -c "import anomaly_detector"` prints nothing (no error).
 
 ### 2. Point it at Elasticsearch
 
@@ -237,7 +280,7 @@ Open `.env` and set these three. Everything else has a working default:
 | `ES_USERNAME` | An ES user that can read your log indices and write new ones |
 | `ES_PASSWORD` | That user's password |
 
-**✅ Worked if:** the `curl` command in [Step 1](#step-1--have-an-elastic-stack-with-endpoint-data)
+**Worked if:** the `curl` command in [Step 1](#step-1--have-an-elastic-stack-with-endpoint-data)
 returns a count using these credentials.
 
 ### 3. Check your index names match
@@ -247,7 +290,7 @@ This is the single most common reason a run produces nothing. The defaults in
 things differently, see
 [configuration.md](configuration.md#index-names-and-field-names).
 
-**✅ Worked if:** every `ES_*_INDEX` pattern in `.env` matches at least one real
+**Worked if:** every `ES_*_INDEX` pattern in `.env` matches at least one real
 index on your cluster.
 
 ### 4. Train the models
@@ -268,7 +311,7 @@ python engine/train_models_background.py --all
 Useful flags: `--groups process network` to train only some groups,
 `--skip-existing` to resume, `--restart-on-fail` to retry automatically.
 
-**✅ Worked if:** `logs/trainer.log` contains lines like:
+**Worked if:** `logs/trainer.log` contains lines like:
 
 ```
 Successfully trained and saved models for process
@@ -290,7 +333,7 @@ Add `--data-groups process` to test a single group first, or
 job. Job IDs are the `v3_*` names that appear in your logs and in `results/`
 filenames.
 
-**✅ Worked if:** `logs/linux_anomaly_detection.log` contains a summary like:
+**Worked if:** `logs/linux_anomaly_detection.log` contains a summary like:
 
 ```
 Detection Summary:
@@ -312,7 +355,7 @@ python engine/push_all_anomalies.py
 This is the step that applies false-positive filtering, adds context, maps to
 ATT&CK, correlates into kill chains, and writes to Elasticsearch.
 
-**✅ Worked if:** the `ml-anomalies-custom-*` indices exist and have documents:
+**Worked if:** the `ml-anomalies-custom-*` indices exist and have documents:
 
 ```bash
 curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/ml-anomalies-custom-*/_count"
@@ -371,7 +414,7 @@ WantedBy=multi-user.target
 
 Then `sudo systemctl enable --now realtime_service`.
 
-**✅ Worked if:** `systemctl status realtime_service` shows `active (running)`.
+**Worked if:** `systemctl status realtime_service` shows `active (running)`.
 
 This service is chatty; consider adding `StandardOutput=null` and reading
 `logs/` instead, or capping journal size with `SystemMaxUse` in
