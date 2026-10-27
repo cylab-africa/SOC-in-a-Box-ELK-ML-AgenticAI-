@@ -543,13 +543,16 @@ def run_detection_process(args, logger, parent_run_id=None):
 
         # Handle list jobs request
         if args.list_jobs:
-            jobs = detector.list_supported_jobs()
+            from detection_methods import JOB_CONFIGURATIONS
+
+            jobs_by_group: dict[str, list[str]] = {}
+            for job, job_config in JOB_CONFIGURATIONS.items():
+                jobs_by_group.setdefault(job_config.get("data_type", "other"), []).append(job)
             logger.info("Supported Linux Anomaly Detection Jobs:")
-            for group, job_list in jobs.items():
+            for group, job_list in jobs_by_group.items():
                 logger.info(f"\n{group.upper()} Group:")
                 for job in job_list:
-                    description = detector.get_job_description(job)
-                    logger.info(f"  - {job}: {description}")
+                    logger.info(f"  - {job}: {JOB_CONFIGURATIONS[job].get('description', '')}")
             return 0
 
         # Train models if requested

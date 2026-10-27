@@ -1,0 +1,12 @@
+# gvm-siem-push cron examples (add with: sudo crontab -e)
+# Fields: minute hour day-of-month month day-of-week (0 or 7 = Sunday), server local time.
+# Schedule each push a few hours after the scan it follows normally finishes.
+
+# Push after a weekly scan that starts Saturday 00:00
+0 3 * * 6 /opt/gvm-siem/venv/bin/python /opt/gvm-siem/gvm_siem_push.py --env-file /etc/gvm-siem/gvm-siem.env >> /var/log/gvm-siem/cron.log 2>&1
+
+# Push after a monthly scan that starts on the 18th at 10:00
+0 15 18 * * /opt/gvm-siem/venv/bin/python /opt/gvm-siem/gvm_siem_push.py --env-file /etc/gvm-siem/gvm-siem.env >> /var/log/gvm-siem/cron.log 2>&1
+
+# Alternative: one daily push. Runs with nothing new finish in seconds.
+# 0 6 * * * /opt/gvm-siem/venv/bin/python /opt/gvm-siem/gvm_siem_push.py --env-file /etc/gvm-siem/gvm-siem.env >> /var/log/gvm-siem/cron.log 2>&1

@@ -9,6 +9,7 @@ without touching detection.
 |---|---|---|
 | [SIEM Maintenance Agent](#siem-maintenance-agent) | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | `./deploy.sh --with-maintenance` |
 | [Alert Triage Agent](#alert-triage-agent) | AI-assisted investigation of Elastic Security alerts, with a TP/FP verdict; web UI, REST API, and MCP server | `./deploy.sh --with-triage` |
+| [Greenbone results push](#greenbone-results-push) | Sends Greenbone / OpenVAS vulnerability scan results to Elasticsearch daily, labelled new, fixed or unchanged | `./deploy.sh --with-greenbone` |
 
 ## SIEM Maintenance Agent
 
@@ -23,7 +24,7 @@ choose it:
 ./deploy.sh --maintenance-wizard          # the add-on's full installer (feedback loop, Chat app, LLM presets)
 ```
 
-**✅ Worked if:** `systemctl status siem-maintenance` shows `active (running)`,
+**Worked if:** `systemctl status siem-maintenance` shows `active (running)`,
 and a one-off poll completes:
 
 ```bash
@@ -65,7 +66,7 @@ asks for an AI backend (`none`, `ollama`, `claude`, `openai_compat`) and
 optional AbuseIPDB / VirusTotal keys, installs it, and starts
 `alert-triage.service`.
 
-**✅ Worked if:** `http://127.0.0.1:8000/` opens the web UI (MCP endpoint:
+**Worked if:** `http://127.0.0.1:8000/` opens the web UI (MCP endpoint:
 `http://127.0.0.1:8000/mcp/mcp`).
 
 > **It has no login.** Anyone who can reach its port can read every open alert,
@@ -94,3 +95,42 @@ optional AbuseIPDB / VirusTotal keys, installs it, and starts
   SDK 2.x renamed `FastMCP` and the agent fails to start with it.
 - **Disable:** `sudo systemctl disable --now alert-triage.service`, or run
   compose without `--profile triage`.
+
+## Greenbone results push
+
+[`addons/greenbone/`](../addons/greenbone/) sends finished
+[Greenbone / OpenVAS](https://www.greenbone.net/) vulnerability scans to
+Elasticsearch, so analysts can search them in Kibana next to the detection
+alerts. For each scan task it takes the latest finished report, compares it
+with the previous one, and labels every finding `new`, `same`, `changed` or
+`fixed`.
+
+SOC-in-a-Box runs on one server, and Greenbone must be installed on that same
+server: the push reads Greenbone's local `gvmd` socket. It works with both
+install modes; with `--mode docker` it runs on the host next to the containers.
+
+```bash
+./deploy.sh --with-greenbone
+```
+
+It reuses the Elasticsearch settings, asks for the path to the `gvmd` socket
+(the Greenbone Community Docker Compose default is offered) and the Greenbone
+login, checks the connection with a dry run, and installs a systemd timer that
+pushes once a day at 06:00. The push runs as root, because the socket is
+root-owned in the Docker Compose install.
+
+**Worked if:** the dry run during install passes, and after the first push the
+`gvm-vulnerabilities` index has documents. Add it as a data view in Kibana.
+
+```bash
+systemctl list-timers gvm-siem-push.timer        # next scheduled push
+sudo systemctl start gvm-siem-push.service       # push now
+journalctl -u gvm-siem-push.service              # what the last push did
+```
+
+- **Configure:** `addons/greenbone/.env`. Full settings, the Kibana queries for
+  new and fixed findings, and troubleshooting are in
+  [addons/greenbone/README.md](../addons/greenbone/README.md).
+- **Schedule:** set `GREENBONE_SCHEDULE` (a systemd `OnCalendar` value, e.g.
+  `"Sat *-*-* 03:00:00"`) when running `deploy.sh` to change it.
+- **Disable:** `sudo systemctl disable --now gvm-siem-push.timer`.
