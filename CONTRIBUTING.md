@@ -7,7 +7,7 @@ Thank you for your interest in contributing! This project uses a multi-agent dev
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/your-username/linux-anomaly-detection.git`
 3. Install dependencies: `pip install -e ".[dev]"`
-4. Run tests: `pytest tests/ -x --tb=short`
+4. Run tests: `pytest`
 
 ## Code Standards
 
@@ -29,9 +29,9 @@ Every detection capability must map to at least one MITRE ATT&CK technique. Use 
 
 1. Create a feature branch from `main`
 2. Make your changes following the code standards above
-3. Run the test suite: `pytest tests/ -x --tb=short`
+3. Run the test suite: `pytest`
 4. Run the linter: `ruff check .`
-5. Ensure all validation scripts pass: `python validation/check_all.py`
+5. Ensure all validation scripts pass: `python engine/validation/check_all.py`
 6. Submit a PR with a clear description of the changes
 
 ## Component Ownership
@@ -42,13 +42,13 @@ Every detection capability must map to at least one MITRE ATT&CK technique. Use 
 | `datamanager.py`, `features/` | Data fetching and feature extraction |
 | `dl_models/` | Deep learning models |
 | `benign_lists.py`, FP rules in `push_all_anomalies.py` | False-positive tuning |
-| `backends/` | SIEM backend abstraction |
+| `engine/backends/` | SIEM backend abstraction |
 | `post_correlation.py`, `realtime_service.py` | Ops and correlation |
-| `tests/`, `benchmarks/`, `validation/` | Testing infrastructure |
+| `engine/tests/`, `engine/benchmarks/`, `engine/validation/` | Testing infrastructure |
 
 ## Adding a New Backend
 
-See the `backends/` directory. Subclass `SIEMBackend` from `backends/base.py` and implement all abstract methods. See `backends/elasticsearch_backend.py` for a reference implementation.
+See the `engine/backends/` directory. Subclass `SIEMBackend` from `engine/backends/base.py` and implement all abstract methods. See `engine/backends/elasticsearch_backend.py` for a reference implementation.
 
 ## Reporting Security Issues
 

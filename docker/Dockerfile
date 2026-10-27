@@ -23,15 +23,9 @@ WORKDIR /app
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
-COPY *.py ./
+# Same layout as the repo: code in engine/, configuration at the top level
+COPY engine/ engine/
 COPY config/ config/
-COPY features/ features/
-COPY models/ models/
-COPY dl_models/ dl_models/
-COPY backends/ backends/
-COPY adversarial/ adversarial/
-COPY benign_lists.py .
 COPY .env.example .env.example
 
 # Create directories for results and logs
@@ -45,4 +39,4 @@ HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
 # Default: run the continuous detection service
-CMD ["python", "realtime_service.py"]
+CMD ["python", "engine/realtime_service.py"]

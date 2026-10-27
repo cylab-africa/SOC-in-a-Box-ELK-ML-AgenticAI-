@@ -640,7 +640,8 @@ def _log_fp_decision(doc: dict[str, Any], is_fp: bool, reason: str) -> None:
 # file with the same name in config/local/ (gitignored); it replaces the default.
 # ---------------------------------------------------------------------------
 
-_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+# config/ lives at the repo root, next to .env; the code lives in engine/.
+_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 _LOCAL_CONFIG_DIR = _CONFIG_DIR / "local"
 
 
@@ -2083,7 +2084,7 @@ RESULTS_GLOB = "results/ml_only_anomalies_*.json"
 
 def _load_env() -> None:
     """Load .env file into os.environ for ES credentials."""
-    env_path = Path(__file__).parent / ".env"
+    env_path = Path(__file__).resolve().parent.parent / ".env"
     try:
         from dotenv import load_dotenv
         load_dotenv(env_path, override=True)

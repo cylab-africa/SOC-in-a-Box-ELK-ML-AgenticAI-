@@ -77,7 +77,7 @@ Both converge on a single output.
 
 The diagram above is the internal flow of this repository — what actually runs
 between "logs land in Elasticsearch" and "an alert reaches Kibana". Each stage
-maps to specific modules in the codebase.
+maps to specific modules in the codebase (all under `engine/`).
 
 **1. Data ingestion** — Data is collected from Elastic indices. Index patterns,
 time windows, and query shape are all configuration-driven, so the pipeline can

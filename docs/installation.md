@@ -169,8 +169,8 @@ Then add `ml-anomalies-custom-*` as a data view in Kibana to see the alerts.
 Two quick checks you can run straight after `deploy.sh`, before any training:
 
 ```bash
-.venv/bin/python main.py --list-jobs              # confirms ES connectivity and job registration
-.venv/bin/python push_all_anomalies.py --dry-run  # shows what would be pushed, pushes nothing
+.venv/bin/python engine/main.py --list-jobs              # confirms ES connectivity and job registration
+.venv/bin/python engine/push_all_anomalies.py --dry-run  # shows what would be pushed, pushes nothing
 ```
 
 ## Docker
@@ -193,7 +193,7 @@ This starts three services (`docker/docker-compose.yml`):
     up -d --build --no-deps detection
   ```
 - `detection` — builds from `docker/Dockerfile`, reads `.env` via
-  `env_file: ../.env`, and runs `realtime_service.py` by default.
+  `env_file: ../.env`, and runs `engine/realtime_service.py` by default.
 
 Add `--profile maintenance` or `--profile triage` to also start the add-on
 containers (they need the add-on `.env` files, which `deploy.sh` writes).
@@ -209,7 +209,8 @@ without rebuilding the image — only code changes require a rebuild.
 
 ## Manual install
 
-What `deploy.sh` automates, step by step.
+What `deploy.sh` automates, step by step. Run every command from the repo root;
+the engine's scripts live in `engine/`.
 
 ### 1. Install
 
@@ -255,13 +256,13 @@ Start with a dry run. It confirms the tool and your data-group configuration
 load correctly without touching Elasticsearch or training anything:
 
 ```bash
-python train_models_background.py --all --dry-run
+python engine/train_models_background.py --all --dry-run
 ```
 
 Then train for real. This reads up to 7 days of history and takes a while:
 
 ```bash
-python train_models_background.py --all
+python engine/train_models_background.py --all
 ```
 
 Useful flags: `--groups process network` to train only some groups,
@@ -281,7 +282,7 @@ reports it, which means not enough data overall.
 ### 5. Run detection once
 
 ```bash
-python main.py
+python engine/main.py
 ```
 
 Add `--data-groups process` to test a single group first, or
@@ -304,8 +305,8 @@ and new files appear in `results/` named `ml_only_<group>_data_*.csv` and
 ### 6. Send alerts to Kibana
 
 ```bash
-python push_all_anomalies.py --dry-run   # shows what would be pushed
-python push_all_anomalies.py
+python engine/push_all_anomalies.py --dry-run   # shows what would be pushed
+python engine/push_all_anomalies.py
 ```
 
 This is the step that applies false-positive filtering, adds context, maps to
@@ -324,7 +325,7 @@ Then add `ml-anomalies-custom-*` as a data view in Kibana to see them.
 Once a one-shot run works, run it as a service instead:
 
 ```bash
-python realtime_service.py
+python engine/realtime_service.py
 ```
 
 It loops detection, pushes results, retrains in the background, and cleans up
@@ -360,7 +361,7 @@ Type=simple
 User=YOUR_USER
 WorkingDirectory=/opt/SOC-in-a-Box-ELK-ML-AgenticAI-
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/SOC-in-a-Box-ELK-ML-AgenticAI-/.venv/bin/python -u /opt/SOC-in-a-Box-ELK-ML-AgenticAI-/realtime_service.py
+ExecStart=/opt/SOC-in-a-Box-ELK-ML-AgenticAI-/.venv/bin/python -u /opt/SOC-in-a-Box-ELK-ML-AgenticAI-/engine/realtime_service.py
 Restart=always
 RestartSec=5
 

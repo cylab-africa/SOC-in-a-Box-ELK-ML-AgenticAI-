@@ -125,7 +125,7 @@ def main() -> int:
     parser.add_argument(
         "--scenario-dir",
         type=Path,
-        default=Path("benchmarks/attack_scenarios"),
+        default=Path(__file__).resolve().parent / "attack_scenarios",
         help="Path to attack scenario directory",
     )
     parser.add_argument(

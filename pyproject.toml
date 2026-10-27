@@ -59,7 +59,8 @@ linux-anomaly-push = "push_all_anomalies:main"
 dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools]
-# The engine's entry points live as top-level modules in the repo root.
+# The engine's code lives in engine/; its entry points are top-level modules there.
+package-dir = {"" = "engine"}
 py-modules = [
     "adaptive_threshold", "anomaly_detector", "benign_lists", "config",
     "datamanager", "detection_methods", "entity_alignment", "es_tls",
@@ -69,7 +70,7 @@ py-modules = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["engine"]
 include = [
     "backends*",
     "mappings*",
@@ -79,10 +80,14 @@ include = [
     "adversarial*",
 ]
 
+[tool.setuptools.package-data]
+mappings = ["*.json"]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+# The engine's modules are first-party for import sorting.
+src = ["engine"]
 # Vendored via git subtree; linted upstream, kept byte-identical for clean subtree pulls.
 extend-exclude = ["addons"]
 
@@ -102,23 +107,22 @@ ignore = [
 # lines, commented-out code and best-effort `except: pass` blocks; these ignores
 # are scoped to the files so new modules stay fully checked. Remove an entry
 # once its module has been cleaned up.
-"anomaly_detector.py" = ["E501", "S110"]
-"datamanager.py" = ["E501"]
-"data.py" = ["E501"]
-"detection_methods.py" = ["E501", "S110", "S112"]
-"main.py" = ["E402", "E501", "S110"]  # E402: load_dotenv() must run before project imports
-"model_manager.py" = ["E501", "S112"]
-"visualizer.py" = ["E402", "E501"]
-# Standalone tools that put the repo root on sys.path before importing project modules.
-"scripts/*" = ["E402", "E501", "S110"]
-"validation/*" = ["E402", "E501", "S110"]
+"engine/anomaly_detector.py" = ["E501", "S110"]
+"engine/datamanager.py" = ["E501"]
+"engine/detection_methods.py" = ["E501", "S110", "S112"]
+"engine/main.py" = ["E402", "E501", "S110"]  # E402: load_dotenv() must run before project imports
+"engine/model_manager.py" = ["E501", "S112"]
+"engine/visualizer.py" = ["E402", "E501"]
+# Standalone tools that put engine/ on sys.path before importing project modules.
+"engine/scripts/*" = ["E402", "E501", "S110"]
+"engine/validation/*" = ["E402", "E501", "S110"]
 # Documented CLI entry point; the hyphenated name is part of the interface.
-"mappings/template-install.py" = ["N999"]
+"engine/mappings/template-install.py" = ["N999"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-# Root-level modules (es_tls, config, ...) are not packaged; make them importable under bare `pytest`.
-pythonpath = ["."]
+testpaths = ["engine/tests"]
+# Make the engine's top-level modules (es_tls, config, ...) importable under bare `pytest`.
+pythonpath = ["engine"]
 python_files = ["test_*.py"]
 addopts = "-x --tb=short"
 

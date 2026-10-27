@@ -839,7 +839,7 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$REPO_ROOT
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$VENV_DIR/bin/python -u $REPO_ROOT/realtime_service.py
+ExecStart=$VENV_DIR/bin/python -u $REPO_ROOT/engine/realtime_service.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -994,15 +994,15 @@ summary() {
   if [[ "$MODE" == "venv" ]]; then
     echo
     echo "  Sanity checks (see docs/installation.md, Step 3):"
-    echo "    .venv/bin/python main.py --list-jobs"
-    echo "    .venv/bin/python push_all_anomalies.py --dry-run"
+    echo "    .venv/bin/python engine/main.py --list-jobs"
+    echo "    .venv/bin/python engine/push_all_anomalies.py --dry-run"
     if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
       echo "    addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py --once-poll"
     fi
     if (( ! INSTALL_SYSTEMD )) || ! have_systemd; then
       echo
       echo "  No systemd units installed. Start manually:"
-      echo "    .venv/bin/python realtime_service.py"
+      echo "    .venv/bin/python engine/realtime_service.py"
       if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
         echo "    addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py"
       fi

@@ -39,7 +39,10 @@ from typing import Any
 # Environment bootstrap
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_ENV_PATH = os.path.join(_SCRIPT_DIR, ".env")
+# The repo root holds .env, config/, results/ and logs/; the code lives in engine/.
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+os.chdir(_PROJECT_ROOT)
+_ENV_PATH = os.path.join(_PROJECT_ROOT, ".env")
 
 try:
     from dotenv import load_dotenv as _load_dotenv
@@ -82,7 +85,7 @@ if not os.environ.get("ES_USERNAME") or not os.environ.get("ES_PASSWORD"):
 # Logging
 # ---------------------------------------------------------------------------
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-_SERVICE_LOG_FILE = os.path.join(_SCRIPT_DIR, "logs", "realtime_service.log")
+_SERVICE_LOG_FILE = os.path.join(_PROJECT_ROOT, "logs", "realtime_service.log")
 os.makedirs(os.path.dirname(_SERVICE_LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -653,7 +656,7 @@ def _start_background_trainer(data_groups: list, dry_run: bool = False) -> bool:
         return True
 
     # Build command using the checkpoint-enabled trainer
-    cmd = [PYEXE, "-u", "train_models_background.py",
+    cmd = [PYEXE, "-u", os.path.join(_SCRIPT_DIR, "train_models_background.py"),
            "--restart-on-fail", "--skip-existing"]
     if data_groups:
         cmd += ["--groups"] + data_groups
@@ -751,7 +754,7 @@ def run_detection(
     """
     detection_mode = getattr(run_detection, "_override_detection_mode", None) or DETECTION_MODE
 
-    cmd = [PYEXE, "main.py", "--log-level", os.getenv("LOG_LEVEL", "INFO"),
+    cmd = [PYEXE, os.path.join(_SCRIPT_DIR, "main.py"), "--log-level", os.getenv("LOG_LEVEL", "INFO"),
            "--detection-mode", detection_mode, "--disable-mlflow"]
 
     if detection_mode == "group":
@@ -811,7 +814,7 @@ def run_detection(
 
 def push_anomalies(dry_run: bool = False) -> bool:
     """Call push_all_anomalies.py to index detected anomalies."""
-    cmd = [PYEXE, "push_all_anomalies.py", "--cleanup"]
+    cmd = [PYEXE, os.path.join(_SCRIPT_DIR, "push_all_anomalies.py"), "--cleanup"]
     return _run_and_stream(cmd, dry_run=dry_run)
 
 
@@ -828,7 +831,7 @@ def run_correlation(dry_run: bool = False) -> bool:
         logger.debug("Correlation disabled by CORRELATION_ENABLED")
         return True
 
-    cmd = [PYEXE, "post_correlation.py",
+    cmd = [PYEXE, os.path.join(_SCRIPT_DIR, "post_correlation.py"),
            "--time-window-minutes", str(CORRELATION_WINDOW_MINUTES)]
 
     out_path = os.getenv("CORRELATION_OUT_FILE") or "correlated_fallback.jsonl"

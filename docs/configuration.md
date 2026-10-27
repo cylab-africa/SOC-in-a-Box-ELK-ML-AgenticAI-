@@ -28,7 +28,7 @@ cp .env.example .env
 | `ES_CA_CERT` | Path to the CA that signed the cluster's HTTP certificate. For a self-managed cluster copy the node's `config/certs/http_ca.crt` to `config/certs/ca.pem` (gitignored, and visible inside the Docker image because `config/` is bind-mounted) and set `ES_CA_CERT=config/certs/ca.pem`. Not needed if the certificate is from a public CA | If your cluster uses a private or self-signed CA |
 | `ES_VERIFY_CERTS` | TLS certificate verification, on by default. `false` disables it and logs a warning: credentials then go to whoever answers on `ES_HOST`, so use it only for lab clusters | No |
 | `ES_PROCESS_INDEX`, `ES_NETWORK_INDEX`, `ES_DISCOVERY_INDEX`, `ES_METADATA_INDEX`, `ES_ALERTS_INDEX` | Index patterns matching your data source naming. See [below](#index-names-and-field-names) | Yes, if your index names differ from the defaults |
-| `DAGSHUB_USERNAME` / `DAGSHUB_REPO_NAME` / `DAGSHUB_TOKEN` | Only needed for MLflow experiment tracking via DagsHub (install with `pip install -e ".[ops]"`). Leave blank to skip; pass `--disable-mlflow` to `main.py` to skip the connection attempt entirely | No |
+| `DAGSHUB_USERNAME` / `DAGSHUB_REPO_NAME` / `DAGSHUB_TOKEN` | Only needed for MLflow experiment tracking via DagsHub (install with `pip install -e ".[ops]"`). Leave blank to skip; pass `--disable-mlflow` to `engine/main.py` to skip the connection attempt entirely | No |
 
 `.env` is gitignored — it is never meant to be committed.
 
@@ -55,13 +55,13 @@ curl -u "$ES_USERNAME:$ES_PASSWORD" "$ES_HOST/_cat/indices/*endpoint*?h=index"
 The engine assumes ECS-style field names (`process.name`, `host.name`,
 `user.name`, `destination.ip`, `destination.port`, `source.ip`, ...). If your
 data source uses different field names, you'll need to adjust the field
-references in `datamanager.py` (`fetch_*_data` functions) or add a mapping
+references in `engine/datamanager.py` (`fetch_*_data` functions) or add a mapping
 layer — this is the one piece of "editing Python, not config" that's likely
 unavoidable for a non-Elastic-Agent data source.
 
 ## Tuning: false-positive lists (`config/*.txt`)
 
-These are plain text files consumed by `push_all_anomalies.py`. The copies in
+These are plain text files consumed by `engine/push_all_anomalies.py`. The copies in
 `config/` are generic defaults, and the environment-specific ones
 (`infrastructure_hosts.txt`, `public_facing_hosts.txt`,
 `platform_public_ips.txt`) ship empty. **Don't edit the defaults:** put your

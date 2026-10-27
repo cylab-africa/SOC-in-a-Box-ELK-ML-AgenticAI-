@@ -11,13 +11,15 @@ from pathlib import Path
 
 import pytest
 
+_ENGINE_DIR = Path(__file__).resolve().parent.parent
+
 
 class TestAttackMapping:
     """Validate the attack mapping JSON and enrichment functions."""
 
     def test_mapping_file_valid_json(self) -> None:
         """attack_mapping.json is valid JSON with expected structure."""
-        mapping_path = Path("mappings/attack_mapping.json")
+        mapping_path = _ENGINE_DIR / "mappings" / "attack_mapping.json"
         if not mapping_path.exists():
             pytest.skip("attack_mapping.json not found")
 
@@ -68,7 +70,7 @@ class TestAttackMapping:
         """All technique IDs in the mapping have investigation hints."""
         from mappings.enrichment import INVESTIGATION_HINTS
 
-        mapping_path = Path("mappings/attack_mapping.json")
+        mapping_path = _ENGINE_DIR / "mappings" / "attack_mapping.json"
         if not mapping_path.exists():
             pytest.skip("attack_mapping.json not found")
 
@@ -87,7 +89,7 @@ class TestESTemplates:
 
     def test_custom_template_valid(self) -> None:
         """ml-anomalies-custom.json is valid mapping template."""
-        path = Path("mappings/ml-anomalies-custom.json")
+        path = _ENGINE_DIR / "mappings" / "ml-anomalies-custom.json"
         if not path.exists():
             pytest.skip("ml-anomalies-custom.json not found")
 
@@ -98,7 +100,7 @@ class TestESTemplates:
 
     def test_correlated_template_valid(self) -> None:
         """ml-anomalies-correlated.json is valid mapping template."""
-        path = Path("mappings/ml-anomalies-correlated.json")
+        path = _ENGINE_DIR / "mappings" / "ml-anomalies-correlated.json"
         if not path.exists():
             pytest.skip("ml-anomalies-correlated.json not found")
 
