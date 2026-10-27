@@ -1,0 +1,12 @@
+# gitleaks configuration: the default ruleset plus a short allowlist of
+# documentation placeholders. Keep the allowlist exact; never allowlist by path.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documentation placeholders, not credentials"
+regexTarget = "match"
+regexes = [
+  '''curl -u USER:PASS''',
+  '''OPENAI_KEY=""\s*ANTHROPIC_KEY="''',
+]

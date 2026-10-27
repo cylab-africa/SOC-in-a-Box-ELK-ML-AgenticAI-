@@ -1,11 +1,13 @@
-# Public IPs / CIDR prefixes owned by the platform itself.
-# These are the public WAN IPs of our own servers AND the NAT gateway(s)
-# that our infra egresses through. Traffic to / from these is by
-# definition internal from a trust-boundary perspective, even though
+# Public IPs / prefixes owned by your own platform: the public WAN IPs of your
+# servers and the NAT gateway(s) your infrastructure egresses through. Traffic
+# to / from these is internal from a trust-boundary perspective, even though
 # RFC1918 says otherwise.
 #
 # Lines starting with # are comments. Prefix-match is used, so a single
 # /32 is written as "a.b.c.d" and a /24 as "a.b.c.".
 #
-# Platform NAT egress (outbound from infra hosts appears as this IP)
-197.155.77.1
+# This default list is intentionally empty. Put your environment's addresses in
+# config/local/platform_public_ips.txt (gitignored), which replaces this file.
+#
+# Example (TEST-NET-3 documentation range):
+# 203.0.113.10

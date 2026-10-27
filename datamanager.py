@@ -9,6 +9,7 @@ Reason: Enable configurable training periods while maintaining existing function
 
 import hashlib
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -116,7 +117,7 @@ def _calculate_hourly_distribution(total_records: int, time_range: dict,
     elif strategy == "recent_weighted":
         # More records from recent hours, less from older hours
         weights = []
-        for i, window in enumerate(hour_windows):
+        for i, _window in enumerate(hour_windows):
             # Higher weight for more recent hours (reverse chronological)
             weight = (len(hour_windows) - i) / len(hour_windows)
             weights.append(weight)
@@ -137,7 +138,7 @@ def _calculate_hourly_distribution(total_records: int, time_range: dict,
     elif strategy == "old_weighted":
         # More records from older hours for better historical coverage
         weights = []
-        for i, window in enumerate(hour_windows):
+        for i, _window in enumerate(hour_windows):
             # Higher weight for older hours
             weight = (i + 1) / len(hour_windows)
             weights.append(weight)
@@ -2103,7 +2104,7 @@ def preprocess_process_data(df: "pd.DataFrame"):
         try:
             timestamps = pd.to_datetime(df['@timestamp'], errors='coerce')
             df['hour_of_day'] = timestamps.dt.hour.fillna(12)
-        except:
+        except Exception:
             df['hour_of_day'] = 12
 
     if 'is_business_hours' not in df.columns and 'hour_of_day' in df.columns:
@@ -2942,7 +2943,6 @@ def validate_temporal_coverage(df: "pd.DataFrame", entity_col: str, min_buckets:
 
     logger.info(f"{len(entities_with_coverage)} entities have sufficient temporal coverage")
     return True
-import os
 
 
 def save_dataframe_to_files(df: "pd.DataFrame", base_filename: str, save_json: bool=True, save_excel: bool=True):

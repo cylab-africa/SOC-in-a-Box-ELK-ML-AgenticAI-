@@ -1,21 +1,31 @@
 # Internal/private IP prefixes — one per line
-# IPs starting with these are considered internal and not suspicious
-# Includes RFC1918, loopback, link-local, and org-specific ranges
+# IPs starting with these are considered internal and not suspicious.
+# Covers RFC1918, loopback, link-local, and IPv6 ULA/link-local.
+#
+# To add organization-specific ranges, copy this file to
+# config/local/internal_ip_prefixes.txt (gitignored) and extend it there.
 127.
 10.
 192.168.
+172.16.
+172.17.
+172.18.
+172.19.
+172.20.
+172.21.
+172.22.
+172.23.
+172.24.
+172.25.
+172.26.
+172.27.
+172.28.
+172.29.
+172.30.
+172.31.
+169.254.
 ::1
 fe80:
 fd
 0.0.0.0
 255.255.255.255
-172.29.
-172.17.
-172.18.
-172.19.
-172.20.
-10.233.
-10.48.
-10.152.
-10.250.
-169.254.

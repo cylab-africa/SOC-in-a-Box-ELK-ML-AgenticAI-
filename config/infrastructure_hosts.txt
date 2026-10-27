@@ -1,37 +1,10 @@
-# Known infrastructure hosts — one per line
-# Service account anomalies on these hosts are treated as false positives.
-# Customize this list for your environment.
-elasticserver
-elasticserver2
-mifos-server
-mira-server
-reverseproxy
-misp
-socsensor
-ids-server
-smishing
-humeka-server
-ah-suricata-01
-llm-vapt
-datanode
-vapt-storage
-apkit
-apkit-dev
-apkit-secops
-nid-api
-pdp-analyzer
-mira-ai
-mosip-mosip-node4
-mosip-rancher-nginx
-mosip-mosip-nginx
-dataportability1
-oc-ubuntu-server
-esignet
-lbp
-dataportability2
-upanzi-infra-cancerproject
-upanzi-sec-ml-soc
-mosip-rancher-node1
-aiops
-picoctf-chatbotbackend
-upanzi-sec-forensics-compute
+# Known infrastructure hosts — one per line (host.name, case-insensitive)
+# Service-account anomalies on these hosts are treated as likely false positives.
+#
+# This default list is intentionally empty. Put your environment's hosts in
+# config/local/infrastructure_hosts.txt (gitignored), which replaces this file.
+#
+# Example:
+# elastic-01
+# reverse-proxy
+# monitoring-01

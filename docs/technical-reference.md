@@ -1,7 +1,14 @@
-# Linux Security Anomaly Detection — Complete Technical Documentation
+# Detection Engine — Technical Reference
 
-> **Version** 1.0.0 | **Python** 3.10+ | **License** Apache 2.0  
-> **Codebase** 48,426 lines across 80+ files | **93 passing tests** | **7 validation gates**
+> In-depth reference for the SOC-in-a-Box detection engine. To install or
+> configure it, use [installation.md](installation.md) and
+> [configuration.md](configuration.md) instead.
+>
+> **Note:** parts of this reference describe components that the running engine
+> does not use yet: the YAML configuration (`config/default.yaml`, removed — all
+> settings come from `.env`), and the `features/`, `models/`, `dl_models/` and
+> `adversarial/` packages. Line counts and test totals are from an earlier
+> snapshot.
 
 ---
 
@@ -1154,7 +1161,7 @@ host.ip                     — host's own IP addresses
 
 Process anomalies often lack network context because the process event itself has no IP fields. The host-level network fallback (`match_fields: ["host.name"]` only) retrieves the most recent network event from the same host in the same time window.
 
-**Example:** A `grep` anomaly on `elasticserver` gets enriched with the fact that the machine was talking to `10.152.183.1:443` at the same time — crucial context for SOC analysts.
+**Example:** A `grep` anomaly on `elastic-01` gets enriched with the fact that the machine was talking to `10.152.183.1:443` at the same time — crucial context for SOC analysts.
 
 ### Functions
 
@@ -1368,7 +1375,7 @@ Written to `results/correlated_chains.jsonl` and pushed to `.ml-anomalies-correl
 ```json
 {
   "chain_id": "chain-abc123",
-  "host": "elasticserver",
+  "host": "elastic-01",
   "phases_observed": ["discovery", "execution", "command_and_control"],
   "technique_ids": ["T1016", "T1059", "T1071"],
   "events": [

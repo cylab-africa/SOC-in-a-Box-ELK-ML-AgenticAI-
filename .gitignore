@@ -19,9 +19,13 @@ config/certs/
 .env.*
 !.env.example
 
-# ML artifacts
+# Environment-specific FP lists (see docs/configuration.md)
+config/local/
+
+# Runtime output & ML artifacts
 results/
 logs/
+*.log
 mlruns/
 *.joblib
 *.pkl
@@ -44,6 +48,9 @@ server/*.xlsx
 *.swo
 *~
 
+# Notebooks
+.ipynb_checkpoints/
+
 # Testing
 .pytest_cache/
 .coverage
@@ -57,9 +64,6 @@ Thumbs.db
 
 # Agent worktrees (development tooling)
 .claude/
-
-# Unrelated nested project (not part of this pipeline)
-capstone_upanzi/
 
 # Deployment artifacts
 deployment_*.txt

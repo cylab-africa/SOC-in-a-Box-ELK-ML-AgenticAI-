@@ -636,15 +636,22 @@ def _log_fp_decision(doc: dict[str, Any], is_fp: bool, reason: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Config-file-loaded FP classification lists
-# Edit files in config/ to customize for your environment
+# config/ holds generic defaults. To customize for your environment, put a
+# file with the same name in config/local/ (gitignored); it replaces the default.
 # ---------------------------------------------------------------------------
 
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_LOCAL_CONFIG_DIR = _CONFIG_DIR / "local"
 
 
 def _load_config_lines(filename: str) -> list[str]:
-    """Load non-empty, non-comment lines from a config/ text file."""
-    path = _CONFIG_DIR / filename
+    """Load non-empty, non-comment lines from a config/ text file.
+
+    A file of the same name in config/local/ takes precedence over the default.
+    """
+    path = _LOCAL_CONFIG_DIR / filename
+    if not path.exists():
+        path = _CONFIG_DIR / filename
     if not path.exists():
         logger.warning("Config file not found: %s — using empty list", path)
         return []
@@ -849,7 +856,7 @@ def is_likely_false_positive(doc: dict[str, Any]) -> tuple[bool, str]:
     has_external_dst_probe = bool(dst_ip) and not _is_internal_ip(dst_ip)
     # Broadened: the same admin CLI / infra-host / no-external combo is
     # equally benign when the job class is host_user_deviation or
-    # anomalous_host_activity (e.g. `ip neigh show` on oc-ubuntu-server).
+    # anomalous_host_activity (e.g. `ip neigh show` on an infrastructure host).
     # The suspicious-cmdline override above still protects real misuse.
     if (
         proc_name in _ADMIN_DISCOVERY_CLIS
@@ -2428,7 +2435,7 @@ def main() -> None:
         except Exception as exc:
             logger.warning("Source enrichment failed (non-fatal): %s", exc)
 
-        for index_name, docs in index_docs.items():
+        for docs in index_docs.values():
             for i, doc in enumerate(docs):
                 try:
                     docs[i] = enrich_with_context(doc, es)

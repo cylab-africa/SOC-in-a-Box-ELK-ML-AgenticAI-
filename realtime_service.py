@@ -630,8 +630,8 @@ def _trainer_is_running() -> bool:
             pids = result.stdout.strip().split("\n")
             logger.debug("External trainer process(es) detected: %s", pids)
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("pgrep check for external trainer failed: %s", exc)
     return False
 
 
@@ -1266,7 +1266,10 @@ def _run_one_shot(
     health.circuit_breaker_state = circuit_breaker.state
     health.write()
 
-    logger.info(f"One-shot cycle completed in {duration:.1f}s (push_ok={push_ok}, push_fail={push_fail}, chains={chains})")
+    logger.info(
+        f"One-shot cycle completed in {duration:.1f}s "
+        f"(push_ok={push_ok}, push_fail={push_fail}, chains={chains})"
+    )
     return 0 if ok else 1
 
 

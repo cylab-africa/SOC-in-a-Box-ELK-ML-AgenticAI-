@@ -6,10 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/noah/Siem-Maintenance-Agent-Monitoring/Agent-SIEM-maintenance
-User=noah
-Group=noah
-ExecStart=/home/noah/Siem-Maintenance-Agent-Monitoring/.venv/bin/python /home/noah/Siem-Maintenance-Agent-Monitoring/Agent-SIEM-maintenance/feedback_poller.py --loop 60
+WorkingDirectory=/opt/siem-maint/Agent-SIEM-maintenance
+User=siem-maint
+Group=siem-maint
+EnvironmentFile=/etc/siem-maint/env
+ExecStart=/opt/siem-maint/venv/bin/python /opt/siem-maint/Agent-SIEM-maintenance/feedback_poller.py --loop 60
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

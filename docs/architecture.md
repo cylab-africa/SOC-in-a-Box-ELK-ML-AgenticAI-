@@ -2,7 +2,7 @@
 
 This document covers how the system is built and where it sits in a larger SOC
 deployment. If you are trying to get it running, start with the
-[README](../README.md) instead — this is background, not setup.
+[installation guide](installation.md) instead — this is background, not setup.
 
 ## Contents
 
@@ -82,40 +82,41 @@ maps to specific modules in the codebase.
 **1. Data ingestion** — Data is collected from Elastic indices. Index patterns,
 time windows, and query shape are all configuration-driven, so the pipeline can
 be pointed at a new environment without code changes.
-→ `datamanager.py`, `config/default.yaml`
+→ `datamanager.py`, `.env` (see [configuration.md](configuration.md))
 
 **2. Data retrieval and preprocessing** — Retrieve, clean, normalize, and enrich
 the raw documents. Field names are normalized across log sources, incomplete
 records are dropped or defaulted, timestamps are aligned, and entities (host,
 user, process, IP) are resolved to a consistent identity so downstream stages
 can join on them.
-→ `datamanager.py`, `data.py`, `entity_alignment.py`
+→ `datamanager.py`
 
 **3. Feature engineering** — Transform normalized events into the numeric
 features the models consume. This is where behavior becomes measurable:
 per-entity rarity, command-line characteristics, session and timing patterns,
 port and protocol profiles, and volume aggregates over rolling windows.
-→ `features/`
+→ `detection_methods.py`
 
 **4. Modeling** — Train, validate, version, and load the ML models. The pipeline
-runs an ensemble rather than a single detector — Isolation Forest, Local Outlier
-Factor, One-Class SVM, PCA, and an AutoEncoder — because each model is sensitive
-to a different shape of outlier. Models are trained per data group (process,
+pairs two detectors — Isolation Forest and Local Outlier Factor — because each is
+sensitive to a different shape of outlier. Models are trained per data group (process,
 network, user, discovery, metadata, auth, host) and persisted with versioning so
 scoring is reproducible.
 
 Models are fit per entity (a host, a user, a process name), and an entity needs
-at least `ml.min_samples` observations — 50 by default — before it gets a model
+at least 50 observations before it gets a model
 of its own. Entities below that threshold are skipped and logged.
-→ `model_manager.py`, `detection_methods.py`, `models/`, `dl_models/`,
-`train_models_background.py`
+→ `model_manager.py`, `detection_methods.py`, `train_models_background.py`
+
+The `models/` (PyOD ensemble) and `dl_models/` (AutoEncoder and other deep
+learning models) packages are experimental and not yet wired into this stage.
 
 **5. Anomaly detection** — Score live observations against the trained models.
-Every model exposes `.decision_function(X)` and every score is normalized to
-`[0.0, 1.0]`, so ensemble scores are directly comparable across models and data
-groups. Adaptive thresholds then decide what counts as anomalous, adjusting for
-business hours, recent false-positive pressure, and score escalation.
-→ `anomaly_detector.py`, `adaptive_threshold.py`
+Every score is normalized to `[0.0, 1.0]`, so scores are directly comparable
+across models and data groups. Thresholds then decide what counts as anomalous,
+adjusting for business hours, recent false-positive pressure, and score
+escalation.
+→ `anomaly_detector.py`, `push_all_anomalies.py`
 
 Stages 6A, 6B, and 6C run over the resulting anomalies. They are drawn in
 parallel because they are independent transformations of the same anomaly set.
@@ -137,7 +138,7 @@ This is what makes an alert triageable without pivoting to another tool.
 
 **6C. Threat mapping** — Map each detection to threat frameworks and attach
 relevant intelligence. Every detection capability carries at least one MITRE
-ATT&CK technique ID (see the coverage table in the README), which gives analysts
+ATT&CK technique ID (see the coverage table in [detection-engine.md](detection-engine.md#what-it-detects)), which gives analysts
 a common vocabulary and lets the correlation stage reason about attack progression.
 → `push_all_anomalies.py` (MITRE enrichment), `config.py`
 
@@ -153,7 +154,7 @@ downstream systems for action: ES ML anomaly indices, file and report exports,
 and Kibana dashboards. Output destinations sit behind a backend interface
 (`backends/base.py`); Elasticsearch is the implemented backend and the one the
 pipeline uses.
-→ `push_all_anomalies.py`, `backends/`, `alerting/`
+→ `push_all_anomalies.py`, `backends/`
 
 ## The feedback loops
 
@@ -184,7 +185,8 @@ The two dashed arrows in the diagram matter as much as the forward path:
                |                           |
     +----------v----------+     +----------v----------+
     |  Feature Extraction |     |  Model Training     |
-    |  (features/)        |     |  (model_manager.py) |
+    |  (detection_        |     |  (model_manager.py) |
+    |   methods.py)       |     |                     |
     +----------+----------+     +----------+----------+
                |                           |
                +-------------+-------------+

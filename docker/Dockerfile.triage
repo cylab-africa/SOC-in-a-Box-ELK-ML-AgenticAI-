@@ -7,7 +7,7 @@
 # https://github.com/masterlion-hash/Alert-Triage-Agent).
 #
 # The agent has no authentication of its own. The compose service publishes it
-# on 127.0.0.1 only unless TRIAGE_BIND is set; see DEPLOYMENT.md before widening it.
+# on 127.0.0.1 only unless TRIAGE_BIND is set; see docs/add-ons.md before widening it.
 
 FROM python:3.10-slim
 

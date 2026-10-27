@@ -11,7 +11,7 @@
 #   ES_HOST=... ES_USERNAME=... ES_PASSWORD=... ./deploy.sh --non-interactive --with-maintenance
 #   ./deploy.sh --dry-run                print what would happen, change nothing
 #
-# Run ./deploy.sh --help for every option. See DEPLOYMENT.md for details.
+# Run ./deploy.sh --help for every option. See docs/installation.md for details.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -993,7 +993,7 @@ summary() {
   fi
   if [[ "$MODE" == "venv" ]]; then
     echo
-    echo "  Sanity checks (see DEPLOYMENT.md section 6):"
+    echo "  Sanity checks (see docs/installation.md, Step 3):"
     echo "    .venv/bin/python main.py --list-jobs"
     echo "    .venv/bin/python push_all_anomalies.py --dry-run"
     if [[ "$WITH_MAINTENANCE" == "yes" ]]; then

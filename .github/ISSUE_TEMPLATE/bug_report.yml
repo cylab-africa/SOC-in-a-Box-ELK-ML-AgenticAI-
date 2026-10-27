@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in SOC-in-a-Box isn't working as documented
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security vulnerabilities must not be reported here.** Use the "Report a security vulnerability" link on the new-issue page instead.
+
+        Before posting logs or config, remove hostnames, IP addresses, usernames and credentials from your environment.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Detection engine
+        - deploy.sh / Docker
+        - SIEM Maintenance Agent (addons/siem-maintenance)
+        - Alert Triage Agent (addons/alert-triage)
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `./deploy.sh --mode docker`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output (sanitized)
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: SOC-in-a-Box version or commit
+    validations:
+      required: true
+  - type: input
+    id: elastic
+    attributes:
+      label: Elastic Stack version
+      placeholder: e.g. 8.15.2
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: e.g. Ubuntu 22.04, Python 3.11

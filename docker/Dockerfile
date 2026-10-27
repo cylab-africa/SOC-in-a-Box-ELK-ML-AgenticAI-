@@ -1,33 +1,19 @@
-# Multi-stage build for Linux Anomaly Detection
-# ================================================
+# Multi-stage build for the SOC-in-a-Box detection engine
+# ======================================================
 
 # Stage 1: Builder
 FROM python:3.10-slim AS builder
 
 WORKDIR /build
-COPY pyproject.toml .
-COPY requirements*.txt ./
+COPY requirements.txt .
 
-RUN pip install --no-cache-dir --prefix=/install -e "." 2>/dev/null || \
-    pip install --no-cache-dir --prefix=/install \
-        elasticsearch>=8.0.0 \
-        scikit-learn>=1.3.0 \
-        numpy>=1.24.0 \
-        pandas>=1.5.0 \
-        scipy>=1.9.0 \
-        pyod>=1.1.0 \
-        joblib>=1.3.0 \
-        requests>=2.28.0 \
-        pyyaml>=6.0 \
-        python-dotenv>=1.0.0 \
-        matplotlib>=3.5.0 \
-        seaborn>=0.12.0
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.10-slim AS runtime
 
-LABEL maintainer="Linux Anomaly Detection Contributors"
-LABEL description="MITRE ATT&CK-aligned anomaly detection for Linux endpoints"
+LABEL org.opencontainers.image.title="SOC-in-a-Box detection engine"
+LABEL org.opencontainers.image.description="MITRE ATT&CK-aligned anomaly detection for Linux endpoints"
 
 # Create non-root user
 RUN groupadd -r anomaly && useradd -r -g anomaly -d /app anomaly

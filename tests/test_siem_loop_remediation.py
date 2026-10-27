@@ -34,7 +34,7 @@ class TestScoreContract:
             "v3_rare_process_by_host_linux",
             {
                 "ml_score": 0.83,
-                "entity": {"host": "apkit", "process": "bash", "user": "root"},
+                "entity": {"host": "web-01", "process": "bash", "user": "root"},
                 "timestamp": "2026-04-20T10:00:00Z",
                 "event_count": 3,
             },
@@ -117,7 +117,7 @@ class TestEntityRepair:
             "v3_rare_process_by_host_linux",
             {
                 "ml_score": 0.9,
-                "entity": {"host": "apkit", "process": "6"},
+                "entity": {"host": "web-01", "process": "6"},
                 "timestamp": "2026-04-20T10:00:00Z",
             },
         )
@@ -148,11 +148,11 @@ class TestEnrichmentCoverage:
         from push_all_anomalies import _apply_source_enrichment
 
         doc: dict = {
-            "host.name": "apkit",
+            "host.name": "web-01",
             "process.name": "dockerd",
         }
         hit = {
-            "host": {"name": "apkit"},
+            "host": {"name": "web-01"},
             "process": {"name": "dockerd"},
             "file": {"name": "log.txt", "path": "/var/log/log.txt"},
         }
@@ -166,7 +166,7 @@ class TestEnrichmentCoverage:
     def test_apply_source_enrichment_rejects_cross_host(self) -> None:
         from push_all_anomalies import _apply_source_enrichment
 
-        doc: dict = {"host.name": "apkit"}
+        doc: dict = {"host.name": "web-01"}
         hit = {"host": {"name": "other-host"}, "user": {"name": "root"}}
         assert _apply_source_enrichment(doc, hit, ["user.name"]) == 0
         assert "user.name" not in doc
@@ -194,13 +194,15 @@ class TestFalsePositiveClassifier:
             "CONTEXT_QUARANTINE_LOG",
             tmp_path / "quarantine.jsonl",
         )
+        # The shipped infrastructure_hosts.txt is empty; give the rules a known host.
+        monkeypatch.setattr(push_mod, "_FP_KNOWN_INFRA_HOSTS", {"infra-01"})
 
     def test_admin_discovery_cli_on_infra_host_is_fp(self) -> None:
         from push_all_anomalies import is_likely_false_positive
 
         doc = {
             "job_id": "v3_rare_process_by_host_linux",
-            "host.name": "oc-ubuntu-server",
+            "host.name": "infra-01",
             "user.name": "administrator",
             "process.name": "ip",
             "process.command_line": "ip a",
@@ -228,7 +230,7 @@ class TestFalsePositiveClassifier:
         for proc in ("bash", "sh", "sudo", "curl", "python3"):
             doc = {
                 "job_id": "v3_rare_process_by_host_linux",
-                "host.name": "oc-ubuntu-server",
+                "host.name": "infra-01",
                 "user.name": "root",
                 "process.name": proc,
                 "process.command_line": f"{proc} --regular-use",
@@ -241,7 +243,7 @@ class TestFalsePositiveClassifier:
 
         doc = {
             "job_id": "v3_rare_process_by_host_linux",
-            "host.name": "oc-ubuntu-server",
+            "host.name": "infra-01",
             "user.name": "administrator",
             "process.name": "ip",
             # Contains /dev/tcp/ -> suspicious override
@@ -257,14 +259,14 @@ class TestFalsePositiveClassifier:
             {
                 "anomaly_id": "a1",
                 "job_id": "v3_rare_process_by_host_linux",
-                "host.name": "oc-ubuntu-server",
+                "host.name": "infra-01",
                 "user.name": "administrator",
                 "process.name": "ip",
             },
             {
                 "anomaly_id": "a2",
                 "job_id": "v3_rare_process_by_host_linux",
-                "host.name": "oc-ubuntu-server",
+                "host.name": "infra-01",
                 "user.name": "root",
                 "process.name": "bash",
                 "process.command_line": "bash",

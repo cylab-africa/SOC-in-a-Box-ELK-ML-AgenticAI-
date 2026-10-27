@@ -1,3 +1,16 @@
+import logging
+import os
+import re
+from datetime import datetime
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import IsolationForest
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.preprocessing import RobustScaler
+
+from detection_methods import extract_ml_features
 
 
 def train_process_anomaly_models(historical_data: "pd.DataFrame", config: dict) -> tuple:
@@ -270,19 +283,6 @@ def train_host_anomaly_models(historical_data: "pd.DataFrame", config: dict) -> 
 
     return models, scalers, baselines
 
-import logging
-import os
-import re
-from datetime import datetime
-
-import joblib
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import IsolationForest
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.preprocessing import RobustScaler
-
-from detection_methods import extract_ml_features
 
 logger = logging.getLogger("linux_anomaly_detection")
 def filter_process_data(df: "pd.DataFrame") -> "pd.DataFrame":
@@ -943,7 +943,7 @@ class LinuxModelManager:
                             import ipaddress
                             ipaddress.ip_address(str(ip))
                             return ip
-                        except:
+                        except Exception:
                             return '0.0.0.0'
 
                     # Clean and validate IPs
@@ -955,7 +955,7 @@ class LinuxModelManager:
                         try:
                             p = int(float(port))
                             return str(p) if 0 <= p <= 65535 else '0'
-                        except:
+                        except Exception:
                             return '0'
 
                     port_str = data['destination.port'].apply(validate_port)
@@ -1563,7 +1563,7 @@ class LinuxModelManager:
             import ipaddress
             ip = ipaddress.ip_address(ip_str)
             return int(ip.is_private)
-        except:
+        except Exception:
             return 0
 
     def load_models(self, data_type: str, models_dir: str = None) -> bool:

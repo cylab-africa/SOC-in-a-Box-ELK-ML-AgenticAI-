@@ -149,8 +149,8 @@ class ElasticsearchBackend(SIEMBackend):
         if scroll_id:
             try:
                 self._client.clear_scroll(scroll_id=scroll_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("clear_scroll failed (scroll will expire on its own): %s", exc)
         return results
 
     # ------------------------------------------------------------------

@@ -1070,9 +1070,9 @@ class ConfigManager:
         if value is None:
             return default
 
-        if cast_type == bool:
+        if cast_type is bool:
             return str(value).lower() in ('true', '1', 'yes', 'on')
-        elif cast_type == list:
+        elif cast_type is list:
             return [item.strip() for item in str(value).split(',') if item.strip()]
         elif cast_type in (int, float):
             try:
@@ -1098,7 +1098,9 @@ class ConfigManager:
                 process_index=self._get_env('ES_PROCESS_INDEX', '.ds-logs-endpoint.events.process-default-*'),
                 network_index=self._get_env('ES_NETWORK_INDEX', '.ds-logs-endpoint.events.network-default-*'),
                 discovery_index=self._get_env('ES_DISCOVERY_INDEX', 'logs-endpoint.events.process-*'),
-                metadata_index=self._get_env('ES_METADATA_INDEX', 'logs-endpoint.events.process-*,logs-endpoint.events.network-*'),
+                metadata_index=self._get_env(
+                    'ES_METADATA_INDEX', 'logs-endpoint.events.process-*,logs-endpoint.events.network-*'
+                ),
                 alerts_index=self._get_env('ES_ALERTS_INDEX', '.internal.alerts-security.alerts-default-*'),
                 scroll_size=self._get_env('ES_SCROLL_SIZE', 5000, int),
                 scroll_timeout=self._get_env('ES_SCROLL_TIMEOUT', '2m'),

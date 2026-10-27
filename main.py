@@ -818,13 +818,6 @@ def main():
         print(traceback.format_exc())
         return 1
 
-    finally:
-        try:
-            # Clean up MLflow resources if needed
-            if not args.disable_mlflow:
-                pass
-        except:
-            pass
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -13,7 +13,6 @@ mlruns
 .pytest_cache
 .mypy_cache
 .ruff_cache
-capstone_upanzi
 addons/siem-maintenance/Agent-SIEM-maintenance/results
 addons/siem-maintenance/Agent-SIEM-maintenance/*-key.json
 addons/siem-maintenance/Agent-SIEM-maintenance/SYSTEM_MEMORY.md

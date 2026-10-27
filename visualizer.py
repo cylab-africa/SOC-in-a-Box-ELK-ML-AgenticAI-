@@ -555,7 +555,7 @@ class LinuxAnomalyVisualizer:
 
             # Extract all non-ML records as "normal" data
             all_normal_records = []
-            for job_name, job_results in results_dict.items():
+            for job_results in results_dict.values():
                 if job_results.empty:
                     continue
 

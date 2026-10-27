@@ -3,7 +3,8 @@
 Monitor N detection cycles of the realtime_service and produce a compact
 performance + quality snapshot per cycle.
 
-Reads the live log at /home/noah/logs/realtime_service.log, waits for
+Reads the live service log (default ~/logs/realtime_service.log, override
+with --log), waits for
 `=== Detection cycle N starting ===` markers, and for each completed
 cycle captures:
 
@@ -33,7 +34,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOG = Path("/home/noah/logs/realtime_service.log")
+LOG = Path("~/logs/realtime_service.log").expanduser()
 FP_TRACE = Path("results/fp_classification_trace.jsonl")
 QUARANTINE = Path("results/incomplete_context_quarantine.jsonl")
 
@@ -99,17 +100,17 @@ def _diff(before: Counter[str], after: Counter[str]) -> dict[str, int]:
     return out
 
 
-def monitor(n_cycles: int, output: Path) -> None:
+def monitor(n_cycles: int, output: Path, log: Path = LOG) -> None:
     cycles: list[dict] = []
     current_cycle: dict | None = None
-    print(f"[monitor] waiting for {n_cycles} cycles; log={LOG}", flush=True)
+    print(f"[monitor] waiting for {n_cycles} cycles; log={log}", flush=True)
 
     # Prime counters so first cycle sees only its own deltas.
     _, fp_reasons_before, fp_jobs_before = _snapshot_counts(FP_TRACE)
     q_before, q_reasons_before, q_jobs_before = _snapshot_counts(QUARANTINE)
     fp_n_before = sum(fp_reasons_before.values())
 
-    for line in _tail_follow(LOG):
+    for line in _tail_follow(log):
         ts = _parse_ts(line)
 
         m = CYCLE_START_RE.search(line)
@@ -204,13 +205,14 @@ def monitor(n_cycles: int, output: Path) -> None:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--cycles", type=int, default=3)
+    p.add_argument("--log", type=Path, default=LOG, help="realtime_service log to follow")
     p.add_argument(
         "--out",
         type=Path,
         default=Path(f"results/siem_audit/cycle_monitor_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"),
     )
     args = p.parse_args()
-    monitor(args.cycles, args.out)
+    monitor(args.cycles, args.out, args.log)
     return 0
 
 

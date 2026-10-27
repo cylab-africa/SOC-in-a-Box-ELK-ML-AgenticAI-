@@ -309,7 +309,7 @@ class FeatureEngineer:
                     df['day_cos'] = np.cos(2 * np.pi * df['@timestamp'].dt.dayofweek / 7)
                     df['month_sin'] = np.sin(2 * np.pi * df['@timestamp'].dt.month / 12)
                     df['month_cos'] = np.cos(2 * np.pi * df['@timestamp'].dt.month / 12)
-                except:
+                except Exception:
                     df['day_sin'] = df['day_cos'] = 0
                     df['month_sin'] = df['month_cos'] = 0
             else:

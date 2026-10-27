@@ -51,7 +51,7 @@ def clean_network_data_for_training(data: pd.DataFrame) -> pd.DataFrame:
             if len(parts) != 4:
                 return len(str(ip_str).strip().split(':')) >= 2  # Allow IPv6-like
             return all(0 <= int(part) <= 255 for part in parts if part.isdigit())
-        except:
+        except Exception:
             return False
 
     format_valid_mask = cleaned_data['destination.ip'].apply(is_valid_ip_format)

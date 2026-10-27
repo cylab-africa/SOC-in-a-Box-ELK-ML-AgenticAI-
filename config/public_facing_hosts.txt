@@ -1,10 +1,10 @@
-# Internet-facing hosts — one per line
-# Inbound traffic on public ports (80, 443, etc.) on these hosts is expected.
-# Customize this list for your environment.
-reverseproxy
-lbp
-apkit-dev
-apkit
-esignet
-mosip-rancher-nginx
-mosip-mosip-nginx
+# Internet-facing hosts — one per line (host.name, case-insensitive)
+# Inbound traffic on public service ports (see public_service_ports.txt)
+# to these hosts is expected.
+#
+# This default list is intentionally empty. Put your environment's hosts in
+# config/local/public_facing_hosts.txt (gitignored), which replaces this file.
+#
+# Example:
+# reverse-proxy
+# web-01
