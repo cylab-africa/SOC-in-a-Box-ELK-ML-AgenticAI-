@@ -1,23 +1,50 @@
 # Troubleshooting
 
-Start with the four checks in
-[installation.md](installation.md#step-3--confirm-alerts-reach-kibana). The first
-one that fails tells you where to look.
+Start with the checks in [After the install](installation.md#after-the-install).
+The first one that fails tells you where to look.
 
-| What you see | What it means | What to do |
+## During the install
+
+| What you see | What to do |
+|---|---|
+| `Could not reach Elasticsearch at https://localhost:9200` | The address is wrong: `localhost` only works when Elasticsearch runs on the same server. Choose 1 and type the right address, e.g. `https://10.0.0.5:9200` |
+| `rejected the username or password` | Choose 1 and type the login again, or later run `./deploy.sh --reconfigure` |
+| A certificate fingerprint and a 1/2/3 question | Normal for a self-managed cluster. Choose 1 to trust the certificate, or 2 on a lab cluster |
+| `Greenbone is not installed on this server` | Install Greenbone first ([commands](add-ons.md#install-greenbone-first)), then run `./deploy.sh --only greenbone` |
+| `python3 venv support missing` | `sudo apt install -y python3-venv`, then run `./deploy.sh` again |
+| Any other `[FAIL]` line | It says what went wrong. Fix it and run `./deploy.sh` again; it is safe to repeat |
+
+## After the install
+
+| What you see | Meaning | What to do |
 |---|---|---|
-| `index_not_found_exception` | Index pattern in `.env` doesn't match your cluster | Run the `_cat/indices` command in [configuration.md](configuration.md#index-names-and-field-names) and correct the patterns |
-| `{"count":0}` on the input check | Elastic Agent isn't shipping endpoint data | Confirm the agent is healthy in Fleet and that **Elastic Defend** is in its policy |
-| `ERROR - process_detection: no results produced for v3_...` | The job found no matching data | Usually wrong index pattern, or the time window has no events. Run checks 1 and 3 in [installation.md](installation.md#step-3--confirm-alerts-reach-kibana) |
-| `Insufficient samples for X: 1 < 50` | That entity lacks history for its own model | Normal in small or new environments. Collect more data; the 50-observation minimum is fixed in this release |
-| `ERROR - Missing model for entity <name>` | Scoring ran before that group was trained | Run `python engine/train_models_background.py --all` and re-run detection |
-| `TLS certificate verification failed. Set ES_CA_CERT=...` | The cluster's certificate is signed by a CA this host doesn't trust (the default for self-managed Elasticsearch) | Run `./deploy.sh --reconfigure` and answer the certificate question (see [Your cluster's certificate](installation.md#your-clusters-certificate)), or copy the node's `http_ca.crt` to `config/certs/ca.pem` and set `ES_CA_CERT=config/certs/ca.pem` in `.env`. `ES_VERIFY_CERTS=false` also works but is lab-only |
-| `401 Unauthorized` / `AuthenticationException` | Bad credentials | Recheck `ES_USERNAME` / `ES_PASSWORD`; confirm with the `curl` check in [installation.md](installation.md#step-1--have-an-elastic-stack-with-endpoint-data) |
-| `rejected the username or password` from `deploy.sh` | Wrong Elasticsearch login | Re-run `./deploy.sh --reconfigure` with the right username and password |
-| `[FAIL]` from `deploy.sh` | A preflight or connectivity check failed | The line says which; fix it and re-run `./deploy.sh` (it is safe to re-run) |
-| Detection runs but no alerts in Kibana | Alerts not pushed, or no data view | Run `python engine/push_all_anomalies.py`, then add `ml-anomalies-custom-*` as a Kibana data view |
-| `results/` growing to tens of GB | Old output not being cleaned | `engine/realtime_service.py` prunes automatically; if you run `engine/main.py` on a cron, delete `results/ml_only_*` files older than a few days yourself |
+| A data pattern marked `!` in the summary | Nothing on your cluster matches it | List your indices with the command the summary prints, fix the pattern in `.env`, restart the engine |
+| `index_not_found_exception` | An index pattern in `.env` does not match your cluster | See [index names](configuration.md#index-names-and-field-names) |
+| The data patterns exist but have 0 documents | Elastic Agent is not sending endpoint data | In Fleet, check the agent is healthy and **Elastic Defend** is in its policy |
+| `no results produced for v3_...` | The job found no matching data | Usually a wrong index pattern, or no events in the time window. Check the index patterns in `.env` |
+| `Insufficient samples for X: 1 < 50` | That host or user has too little history for its own model | Normal at first. It needs 50 observations |
+| `Missing model for entity <name>` | Detection ran before training | `.venv/bin/python engine/train_models_background.py --all` |
+| `TLS certificate verification failed` | This server does not trust the cluster's certificate | `./deploy.sh --reconfigure` and answer the certificate question |
+| `401 Unauthorized` / `AuthenticationException` | Wrong login | Check `ES_USERNAME` and `ES_PASSWORD` in `.env` |
+| Detection runs but no alerts in Kibana | Alerts not sent, or no data view | `.venv/bin/python engine/push_all_anomalies.py`, then add `ml-anomalies-custom-*` as a data view |
+| Services gone after a restart (no systemd) | Background processes do not survive a restart | Run `./deploy.sh` again |
+| `results/` grows to tens of GB | Old output is not being deleted | The service deletes it automatically. If you run `engine/main.py` yourself on a schedule, delete old `results/ml_only_*` files too |
 
-Still stuck? Open an issue with your Python version, Elasticsearch version, and
-the last 50 lines of `logs/linux_anomaly_detection.log`. Remove hostnames, IP
-addresses, and usernames from your environment before posting.
+After changing `.env`, restart the engine:
+
+```bash
+sudo systemctl restart realtime_service.service
+```
+
+Without systemd, run `./deploy.sh` again instead.
+
+Add-on problems: see the troubleshooting section of the
+[SIEM Maintenance Agent](../addons/siem-maintenance/README.md#troubleshooting),
+[Alert Triage Agent](../addons/alert-triage/README.md#troubleshooting) or
+[Greenbone](../addons/greenbone/README.md#troubleshooting) README.
+
+## Still stuck?
+
+Open an issue with your Python and Elasticsearch versions and the last 50 lines
+of `logs/linux_anomaly_detection.log`. Remove hostnames, IP addresses and
+usernames first.

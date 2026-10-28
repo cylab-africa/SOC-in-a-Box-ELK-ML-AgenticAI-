@@ -117,7 +117,7 @@ this Git tree — see [**docs/10**](10-agent-siem-maintenance-map.md)).
 ## 5.4 Escalation ladder in this Git repository
 
 When running from the **`Agent-SIEM-maintenance/`** tree (instead of the packaged
-`siem_maint` install), see [**docs/10 §10.3**](10-agent-siem-maintenance-map.md#103-escalation-and-routing-who-gets-paged) for
+`siem_maint` install), see [**docs/10 §10.3**](10-agent-siem-maintenance-map.md) for
 the concrete Google Chat destinations, environment variables, and stage ordering.
 
 ---

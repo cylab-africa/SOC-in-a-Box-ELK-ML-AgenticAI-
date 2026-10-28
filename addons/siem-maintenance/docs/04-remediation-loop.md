@@ -175,7 +175,7 @@ recommendations covering eight categories and returns the canned
 guidance instead. Everything continues running.
 
 The LLM backend is a local [Ollama](https://ollama.com) server — see
-the [Installation section in the README](../README.md#installation)
+the [Installation section in the README](../README.md#install-with-soc-in-a-box)
 for setup. Using a local model means no observations about the
 cluster ever leave the host.
 

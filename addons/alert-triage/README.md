@@ -1,120 +1,122 @@
 # Alert Triage Agent
 
-AI-assisted alert triage and investigation for Elastic Security.
-Exposes a web UI, a REST API, and an MCP server so any MCP-compatible AI client can investigate alerts directly.
+Investigates Elastic Security alerts for you. For each alert it gathers the
+related events, IP and file reputation, and what you know about the host, then
+asks an AI model whether it looks like a real attack or a false alarm, and why.
 
-## Install — one command, no git required
+Use it from a web page, a REST API, or as an MCP server so AI clients (Claude,
+Claude Code, or any MCP client) can run the investigation tools themselves.
 
-**Linux / macOS**
-```bash
-curl -fsSL https://raw.githubusercontent.com/masterlion-hash/Alert-Triage-Agent/main/install.py -o /tmp/ata.py && python3 /tmp/ata.py
-```
+- Live alert list, filtered by severity, host, rule, user and date
+- One-click investigation: host context, threat intelligence (AbuseIPDB,
+  VirusTotal), related events, AI verdict
+- AI model of your choice: local Ollama, Anthropic Claude, any OpenAI-compatible
+  API, or none (investigation report only)
+- A link per alert (`/investigate/<alert_id>`) to open from Kibana, Slack or
+  anywhere else
+- No telemetry
 
-**Windows PowerShell**
-```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/masterlion-hash/Alert-Triage-Agent/main/install.py -OutFile "$env:TEMP\ata.py"; python "$env:TEMP\ata.py"
-```
-
-The installer will:
-1. Check your system (RAM, CPU, disk, GPU)
-2. Download the project if needed — no git required
-3. Create a Python virtual environment and install all dependencies
-4. Ask for your Elasticsearch URL and credentials (and test the connection)
-5. Help you choose and set up an AI backend — Ollama (local) or Anthropic Claude (cloud)
-6. Pull your chosen Ollama model, or validate your Claude API key
-7. Write `.env`, create `start.sh` / `start.bat`, and optionally install as a service
-
-Then start the server:
-
-```bash
-bash start.sh          # Linux / macOS
-start.bat              # Windows
-```
-
-Open `http://localhost:8000`.
-
----
-
-Already have the repo cloned? Just run:
-
-```bash
-python3 install.py     # Linux / macOS
-python  install.py     # Windows
-```
-
-## Features
-
-- Live alert feed with filters: severity, host, rule, user, date range
-- One-click investigation: host context, threat intel (AbuseIPDB / VirusTotal), related events, AI verdict
-- Pluggable AI verdict backend:
-  - **Anthropic Claude** (cloud API — Haiku, Sonnet, or Opus)
-  - **Ollama** — fully local/offline (Llama 3, Mistral, Phi-3, …) — auto-installed
-  - **Any OpenAI-compatible API** — LM Studio, vLLM, Groq, Together AI, …
-  - Disabled — raw investigation report only
-- MCP server at `/mcp/mcp` for Claude.ai, Claude Code, or any MCP client
-- Deep-link investigation page — open `/investigate/<alert_id>` from Kibana (URL drilldown), Slack, or anywhere else and the investigation runs automatically
-- Asset inventory (YAML) for host criticality / owner context
-- MIT licensed, no telemetry
+> **It has no login.** Anyone who can reach its port can read your alerts and
+> use its Elasticsearch login and AI quota. Keep it on `127.0.0.1` and use an
+> SSH tunnel (`ssh -L 8000:127.0.0.1:8000 YOUR_SERVER`), or put it behind a
+> reverse proxy with authentication.
 
 ## Requirements
 
-- Python 3.10+ (Ubuntu 22.04 default; if yours is older the installer will try to find a newer one automatically)
-- Elasticsearch 8.x with Kibana Security enabled
-- Read access to the `.alerts-security.alerts-default` index (or your custom index)
+- Python 3.10+
+- Elasticsearch 8.x with Elastic Security (Kibana Security) enabled
+- An Elasticsearch user with read access to the alerts index
+  (`.alerts-security.alerts-default`) and your event indices
 
-## Configuration
+## Install with SOC-in-a-Box
 
-Run `python install.py` for a guided wizard, or copy `.env.example` to `.env` and edit manually.
+From the repository root:
 
-### Elasticsearch
+```bash
+./deploy.sh --only triage
+```
 
-| Variable | Description | Default |
+It reuses the Elasticsearch settings, asks which AI model to use and for
+optional AbuseIPDB and VirusTotal keys, installs the agent and starts it on
+`127.0.0.1:8000`. Settings are in `addons/alert-triage/.env`.
+
+| To... | Run |
+|---|---|
+| Open it | `http://127.0.0.1:8000/` |
+| Check its status | `systemctl status alert-triage` |
+| Restart after editing `.env` | `sudo systemctl restart alert-triage` |
+| Stop it | `sudo systemctl disable --now alert-triage` |
+
+## Install on its own
+
+```bash
+python3 install.py
+```
+
+The wizard checks your machine, installs the dependencies, asks for your
+Elasticsearch login and AI model (it can install an Ollama model for you), and
+writes `.env` and `start.sh`. Then:
+
+```bash
+bash start.sh       # Linux / macOS
+start.bat           # Windows
+```
+
+To run it as a systemd service, edit the paths and user in
+`deploy/elastic-triage.service`, then:
+
+```bash
+sudo cp deploy/elastic-triage.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now elastic-triage
+```
+
+When run on its own it listens on all interfaces (`HOST=0.0.0.0`) by default.
+Set `HOST=127.0.0.1` in `.env` unless it sits behind an authenticating proxy.
+
+## Settings
+
+All in `.env`. Copy `.env.example` to start, or run `python3 install.py`.
+
+**Elasticsearch**
+
+| Setting | Default | What it is |
 |---|---|---|
-| `ELASTIC_URL` | Full URL with scheme and port | `https://localhost:9200` |
-| `ELASTIC_USERNAME` | Basic auth username | `elastic` |
-| `ELASTIC_PASSWORD` | Basic auth password | — |
-| `ELASTIC_VERIFY_SSL` | Verify TLS certificate | `false` |
-| `ELASTIC_INDEX` | Alerts index/alias | `.alerts-security.alerts-default` |
+| `ELASTIC_URL` | | Address with `https://` and port |
+| `ELASTIC_USERNAME`, `ELASTIC_PASSWORD` | | Login |
+| `ELASTIC_VERIFY_SSL` | `false` | Check the certificate. Set `true` in production, with the CA installed |
+| `ELASTIC_INDEX` | `.alerts-security.alerts-default` | Alerts index |
+| `ELASTIC_EVENT_INDICES` | `logs-*,filebeat-*,winlogbeat-*,auditbeat-*` | Where related events are searched |
 
-### AI backend
+**AI model:** set `AI_PROVIDER` to `claude`, `ollama`, `openai_compat` or `none`.
 
-Set `AI_PROVIDER` to one of: `claude` · `ollama` · `openai_compat` · `none`
-
-**Anthropic Claude**
 ```env
+# Anthropic Claude
 AI_PROVIDER=claude
 ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_MODEL=claude-haiku-4-5-20251001
-```
 
-**Ollama** (local — `ollama serve` must be running)
-```env
+# Ollama, local (run: ollama pull llama3.2)
 AI_PROVIDER=ollama
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
-```
-Pull a model first: `ollama pull llama3.2`
 
-**OpenAI-compatible** (LM Studio, vLLM, Groq, Together AI, …)
-```env
+# OpenAI-compatible: LM Studio, vLLM, Groq, Together AI, ...
 AI_PROVIDER=openai_compat
 OPENAI_COMPAT_URL=http://localhost:1234/v1
-OPENAI_COMPAT_KEY=            # blank if not required
+OPENAI_COMPAT_KEY=
 OPENAI_COMPAT_MODEL=mistral
 ```
 
-### Threat intelligence (optional)
+**Threat intelligence (optional):** leave empty to skip these lookups.
 
 ```env
 ABUSEIPDB_API_KEY=...
 VIRUSTOTAL_API_KEY=...
 ```
 
-Leave blank to disable. Investigations still run — IP/hash/domain enrichment is skipped.
-
-### Asset inventory
-
-Copy `assets.example.yml` to `assets.yml` and describe your hosts:
+**Host inventory (optional, improves verdicts):** copy `assets.example.yml` to
+`assets.yml` and describe your hosts:
 
 ```yaml
 hosts:
@@ -127,13 +129,12 @@ hosts:
       Tier-0 asset. PowerShell with -enc is almost always malicious here.
 ```
 
-The AI uses this to calibrate confidence and suggest better pivots.
-
 ## MCP server
 
-The MCP endpoint is `/mcp/mcp`. Add it to your client:
+The endpoint is `http://127.0.0.1:8000/mcp/mcp`.
 
 **Claude Code** (`~/.claude.json`):
+
 ```json
 {
   "mcpServers": {
@@ -145,125 +146,61 @@ The MCP endpoint is `/mcp/mcp`. Add it to your client:
 }
 ```
 
-**Claude.ai** — Settings → Connectors → Add custom connector → paste the URL.
+**Claude.ai:** Settings → Connectors → Add custom connector → paste the URL.
+This needs an HTTPS address reachable from the internet. Only publish one
+behind authentication, and set `PUBLIC_URL` in `.env` to that address.
 
-For external access, tunnel with ngrok:
-```bash
-ngrok http 8000
-```
-Then set `PUBLIC_URL=https://your-tunnel.ngrok-free.app` in `.env`.
-
-### MCP tools
-
-| Tool | Description |
+| Tool | What it does |
 |---|---|
-| `triage_recent_alerts` | List open alerts with IDs (optional `rule` filter) |
-| `list_alert_rules` | All rules with open alerts + per-severity counts |
-| `investigate_alert` | Full investigation + AI verdict |
-| `get_host_context` | Asset inventory lookup |
-| `lookup_indicator` | Threat-intel check (IP / hash / domain) |
-| `get_related_events` | Events on the same host/user around a timestamp |
+| `triage_recent_alerts` | Lists open alerts with their IDs (optional `rule` filter) |
+| `list_alert_rules` | Rules with open alerts, with counts per severity |
+| `investigate_alert` | Full investigation and AI verdict |
+| `get_host_context` | Looks up a host in the inventory |
+| `lookup_indicator` | Threat-intelligence check of an IP, hash or domain |
+| `get_related_events` | Events on the same host or user around a time |
 
-## Investigate straight from Kibana (SIEM alert view)
+## Investigate from Kibana
 
-Every alert has a permanent deep link that opens the agent and runs the full
-investigation automatically:
+Every alert has a link that opens the agent and runs the investigation:
 
 ```
 http://<triage-host>:8000/investigate/<alert_id>
 ```
 
-`<alert_id>` is the alert document `_id` — the same value as
-`kibana.alert.uuid`, which you can copy from any alert's detail flyout in
-**Security → Alerts** (or from the agent's own alert feed).
+`<alert_id>` is the alert's `kibana.alert.uuid`. Copy it from the alert's
+details in **Security → Alerts**.
 
-### Option A — one-command dashboard with an "Investigate with Agent" drilldown
+**Option A: a ready-made dashboard.** This creates a "Security Alerts —
+Investigate with Agent" dashboard. Click a value in its **Alert ID** column and
+choose **Investigate with Agent**:
 
 ```bash
 python deploy/create_investigate_dashboard.py
 ```
 
-This creates a **Security Alerts — Investigate with Agent** dashboard in
-Kibana containing a table of open alerts. Click any value in the **Alert ID**
-column and choose **Investigate with Agent** — the agent opens in a new tab
-and immediately pulls host context, threat intel, related events, and the AI
-verdict for that alert.
+**Option B: your own dashboard.** On any panel that shows `kibana.alert.uuid`:
+panel menu → **Create drilldown** → **Go to URL**, with
+`http://<triage-host>:8000/investigate/{{event.value}}`, and **Open in new tab**
+on.
 
-### Option B — add the drilldown to your own dashboard
+Kibana's own Security → Alerts table cannot have custom buttons without a
+Kibana plugin. Instead, you can put the agent's address in each rule's
+**Investigation guide**, which shows in every alert's details.
 
-Any dashboard panel that displays `kibana.alert.uuid` can link to the agent:
-
-1. Edit the dashboard → panel menu → **Create drilldown** → **Go to URL**.
-2. URL template: `http://<triage-host>:8000/investigate/{{event.value}}`
-3. Enable **Open in new tab**, save, then click the Alert ID cell in the panel.
-
-### Why not a button inside Security → Alerts itself?
-
-Kibana's native SIEM alerts table doesn't support custom row actions without
-writing a Kibana plugin. The closest built-in options are:
-
-- The drilldown dashboard above (Option A) — the standard workaround.
-- Adding a static link to the triage UI (`http://<triage-host>:8000`) in each
-  rule's **Investigation guide**, which shows in every alert's detail flyout.
-- Copying `kibana.alert.uuid` from the alert flyout into
-  `/investigate/<alert_id>` manually.
-
-## Project structure
-
-```
-elastic-mcp-triage/
-  install.py           Interactive setup wizard
-  server.py            FastAPI app + MCP tools + UI
-  config.py            Configuration loaded from .env
-  requirements.txt
-  .env.example         Configuration template
-  assets.example.yml   Sample asset inventory
-  src/
-    ai_provider.py     Pluggable AI backend (Claude / Ollama / OpenAI-compat)
-    elastic.py         Async Elasticsearch client
-    investigation.py   Investigation orchestrator
-    threat_intel.py    AbuseIPDB + VirusTotal lookups
-    assets.py          Asset inventory loader
-    triage.py          Alert formatting helpers
-  deploy/
-    elastic-triage.service            systemd unit file
-    create_investigate_dashboard.py   Kibana dashboard + "Investigate with Agent" drilldown
-```
-
-## Deploying as a service (Linux)
-
-```bash
-sudo cp deploy/elastic-triage.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now elastic-triage
-```
-
-Edit the service file to match your install path and user.
+These links open in the analyst's browser, so the agent must be reachable from
+it: use the reverse proxy above.
 
 ## Troubleshooting
 
-**401 from Elasticsearch** — check username/password and that the user has read access to the alerts index.
-
-**No alerts returned** — confirm the index name with `GET _cat/indices/.alerts-security*` in Kibana Dev Tools. Set `ELASTIC_INDEX` if yours differs.
-
-**SSL errors** — for self-signed certs keep `ELASTIC_VERIFY_SSL=false`. For production, install the CA and set it to `true`.
-
-**MCP connector fails** — open `<your-url>/health` in a browser. If that works, make sure you registered `<url>/mcp/mcp` (not just `/mcp`).
-
-**Ollama timeout** — increase `THREAT_INTEL_TIMEOUT` or check that `ollama serve` is running and the model is pulled.
-
-**Fetch limit stuck at 50** — your deployed instance is running an old build
-(the server used to clamp `limit` to 50). Check what's deployed with
-`curl http://<triage-host>:8000/health` — a current build reports
-`"version"` and `"limits": {"max_fetch_limit": 10000}`; if those keys are
-missing, update: re-run the installer one-liner (it pulls the latest code),
-or `git pull` in the install directory, then restart
-(`sudo systemctl restart elastic-triage` or re-run `start.sh`).
-
-## Contributing
-
-Pull requests are welcome. Open an issue first for large changes.
+| Symptom | Fix |
+|---|---|
+| `401` from Elasticsearch | Check the login, and that the user can read the alerts index |
+| No alerts listed | Check the index name in Kibana Dev Tools with `GET _cat/indices/.alerts-security*`, then set `ELASTIC_INDEX` |
+| Certificate (SSL) errors | Self-signed cluster: `ELASTIC_VERIFY_SSL=false` for a lab, or install its CA and set `true` |
+| MCP client cannot connect | Open `<address>/health` in a browser. If it works, check you added `/mcp/mcp`, not just `/mcp` |
+| Ollama timeout | Check `ollama serve` is running and the model is pulled; raise `THREAT_INTEL_TIMEOUT` |
+| Alert list stuck at 50 | An old version is running. `curl http://<triage-host>:8000/health` should show `"limits": {"max_fetch_limit": 10000}`. If not, update the code and restart |
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2024 Alert Triage Agent contributors
+[MIT](LICENSE). Copyright (c) 2024 Alert Triage Agent contributors.

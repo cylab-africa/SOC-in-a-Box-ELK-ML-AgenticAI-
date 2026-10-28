@@ -1,5 +1,8 @@
 # Development
 
+For contributors. To install and use SOC-in-a-Box, see the
+[installation guide](installation.md).
+
 ## Project structure
 
 ```
@@ -25,10 +28,11 @@ soc-in-a-box/
 │   ├── scripts/            # Diagnostic and audit scripts
 │   ├── tests/              # Pytest test suite
 │   ├── features/, models/, dl_models/, adversarial/  # Experimental; not used by the running engine
-│   └── benchmarks/, validation/  # Benchmarks and quality-gate scripts
+│   └── benchmarks/         # Attack-scenario benchmarks
 ├── addons/
 │   ├── siem-maintenance/   # Optional SIEM Maintenance Agent
-│   └── alert-triage/       # Optional Alert Triage Agent
+│   ├── alert-triage/       # Optional Alert Triage Agent
+│   └── greenbone/          # Optional Greenbone scan results push
 ├── docker/                 # Dockerfiles and docker-compose
 └── docs/                   # Documentation
 ```

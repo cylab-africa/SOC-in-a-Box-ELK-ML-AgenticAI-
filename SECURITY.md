@@ -1,23 +1,26 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability in this project, please report it responsibly:
+**Do not open a public issue.** Report it privately on GitHub: the
+repository's **Security** tab → **Report a vulnerability**.
 
-1. **Do NOT** open a public GitHub issue for security vulnerabilities
-2. Email the maintainers with details of the vulnerability
-3. Include steps to reproduce the issue
-4. Allow reasonable time for a fix before public disclosure
+Include what is affected, how to reproduce it, and the impact you expect.
+Please give us reasonable time to fix it before disclosing it publicly.
 
-## Scope
+In scope: the detection pipeline, the add-ons, `deploy.sh`, credential
+handling, and communication with Elasticsearch, Google Chat and AI providers.
 
-This project is a security detection tool. Vulnerabilities in the detection pipeline, credential handling, or backend communication are in scope.
+## Using SOC-in-a-Box safely
 
-## Security Best Practices for Users
-
-- Never commit `.env` files or credentials to version control
-- Use API keys instead of username/password for Elasticsearch where possible
-- Run the detection service with least-privilege OS accounts
-- Enable TLS (`verify_certs: true`) for production Elasticsearch connections
-- Regularly update dependencies: `pip install --upgrade -e ".[dev]"`
-- Review `config/` files to ensure FP lists match your environment
+- Never commit `.env` files or credentials. They are in `.gitignore`.
+- Give the Elasticsearch user only the access it needs: read the log indices,
+  write `ml-anomalies-custom-*`.
+- Verify the cluster's certificate (`ES_VERIFY_CERTS=true`, the default) on
+  anything but a lab cluster.
+- Run the services as a normal user, not root (`deploy.sh` uses the user who
+  runs it).
+- Keep the Alert Triage Agent on `127.0.0.1`: it has no login.
+- Fill the false-positive lists in `config/local/` to match your own
+  environment, and do not allowlist `root` or general tools such as `bash`.
+- Update regularly: `git pull`, then `./deploy.sh`.

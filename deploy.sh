@@ -9,6 +9,7 @@
 #   ./deploy.sh --with-maintenance       detection pipeline + maintenance agent
 #   ./deploy.sh --with-triage            detection pipeline + alert triage agent
 #   ./deploy.sh --with-greenbone         detection pipeline + Greenbone results push
+#   ./deploy.sh --only greenbone         add one add-on to an existing install
 #   ./deploy.sh --mode docker            run under Docker Compose instead of venv + systemd
 #   ES_HOST=... ES_USERNAME=... ES_PASSWORD=... ./deploy.sh --non-interactive --with-maintenance
 #   ./deploy.sh --dry-run                print what would happen, change nothing
@@ -37,10 +38,16 @@ GREENBONE_ENV_FILE="$GREENBONE_DIR/.env"
 GREENBONE_VENV_DIR="$GREENBONE_DIR/.venv"
 GREENBONE_SERVICE="gvm-siem-push.service"
 GREENBONE_TIMER="gvm-siem-push.timer"
-# systemd OnCalendar expression for the push; daily at 06:00 unless overridden.
-GREENBONE_SCHEDULE="${GREENBONE_SCHEDULE:-*-*-* 06:00:00}"
+# When the weekly push runs: Sunday 06:00 (local time) unless overridden, so
+# scans that run on Saturday have finished.
+GREENBONE_DAY="${GREENBONE_DAY:-Sun}"     # Mon..Sun
+GREENBONE_TIME="${GREENBONE_TIME:-06:00}" # HH:MM
+# The same as a systemd OnCalendar expression.
+GREENBONE_SCHEDULE="${GREENBONE_SCHEDULE:-$GREENBONE_DAY *-*-* $GREENBONE_TIME:00}"
 # gvmd's socket in the Greenbone Community Edition Docker Compose install.
 GVM_DEFAULT_SOCKET="/var/lib/docker/volumes/greenbone-community-edition_gvmd_socket_vol/_data/gvmd.sock"
+# Where a source / package install of Greenbone puts it.
+GVM_OTHER_SOCKETS=(/run/gvmd/gvmd.sock /var/run/gvmd/gvmd.sock /run/gvm/gvmd.sock /var/run/gvm/gvmd.sock)
 # Where the bundled TLS trust step saves a cluster's CA (relative to the repo root).
 TRUSTED_CA_PATH="config/certs/ca.pem"
 # Index patterns written to .env, with Elastic Agent's standard names as defaults.
@@ -56,6 +63,7 @@ MODE="venv"                 # venv | docker
 WITH_MAINTENANCE=""         # "", yes, no  ("" = ask)
 WITH_TRIAGE=""              # "", yes, no  ("" = ask)
 WITH_GREENBONE=""           # "", yes, no  ("" = ask)
+ONLY=""                     # maintenance | triage | greenbone: add just that add-on
 # The triage agent has no authentication of its own, so it listens on loopback
 # unless the operator explicitly chooses otherwise.
 TRIAGE_LISTEN="${TRIAGE_LISTEN:-127.0.0.1}"
@@ -81,6 +89,10 @@ and any add-ons you choose, and starts them as background services. Safe to
 re-run. Try --dry-run first to see every step without changing anything.
 
 Components:
+  --only ADD-ON            Add (or redo) just one add-on on an existing install:
+                           maintenance, triage or greenbone. Reuses the
+                           Elasticsearch settings in .env; does not touch the
+                           detection engine or the other add-ons.
   --with-maintenance       Also deploy the SIEM Maintenance Agent add-on
   --no-maintenance         Deploy the detection pipeline only (skip the question)
   --maintenance-wizard     Configure the add-on with its own full installer
@@ -96,7 +108,7 @@ Components:
   --triage-port PORT       Triage agent port (default 8000)
   --with-greenbone         Also install the Greenbone results push (needs Greenbone
                            on this server). Sends finished vulnerability scans to
-                           Elasticsearch daily.
+                           Elasticsearch once a week (Sunday 06:00).
   --no-greenbone           Skip the Greenbone results push (skip the question)
 
 Install mode:
@@ -124,6 +136,8 @@ Other:
 EOF
 }
 
+# Kept so the summary can print the command that repeats this install.
+DEPLOY_ARGS=("$@")
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-maintenance)   WITH_MAINTENANCE="yes" ;;
@@ -133,6 +147,8 @@ while [[ $# -gt 0 ]]; do
     --no-triage)          WITH_TRIAGE="no" ;;
     --with-greenbone)     WITH_GREENBONE="yes" ;;
     --no-greenbone)       WITH_GREENBONE="no" ;;
+    --only)               ONLY="${2:?--only needs an add-on: maintenance, triage or greenbone}"; shift ;;
+    --only=*)             ONLY="${1#*=}" ;;
     --triage-listen)      TRIAGE_LISTEN="${2:?--triage-listen needs an address}"; shift ;;
     --triage-listen=*)    TRIAGE_LISTEN="${1#*=}" ;;
     --triage-port)        TRIAGE_PORT="${2:?--triage-port needs a number}"; shift ;;
@@ -155,6 +171,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [[ -n "$ONLY" ]]; then
+  case "$ONLY" in
+    maintenance) WITH_MAINTENANCE="yes"; WITH_TRIAGE="no"; WITH_GREENBONE="no" ;;
+    triage)      WITH_MAINTENANCE="no"; WITH_TRIAGE="yes"; WITH_GREENBONE="no" ;;
+    greenbone)   WITH_MAINTENANCE="no"; WITH_TRIAGE="no"; WITH_GREENBONE="yes" ;;
+    *) echo "--only must be maintenance, triage or greenbone (got: $ONLY)" >&2; exit 2 ;;
+  esac
+fi
 if [[ "$MODE" != "venv" && "$MODE" != "docker" ]]; then
   echo "--mode must be venv or docker (got: $MODE)" >&2
   exit 2
@@ -167,15 +191,63 @@ fi
 # ── Output helpers ───────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
   C_OK=$'\e[32m'; C_FAIL=$'\e[31m'; C_WARN=$'\e[33m'; C_INFO=$'\e[36m'; C_OFF=$'\e[0m'
+  C_BOLD=$'\e[1m'; C_DIM=$'\e[2m'; C_VALUE=$'\e[1;36m'; C_HEAD=$'\e[1;34m'
 else
   C_OK=""; C_FAIL=""; C_WARN=""; C_INFO=""; C_OFF=""
+  C_BOLD=""; C_DIM=""; C_VALUE=""; C_HEAD=""
 fi
+if [[ "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" =~ [Uu][Tt][Ff]-?8 ]]; then
+  S_OK="✔"; S_FAIL="✘"; S_WARN="!"; S_SKIP="–"; S_RULE="═"; S_LINE="─"
+else
+  S_OK="+"; S_FAIL="x"; S_WARN="!"; S_SKIP="-"; S_RULE="="; S_LINE="-"
+fi
+RULE="$(printf "%72s" "" | sed "s/ /$S_RULE/g")"
+
+# Every warning and failure is kept so the summary can list them in one place.
+ISSUES=()
 ok()   { printf '  [%s OK %s] %s\n' "$C_OK" "$C_OFF" "$*"; }
-fail() { printf '  [%sFAIL%s] %s\n' "$C_FAIL" "$C_OFF" "$*" >&2; }
-warn() { printf '  [%sWARN%s] %s\n' "$C_WARN" "$C_OFF" "$*"; }
+fail() { ISSUES+=("$*"); printf '  [%sFAIL%s] %s\n' "$C_FAIL" "$C_OFF" "$*" >&2; }
+warn() { ISSUES+=("$*"); printf '  [%sWARN%s] %s\n' "$C_WARN" "$C_OFF" "$*"; }
 info() { printf '  [%sINFO%s] %s\n' "$C_INFO" "$C_OFF" "$*"; }
-step() { printf '\n== %s ==\n' "$*"; }
 die()  { fail "$*"; exit 1; }
+
+# The install runs in parts (the detection engine, then one per add-on), each
+# with its own numbered steps: "PART 2 of 4", then "Step 1/4", "Step 2/4", ...
+PART_NUM=0; PART_TOTAL=0; PART_TITLE=""; PART_ISSUES=0; STEP_NUM=0; STEP_TOTAL=0
+banner() {
+  printf '\n\n%s%s\n  %s\n%s%s\n' "${2:-$C_HEAD}" "$RULE" "$1" "$RULE" "$C_OFF"
+}
+# begin_part "title" steps [numbered=1]
+begin_part() {
+  PART_TITLE="$1"; STEP_TOTAL="$2"; STEP_NUM=0; PART_ISSUES=${#ISSUES[@]}
+  if (( ${3:-1} )); then
+    PART_NUM=$((PART_NUM + 1))
+    banner "PART $PART_NUM of $PART_TOTAL  ·  $1"
+  else
+    banner "$1"
+  fi
+}
+step() {
+  STEP_NUM=$((STEP_NUM + 1))
+  printf '\n%s%s%s Step %d/%d  %s%s\n' "$C_BOLD" "$S_LINE" "$S_LINE" "$STEP_NUM" "$STEP_TOTAL" "$*" "$C_OFF"
+}
+end_part() {
+  local new=$(( ${#ISSUES[@]} - PART_ISSUES ))
+  if (( new == 0 )); then
+    printf '\n  %s%s %s: %d of %d steps complete%s\n' "$C_OK" "$S_OK" "$PART_TITLE" "$STEP_NUM" "$STEP_TOTAL" "$C_OFF"
+  else
+    printf '\n  %s%s %s: %d of %d steps done, with %d warning(s) (listed again at the end)%s\n' \
+      "$C_WARN" "$S_WARN" "$PART_TITLE" "$STEP_NUM" "$STEP_TOTAL" "$new" "$C_OFF"
+  fi
+}
+
+# What each component ended up as, for the summary: ok | warn | fail, plus a note.
+declare -A STATUS=() STATUS_NOTE=()
+set_status() {
+  STATUS[$1]="$2"; STATUS_NOTE[$1]="$3"
+  (( DRY_RUN )) && [[ "$2" != "skip" ]] && STATUS_NOTE[$1]="$3 (dry run: would be)"
+  return 0
+}
 
 # Run a command, or only print it under --dry-run.
 run() {
@@ -186,46 +258,68 @@ run() {
   fi
 }
 
-# prompt VAR "question" "default"  — uses $VAR from the environment if set.
+# Questions are printed as: the question (bold), an optional explanation (dim,
+# may span several lines), then an input line that says what Enter does.
+ask_header() {
+  local msg="$1" help="${2:-}" line
+  echo
+  printf '  %s%s%s\n' "$C_BOLD" "$msg" "$C_OFF"
+  if [[ -n "$help" ]]; then
+    while IFS= read -r line; do
+      printf '  %s%s%s\n' "$C_DIM" "$line" "$C_OFF"
+    done <<<"$help"
+  fi
+  return 0
+}
+
+# prompt VAR "question" "default" ["explanation"]  — uses $VAR from the environment if set.
 prompt() {
-  local var="$1" msg="$2" def="${3:-}" cur="${!1:-}" reply
+  local var="$1" msg="$2" def="${3:-}" help="${4:-}" cur="${!1:-}" reply
   [[ -n "$cur" ]] && def="$cur"
   if (( NON_INTERACTIVE )); then
     printf -v "$var" '%s' "$def"
     return
   fi
+  ask_header "$msg" "$help"
   if [[ -n "$def" ]]; then
-    read -r -p "  $msg [$def]: " reply
+    read -r -p "  Press Enter for ${C_VALUE}${def}${C_OFF}, or type your own: " reply
   else
-    read -r -p "  $msg: " reply
+    read -r -p "  Type it here (press Enter to leave it empty): " reply
   fi
   printf -v "$var" '%s' "${reply:-$def}"
 }
 
-# prompt_secret VAR "question"  — keeps an existing value when Enter is pressed.
+# prompt_secret VAR "question" ["explanation"] ["what Enter does"]
+# Typing is hidden. Enter keeps an existing value, or does what the 4th argument says.
 prompt_secret() {
-  local var="$1" msg="$2" cur="${!1:-}" reply hint=""
+  local var="$1" msg="$2" help="${3:-}" enter="${4:-}" cur="${!1:-}" reply
   if (( NON_INTERACTIVE )); then
     return
   fi
-  [[ -n "$cur" ]] && hint=" (Enter keeps current)"
-  read -r -s -p "  $msg$hint: " reply
+  [[ -z "$enter" && -n "$cur" ]] && enter="press Enter to keep the current one"
+  ask_header "$msg" "$help"
+  if [[ -n "$enter" ]]; then
+    read -r -s -p "  Type it (hidden as you type), or $enter: " reply
+  else
+    read -r -s -p "  Type it (hidden as you type): " reply
+  fi
   echo
   [[ -n "$reply" ]] && printf -v "$var" '%s' "$reply"
   return 0
 }
 
-# confirm "question" default(Y|N)
+# confirm "question" default(Y|N) ["explanation"]
 confirm() {
-  local msg="$1" def="${2:-N}" reply
+  local msg="$1" def="${2:-N}" help="${3:-}" reply
   if (( NON_INTERACTIVE )); then
     [[ "$def" == "Y" ]]
     return
   fi
+  ask_header "$msg" "$help"
   if [[ "$def" == "Y" ]]; then
-    read -r -p "  $msg (Y/n): " reply; reply="${reply:-Y}"
+    read -r -p "  Press Enter for ${C_VALUE}yes${C_OFF}, or type n for no: " reply; reply="${reply:-Y}"
   else
-    read -r -p "  $msg (y/N): " reply; reply="${reply:-N}"
+    read -r -p "  Type y for yes, or press Enter for ${C_VALUE}no${C_OFF}: " reply; reply="${reply:-N}"
   fi
   [[ "$reply" =~ ^[Yy] ]]
 }
@@ -312,8 +406,25 @@ is_placeholder() {
 }
 
 # ── Preflight ────────────────────────────────────────────────────────────────
+# Print the path of a running Greenbone's gvmd socket, or nothing. The Docker
+# install's socket is under a root-only directory, so look with sudo when that
+# works without a password prompt.
+find_gvm_socket() {
+  local path
+  for path in ${GVM_SOCKET:+"$GVM_SOCKET"} "$GVM_DEFAULT_SOCKET" "${GVM_OTHER_SOCKETS[@]}"; do
+    if [[ -S "$path" ]] || sudo -n test -S "$path" 2>/dev/null; then
+      printf '%s' "$path"
+      return 0
+    fi
+  done
+  # A Docker install under another project name.
+  path="$(sudo -n sh -c 'ls -d /var/lib/docker/volumes/*gvmd_socket*/_data/gvmd.sock' 2>/dev/null | head -n 1 || true)"
+  [[ -n "$path" ]] && printf '%s' "$path"
+  return 0
+}
+
 preflight() {
-  step "Preflight"
+  step "Check that this machine has what the install needs"
   [[ "$(uname -s)" == "Linux" ]] || warn "Not Linux; systemd steps will be skipped"
   if [[ "$(id -u)" -eq 0 && -z "${SUDO_USER:-}" ]]; then
     warn "Running as root. Services will run as root unless you pass --service-user."
@@ -339,13 +450,37 @@ preflight() {
     fi
   fi
   command -v curl >/dev/null || die "curl not found"
+  ok "curl available"
 
+  if [[ -n "$ONLY" ]]; then
+    step "Check the earlier install this add-on builds on"
+    check_base_install
+  else
+    step "Choose the optional add-ons"
+  fi
+  choose_maintenance
+  choose_triage
+  choose_greenbone
+  [[ -n "$ONLY" ]] || show_plan
+}
+
+# --only adds one add-on to an existing install, so the detection engine's
+# Elasticsearch settings must already be in .env. Load them and test them.
+check_base_install() {
+  load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
+  if [[ ! -f "$ENV_FILE" ]] || is_placeholder "${ES_HOST:-}"; then
+    die "SOC-in-a-Box is not set up yet. Run ./deploy.sh first; then add the add-on with ./deploy.sh --only $ONLY"
+  fi
+  ok "Using the Elasticsearch settings already in .env ($ES_HOST)"
+  apply_tls_settings
+  connect_es
+}
+
+choose_maintenance() {
   if [[ -z "$WITH_MAINTENANCE" ]]; then
-    echo
-    echo "  Optional add-on: SIEM Maintenance Agent"
-    echo "  Watches cluster health and ingestion freshness, sends a daily Google Chat"
-    echo "  report, and can run safe auto-remediation."
-    if confirm "Deploy the SIEM Maintenance Agent too?" N; then
+    if confirm "Optional add-on: SIEM Maintenance Agent. Install it?" N \
+        "Watches the health of your Elasticsearch cluster and whether logs are still
+arriving, sends a daily report to Google Chat, and can fix common problems."; then
       WITH_MAINTENANCE="yes"
     else
       WITH_MAINTENANCE="no"
@@ -354,17 +489,22 @@ preflight() {
   if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
     [[ -f "$ADDON_AGENT_DIR/maintenance_service.py" ]] \
       || die "Add-on not found at $ADDON_DIR (clone the full repository)"
+    if (( MAINTENANCE_WIZARD )); then
+      (( NON_INTERACTIVE )) && die "--maintenance-wizard is interactive; drop --non-interactive"
+      [[ "$MODE" == "venv" ]] || die "--maintenance-wizard only supports --mode venv"
+    fi
     ok "Maintenance add-on: enabled"
-  else
-    info "Maintenance add-on: skipped (re-run with --with-maintenance to add it later)"
+  elif [[ -z "$ONLY" ]]; then
+    info "Maintenance add-on: skipped (add it later with: ./deploy.sh --only maintenance)"
   fi
+}
 
+choose_triage() {
   if [[ -z "$WITH_TRIAGE" ]]; then
-    echo
-    echo "  Optional add-on: Alert Triage Agent"
-    echo "  AI-assisted investigation of Elastic Security alerts (web UI, REST API, and"
-    echo "  an MCP server), with threat-intel and asset context. Runs on Ollama or Claude."
-    if confirm "Deploy the Alert Triage Agent too?" N; then
+    if confirm "Optional add-on: Alert Triage Agent. Install it?" N \
+        "Investigates Elastic Security alerts for you: gathers related events and IP
+reputation, then says whether each alert looks like a real attack or a false
+alarm, and why. Has a web page and an API."; then
       WITH_TRIAGE="yes"
     else
       WITH_TRIAGE="no"
@@ -373,20 +513,36 @@ preflight() {
   if [[ "$WITH_TRIAGE" == "yes" ]]; then
     [[ -f "$TRIAGE_DIR/server.py" ]] || die "Add-on not found at $TRIAGE_DIR (clone the full repository)"
     ok "Triage add-on: enabled (listening on $TRIAGE_LISTEN:$TRIAGE_PORT)"
-  else
-    info "Triage add-on: skipped (re-run with --with-triage to add it later)"
+  elif [[ -z "$ONLY" ]]; then
+    info "Triage add-on: skipped (add it later with: ./deploy.sh --only triage)"
   fi
+}
 
+# The add-on does not install Greenbone: it sends the results of one already
+# running on this server. When the answer is yes, check for it, and if it is
+# missing say how to install it and how to add the add-on afterwards.
+GREENBONE_MISSING=0
+choose_greenbone() {
+  GVM_FOUND_SOCKET="$(find_gvm_socket)"
   if [[ -z "$WITH_GREENBONE" ]]; then
-    echo
-    echo "  Optional add-on: Greenbone vulnerability results"
-    echo "  Sends finished Greenbone / OpenVAS scan results to Elasticsearch once a day,"
-    echo "  labelled new, fixed or unchanged since the previous scan. Needs Greenbone"
-    echo "  installed on this server."
-    if confirm "Install the Greenbone results push too?" N; then
+    if confirm "Optional add-on: Greenbone scan results. Install it?" N \
+        "Sends the results of Greenbone (OpenVAS) vulnerability scans to Elasticsearch
+once a week, marked new, fixed or unchanged since the previous scan. Greenbone
+itself must already be installed on this server; if you say yes, this script
+checks that it is."; then
       WITH_GREENBONE="yes"
     else
       WITH_GREENBONE="no"
+    fi
+  fi
+  if [[ "$WITH_GREENBONE" == "yes" && -z "$GVM_FOUND_SOCKET" ]]; then
+    greenbone_install_help
+    local enter_does="the rest of the install carries on without this add-on."
+    [[ -n "$ONLY" ]] && enter_does="this run stops, and nothing is changed."
+    (( NON_INTERACTIVE )) || ask_gvm_socket "$enter_does"
+    if [[ -z "$GVM_FOUND_SOCKET" ]]; then
+      WITH_GREENBONE="no"
+      GREENBONE_MISSING=1
     fi
   fi
   if [[ "$WITH_GREENBONE" == "yes" ]]; then
@@ -398,9 +554,83 @@ preflight() {
       python3 -c 'import ensurepip, venv' 2>/dev/null \
         || die "python3 venv support missing. On Debian/Ubuntu: sudo apt install -y python3-venv"
     fi
-    ok "Greenbone add-on: enabled"
+    if [[ -n "$GVM_FOUND_SOCKET" ]]; then
+      ok "Greenbone add-on: enabled (Greenbone found: $GVM_FOUND_SOCKET)"
+    else
+      ok "Greenbone add-on: enabled"
+    fi
+  elif [[ -z "$ONLY" ]] && (( ! GREENBONE_MISSING )); then
+    info "Greenbone add-on: skipped (add it later with: ./deploy.sh --only greenbone)"
+  fi
+}
+
+gvm_socket_at() {
+  [[ -S "$1" ]] || sudo test -S "$1" 2>/dev/null
+}
+
+# Greenbone may run with its socket in a non-standard place. Ask for the path
+# and only accept it when a socket is really there, so a "yes" can never carry
+# on without Greenbone. Enter gives up.
+ask_gvm_socket() {
+  local path
+  ask_header "Only if Greenbone IS installed here, with its socket in another place: where is it?" \
+    "Find it with: sudo find / -name gvmd.sock 2>/dev/null
+If Greenbone is not installed, just press Enter: $1"
+  while true; do
+    read -r -p "  Path to gvmd.sock, or press Enter to skip: " path
+    [[ -z "$path" ]] && return 0
+    if gvm_socket_at "$path"; then
+      GVM_FOUND_SOCKET="$path"
+      ok "Found Greenbone's socket at $path"
+      return 0
+    fi
+    printf '  %sThere is no Greenbone socket at %s. Check the path, or press Enter to skip.%s\n' \
+      "$C_WARN" "$path" "$C_OFF"
+  done
+}
+
+greenbone_install_help() {
+  local setup="setup-and-start-greenbone-community-edition.sh"
+  warn "Greenbone is not installed on this server (no gvmd socket found), so this add-on cannot be set up yet."
+  echo "  This add-on sends Greenbone's scan results to Elasticsearch; it does not install"
+  echo "  Greenbone itself. To install Greenbone Community Edition, run Greenbone's own"
+  echo "  setup script on this server."
+  if ! command -v docker >/dev/null; then
+    printf '  %sIt needs Docker, which is not installed here. Install Docker first:%s\n' "$C_WARN" "$C_OFF"
+    echo "    https://docs.docker.com/engine/install/"
+    echo "  Then run:"
   else
-    info "Greenbone add-on: skipped (re-run with --with-greenbone to add it later)"
+    echo "  Run:"
+  fi
+  printf '    %scurl -f -O -L https://greenbone.github.io/docs/latest/_static/%s%s\n' "$C_VALUE" "$setup" "$C_OFF"
+  printf '    %schmod u+x %s%s\n' "$C_VALUE" "$setup" "$C_OFF"
+  printf '    %s./%s%s\n' "$C_VALUE" "$setup" "$C_OFF"
+  echo "  It asks for a password for Greenbone's admin user, then downloads the"
+  echo "  vulnerability feed, which takes from several minutes to a few hours."
+  echo "  Guide: https://greenbone.github.io/docs/latest/22.4/container/"
+  echo "  Once Greenbone is running, add just this add-on (the rest stays as it is) with:"
+  printf '    %s./deploy.sh --only greenbone%s\n' "$C_VALUE" "$C_OFF"
+}
+
+# Say plainly what the answers above mean, before anything is installed: the
+# detection engine always comes next, whatever was answered about the add-ons.
+show_plan() {
+  local greenbone_no="you said no"
+  (( GREENBONE_MISSING )) && greenbone_no="Greenbone is not installed here yet: see the steps above"
+  echo
+  printf '  %sThis is what will be installed:%s\n' "$C_BOLD" "$C_OFF"
+  plan_line yes "Detection engine" "always: the core that the add-ons build on" ""
+  plan_line "$WITH_MAINTENANCE" "SIEM Maintenance Agent" "you said yes" "you said no"
+  plan_line "$WITH_TRIAGE" "Alert Triage Agent" "you said yes" "you said no"
+  plan_line "$WITH_GREENBONE" "Greenbone scan results" "you said yes" "$greenbone_no"
+}
+
+# plan_line yes|no LABEL "note when yes" "note when no"
+plan_line() {
+  if [[ "$1" == "yes" ]]; then
+    printf '    %s%s %-24s yes%s  (%s)\n' "$C_OK" "$S_OK" "$2" "$C_OFF" "$3"
+  else
+    printf '    %s%s %-24s no   (%s)%s\n' "$C_DIM" "$S_SKIP" "$2" "$4" "$C_OFF"
   fi
 }
 
@@ -550,19 +780,62 @@ resolve_untrusted_cert() {
 }
 
 # Check the connection; while the certificate is the problem, offer the trust
-# choice again (e.g. trusting worked but the hostname does not match).
+# choice again (e.g. trusting worked but the hostname does not match). On any
+# other failure, offer to type the address and login again rather than install
+# an engine that cannot reach its data.
+ES_CONNECTED=0
 connect_es() {
-  local rc=0 attempts=0
-  es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
-  while (( rc == 2 && attempts < 3 )) && resolve_untrusted_cert "$ES_HOST"; do
-    attempts=$((attempts + 1))
-    apply_tls_settings
-    rc=0
+  local rc attempts issues_before=${#ISSUES[@]}
+  while true; do
+    rc=0; attempts=0
     es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+    while (( rc == 2 && attempts < 3 )) && resolve_untrusted_cert "$ES_HOST"; do
+      attempts=$((attempts + 1))
+      apply_tls_settings
+      rc=0
+      es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+    done
+    (( rc == 0 || NON_INTERACTIVE )) && break
+    retry_es_login || break
   done
-  if (( rc != 0 )); then
-    warn "Continuing; fix ES settings in .env before starting the services"
+  if (( rc == 0 )); then
+    ES_CONNECTED=1
+    # Failures settled by the questions above are not problems any more.
+    ISSUES=("${ISSUES[@]:0:issues_before}")
+  else
+    warn "Carrying on without a working connection: fix ES_HOST, ES_USERNAME and ES_PASSWORD in .env, then restart the engine"
   fi
+  return 0
+}
+
+# After a failed connection: 0 = the login was typed again (test it again),
+# 1 = carry on without a connection. Choosing to stop exits.
+retry_es_login() {
+  local choice
+  ask_header "Could not connect to Elasticsearch at $ES_HOST. What would you like to do?" "1  Type the address, username and password again (recommended)
+2  Carry on anyway: everything is installed, but the engine cannot work
+   until .env has the right address and login
+3  Stop here (your settings so far are kept in .env)
+The address is the one Elasticsearch is reached on from this server, with
+https:// and the port, e.g. https://10.0.0.5:9200. localhost only works when
+Elasticsearch runs on this same server."
+  read -r -p "  Press Enter for ${C_VALUE}1 (type them again)${C_OFF}, or type 2 or 3: " choice
+  case "${choice:-1}" in
+    1)
+      prompt ES_HOST "Elasticsearch address" "" \
+        "The full address, including https:// and the port, e.g. https://10.0.0.5:9200."
+      prompt ES_USERNAME "Elasticsearch username" "elastic"
+      prompt_secret ES_PASSWORD "Elasticsearch password"
+      require_value ES_HOST
+      local key
+      for key in ES_HOST ES_USERNAME ES_PASSWORD; do
+        env_set "$ENV_FILE" "$key" "${!key}"
+      done
+      ok "Saved to .env; testing again"
+      ;;
+    2) return 1 ;;
+    *) die "Stopped. Your settings so far are in .env; run ./deploy.sh again when ready." ;;
+  esac
 }
 
 # ES_CA_CERT as an absolute path; relative paths are relative to the repo root,
@@ -593,7 +866,8 @@ apply_tls_settings() {
   if (( INSECURE_TLS )); then
     ES_VERIFY_CERTS="false"
     [[ "$(env_get "$ENV_FILE" ES_VERIFY_CERTS)" == "false" ]] || env_set "$ENV_FILE" ES_VERIFY_CERTS false
-    warn "TLS verification disabled for the pipeline (ES_VERIFY_CERTS=false); lab use only"
+    # Printed, not recorded: the summary lists it once from ES_VERIFY_CERTS.
+    printf '  [%sWARN%s] %s\n' "$C_WARN" "$C_OFF" "TLS verification disabled for the pipeline (ES_VERIFY_CERTS=false); lab use only"
   else
     ES_VERIFY_CERTS="true"
   fi
@@ -607,16 +881,14 @@ apply_tls_settings() {
 
 # ── Detection pipeline configuration ─────────────────────────────────────────
 configure_detection() {
-  step "Detection pipeline configuration (.env)"
+  step "Elasticsearch address and login (saved in .env)"
   if [[ -f "$ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
     load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
     if ! is_placeholder "${ES_HOST:-}"; then
       ok "Using existing .env (pass --reconfigure to change it)"
-      apply_tls_settings
-      connect_es
       return
     fi
-    info ".env still has placeholder values; asking for them now"
+    info "No Elasticsearch settings saved yet (an earlier run stopped before they were entered)"
   fi
 
   if [[ ! -f "$ENV_FILE" ]]; then
@@ -630,9 +902,13 @@ configure_detection() {
 
   local default_host="https://localhost:9200"
   (( LOCAL_ES )) && default_host="https://elasticsearch:9200"
-  prompt ES_HOST "Elasticsearch URL (ES_HOST)" "$default_host"
-  prompt ES_USERNAME "Elasticsearch username" "elastic"
-  prompt_secret ES_PASSWORD "Elasticsearch password"
+  prompt ES_HOST "Elasticsearch address" "$default_host" \
+    "The full address, including https:// and the port, e.g. https://10.0.0.5:9200.
+Use localhost if Elasticsearch runs on this server."
+  prompt ES_USERNAME "Elasticsearch username" "elastic" \
+    "The account the engine uses to read logs and write its alerts."
+  prompt_secret ES_PASSWORD "Elasticsearch password" \
+    "The password for that account."
   require_value ES_HOST
   require_value ES_PASSWORD
 
@@ -649,8 +925,11 @@ configure_detection() {
     env_set "$ENV_FILE" "$key" "${!key}"
   done
   ok "Wrote .env"
-  apply_tls_settings
+}
 
+test_connection() {
+  step "Test the connection to Elasticsearch"
+  apply_tls_settings
   if (( LOCAL_ES )); then
     info "Bundled Elasticsearch is not running yet; skipping connectivity check"
   else
@@ -658,9 +937,73 @@ configure_detection() {
   fi
 }
 
+# GET a path from Elasticsearch with the same TLS settings as the engine. Prints
+# the body, then the HTTP status on its own last line.
+es_get() {
+  local path="$1" flags=(-sS -g --max-time 15 -w '\n%{http_code}') cfg=""
+  if [[ "$ES_VERIFY_CERTS" == "false" ]]; then
+    flags+=(-k)
+  elif [[ -n "${ES_CA_CERT:-}" ]]; then
+    flags+=(--cacert "$(ca_cert_path)")
+  fi
+  [[ -n "${ES_USERNAME:-}" ]] && cfg="user = \"${ES_USERNAME//\"/\\\"}:${ES_PASSWORD//\"/\\\"}\""
+  printf '%s\n' "$cfg" | curl "${flags[@]}" -K - "$ES_HOST$path" 2>/dev/null
+}
+
+# "<indices> <documents>" matching an index pattern, or nothing if the cluster
+# could not be asked.
+index_stats() {
+  local out code
+  out="$(es_get "/_cat/indices/$1?h=docs.count&expand_wildcards=all")" || return 0
+  code="${out##*$'\n'}"
+  out="${out%$'\n'*}"
+  case "$code" in
+    200) awk 'NF { n++; d += $1 } END { printf "%d %d", n, d }' <<<"$out" ;;
+    404) printf '0 0' ;;
+  esac
+}
+
+# The index patterns are not asked for during install: the defaults are the data
+# streams Elastic Defend (an Elastic Agent integration) writes. Check each against
+# the cluster now, so a different name shows up here rather than as "no anomalies".
+declare -A SOURCE_STATE=() SOURCE_NOTE=()
+check_data_sources() {
+  step "Check the data the engine reads (Elasticsearch index patterns in .env)"
+  local key value stats n d
+  for key in "${INDEX_KEYS[@]}"; do
+    value="$(env_get "$ENV_FILE" "$key")"
+    value="${value:-${!key:-}}"
+    stats=""
+    (( DRY_RUN || LOCAL_ES || ! ES_CONNECTED )) || stats="$(index_stats "$value")"
+    if [[ -z "$stats" ]]; then
+      SOURCE_STATE[$key]="unchecked"; SOURCE_NOTE[$key]="not checked"
+      printf '  [%sSKIP%s] %-19s %s\n' "$C_DIM" "$C_OFF" "$key" "$value"
+      continue
+    fi
+    read -r n d <<<"$stats"
+    if (( n > 0 )); then
+      SOURCE_STATE[$key]="ok"; SOURCE_NOTE[$key]="$n index(es), $d documents"
+      ok "$(printf '%-19s %s  (%s)' "$key" "$value" "${SOURCE_NOTE[$key]}")"
+    else
+      SOURCE_STATE[$key]="missing"; SOURCE_NOTE[$key]="nothing on the cluster matches"
+      warn "$(printf '%-19s %s  (nothing on the cluster matches)' "$key" "$value")"
+    fi
+  done
+  if (( DRY_RUN )); then
+    info "Not checked in a dry run"
+  elif (( LOCAL_ES )); then
+    info "Not checked: the bundled Elasticsearch is not running yet"
+  elif (( ! ES_CONNECTED )); then
+    info "Not checked: could not connect to Elasticsearch at $ES_HOST"
+    for key in "${INDEX_KEYS[@]}"; do
+      SOURCE_NOTE[$key]="not checked: could not connect to Elasticsearch"
+    done
+  fi
+}
+
 # ── Maintenance add-on configuration ─────────────────────────────────────────
 configure_maintenance() {
-  step "SIEM Maintenance Agent configuration (addons/siem-maintenance/.env)"
+  step "Settings (saved in addons/siem-maintenance/.env)"
   if [[ -f "$ADDON_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
     ok "Using existing add-on .env (pass --reconfigure to change it)"
     sync_addon_env_copy
@@ -672,31 +1015,45 @@ configure_maintenance() {
   KIBANA_HOST="${KIBANA_HOST:-${ES_HOST/:9200/:5601}}"
   (( LOCAL_ES )) && KIBANA_HOST="http://kibana:5601"
 
-  echo "  Elasticsearch settings are reused from the detection pipeline."
-  prompt KIBANA_HOST "Kibana URL (KIBANA_HOST)" "$KIBANA_HOST"
-  prompt GC_ALERT_WEBHOOK "Google Chat incoming webhook URL (blank = no Chat alerts)" ""
-  prompt GC_ALERT_SPACE_NAME "Chat space name shown on alert cards" "SIEM-MAINTENANCE"
-  prompt MAINTENANCE_IANA_TIMEZONE "Timezone (IANA, e.g. Africa/Kigali)" "${sys_tz:-UTC}"
-  prompt DAILY_REPORT_TIME_CAT "Daily report time (HH:MM)" "08:30"
-  prompt ES_HEALTH_MONITOR_INTERVAL_SECONDS "Health check interval in seconds" "7200"
+  echo "  It uses the same Elasticsearch address and login as the detection engine (.env)."
+  prompt KIBANA_HOST "Kibana address" "$KIBANA_HOST" \
+    "Where Kibana is reached. The suggestion is your Elasticsearch server on Kibana's
+usual port, 5601."
+  prompt GC_ALERT_WEBHOOK "Google Chat webhook URL (optional)" "" \
+    "Alerts and the daily report are posted to Google Chat through this link. Create it
+in the Chat space: Apps & integrations > Webhooks. Leave it empty to skip Chat."
+  prompt GC_ALERT_SPACE_NAME "Name shown on alert messages" "SIEM-MAINTENANCE" \
+    "A label printed on each alert so people know where it came from. Any text works."
+  prompt MAINTENANCE_IANA_TIMEZONE "Your time zone" "${sys_tz:-UTC}" \
+    "Used to send the daily report at the right local time. The suggestion is this
+server's time zone. Write it as Region/City, e.g. Africa/Kigali or Africa/Accra."
+  prompt DAILY_REPORT_TIME_CAT "Time to send the daily report" "08:30" \
+    "24-hour clock, HH:MM, in the time zone above. For example 08:30, or 17:00 for 5 pm."
+  prompt ES_HEALTH_MONITOR_INTERVAL_SECONDS "How often to check cluster health, in seconds" "7200" \
+    "7200 seconds = every 2 hours. Use 3600 for every hour."
 
   # LLM narrative is optional; provider is chosen from the model-name prefix.
   LLM_PROVIDER="${LLM_PROVIDER:-none}"
-  prompt LLM_PROVIDER "LLM for report narrative: none, ollama, openai, anthropic" "$LLM_PROVIDER"
+  prompt LLM_PROVIDER "AI-written summary in the daily report" "$LLM_PROVIDER" \
+    "Type one of:
+  none       no AI summary (the report still has all the numbers)
+  ollama     a local model on this server or your network
+  openai     OpenAI's API (needs an API key)
+  anthropic  Anthropic's Claude API (needs an API key)"
   LLM_ENABLED="true"
   OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
   case "$LLM_PROVIDER" in
     ollama)
-      prompt OLLAMA_URL "Ollama URL" "$OLLAMA_URL"
-      prompt LLM_MODEL "Ollama model tag" "llama3.2" ;;
+      prompt OLLAMA_URL "Ollama address" "$OLLAMA_URL" "Where Ollama is running."
+      prompt LLM_MODEL "Ollama model" "llama3.2" "A model already pulled into Ollama (see: ollama list)." ;;
     openai)
-      prompt_secret OPENAI_API_KEY "OpenAI API key"
+      prompt_secret OPENAI_API_KEY "OpenAI API key" "From platform.openai.com > API keys."
       require_value OPENAI_API_KEY
       prompt LLM_MODEL "OpenAI model" "gpt-4o-mini" ;;
     anthropic)
-      prompt_secret ANTHROPIC_API_KEY "Anthropic API key"
+      prompt_secret ANTHROPIC_API_KEY "Anthropic API key" "From console.anthropic.com > API keys."
       require_value ANTHROPIC_API_KEY
-      prompt LLM_MODEL "Anthropic model" "claude-sonnet-4-6" ;;
+      prompt LLM_MODEL "Claude model" "claude-sonnet-4-6" ;;
     none)
       LLM_ENABLED="false"; LLM_MODEL="${LLM_MODEL:-llama3.2}" ;;
     *) die "Unknown LLM provider: $LLM_PROVIDER" ;;
@@ -708,8 +1065,24 @@ configure_maintenance() {
   # Auto-remediation changes the cluster (cache clears, snapshot/empty-index
   # cleanup), so new deployments start in dry-run until someone opts in.
   AUTO_REMEDIATION_DRY_RUN="${AUTO_REMEDIATION_DRY_RUN:-true}"
-  if confirm "Let auto-remediation make real changes to the cluster? (No = dry-run, log only)" N; then
-    AUTO_REMEDIATION_DRY_RUN="false"
+  if (( ! NON_INTERACTIVE )); then
+    local choice
+    ask_header "Should the agent fix problems on your cluster by itself?" \
+      "The agent can fix some common problems for you: clear full caches, restart
+stopped ML jobs, delete old snapshots and delete empty indices.
+
+  1) No, only report them  (recommended to start)
+     It logs each problem and the fix it would make, but changes nothing.
+  2) Yes, fix them automatically
+     It makes those changes on your cluster without asking first.
+
+You can switch later: AUTO_REMEDIATION_DRY_RUN in addons/siem-maintenance/.env
+(true = only report, false = fix)."
+    read -r -p "  Press Enter for ${C_VALUE}1 (only report)${C_OFF}, or type 2 to fix automatically: " choice
+    case "${choice:-1}" in
+      2) AUTO_REMEDIATION_DRY_RUN="false" ;;
+      *) AUTO_REMEDIATION_DRY_RUN="true" ;;
+    esac
   fi
 
   if (( DRY_RUN )); then
@@ -763,7 +1136,11 @@ configure_maintenance() {
     mv "$tmp" "$ADDON_ENV_FILE"
   fi
   sync_addon_env_copy
-  ok "Wrote add-on .env (auto-remediation dry-run: $AUTO_REMEDIATION_DRY_RUN)"
+  if [[ "$AUTO_REMEDIATION_DRY_RUN" == "true" ]]; then
+    ok "Wrote add-on .env (problems are only reported, not fixed)"
+  else
+    ok "Wrote add-on .env (problems are fixed automatically)"
+  fi
   [[ -z "${GC_ALERT_WEBHOOK:-}" ]] && warn "No Chat webhook set; the agent will run but cannot send alerts"
   info "Feedback loop / Chat app buttons: run addons/siem-maintenance/install.sh later (or --maintenance-wizard)"
 }
@@ -802,7 +1179,7 @@ build_triage_ca_bundle() {
 }
 
 configure_triage() {
-  step "Alert Triage Agent configuration (addons/alert-triage/.env)"
+  step "Settings (saved in addons/alert-triage/.env)"
   if ! is_loopback "$TRIAGE_LISTEN"; then
     warn "The triage agent will listen on $TRIAGE_LISTEN:$TRIAGE_PORT with NO authentication."
     warn "Anyone who can reach it can read open alerts and run investigations with its ES credentials."
@@ -839,38 +1216,58 @@ configure_triage() {
     return
   fi
 
-  echo "  The agent only runs searches. A read-only Elasticsearch user for the alert and"
-  echo "  event indices is recommended; press Enter to reuse the pipeline's account."
+  echo "  The triage agent only reads from Elasticsearch, so it can use its own read-only"
+  echo "  account (safer). Or press Enter at the next two questions to reuse the account"
+  echo "  you entered above."
   TRIAGE_ES_USERNAME="${TRIAGE_ES_USERNAME:-${ES_USERNAME:-}}"
   TRIAGE_ES_PASSWORD="${TRIAGE_ES_PASSWORD:-${ES_PASSWORD:-}}"
   prompt TRIAGE_ES_USERNAME "Elasticsearch username for the triage agent" "$TRIAGE_ES_USERNAME"
-  prompt_secret TRIAGE_ES_PASSWORD "Elasticsearch password for the triage agent"
+  prompt_secret TRIAGE_ES_PASSWORD "Elasticsearch password for the triage agent" "" \
+    "press Enter to reuse the password you entered above"
   require_value TRIAGE_ES_PASSWORD
-  prompt ELASTIC_INDEX "Security alerts index" ".alerts-security.alerts-default"
+  prompt ELASTIC_INDEX "Where Elastic Security stores its alerts" ".alerts-security.alerts-default" \
+    "The suggestion is correct for a standard Elastic Security install."
 
   AI_PROVIDER="${AI_PROVIDER:-none}"
-  prompt AI_PROVIDER "AI verdicts: none, ollama, claude, openai_compat" "$AI_PROVIDER"
+  prompt AI_PROVIDER "Which AI model should judge each alert: real attack or false alarm?" "$AI_PROVIDER" \
+    "After collecting the evidence for an alert, the agent can ask an AI model to decide
+whether it is a real attack (true positive) or harmless (false positive), and to
+explain why. Type one of:
+  none           no AI; the agent still collects all the evidence, you decide
+  ollama         a local model on this server or your network
+  claude         Anthropic's Claude API (needs an API key)
+  openai_compat  any OpenAI-compatible API (OpenAI, LM Studio, vLLM, ...)"
   OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
   case "$AI_PROVIDER" in
     ollama)
-      prompt OLLAMA_URL "Ollama URL" "$OLLAMA_URL"
-      prompt OLLAMA_MODEL "Ollama model tag" "llama3.2" ;;
+      prompt OLLAMA_URL "Ollama address" "$OLLAMA_URL" "Where Ollama is running."
+      prompt OLLAMA_MODEL "Ollama model" "llama3.2" "A model already pulled into Ollama (see: ollama list)." ;;
     claude)
-      prompt_secret ANTHROPIC_API_KEY "Anthropic API key"
+      prompt_secret ANTHROPIC_API_KEY "Anthropic API key" "From console.anthropic.com > API keys."
       require_value ANTHROPIC_API_KEY
       prompt CLAUDE_MODEL "Claude model" "claude-haiku-4-5-20251001" ;;
     openai_compat)
-      prompt OPENAI_COMPAT_URL "OpenAI-compatible base URL" "http://localhost:1234/v1"
-      prompt_secret OPENAI_COMPAT_KEY "API key (blank if none)"
-      prompt OPENAI_COMPAT_MODEL "Model" "mistral" ;;
+      prompt OPENAI_COMPAT_URL "API address" "http://localhost:1234/v1" "The base URL of the OpenAI-compatible API."
+      prompt_secret OPENAI_COMPAT_KEY "API key (optional)" "" "press Enter if it needs none"
+      prompt OPENAI_COMPAT_MODEL "Model name" "mistral" ;;
     none) ;;
     *) die "Unknown AI provider: $AI_PROVIDER" ;;
   esac
   if [[ "$MODE" == "docker" && "$AI_PROVIDER" == "ollama" && "$OLLAMA_URL" == *localhost* ]]; then
     warn "Inside Docker, localhost is the container. Use http://host.docker.internal:11434 or the host IP."
   fi
-  prompt_secret ABUSEIPDB_API_KEY "AbuseIPDB API key (blank to skip)"
-  prompt_secret VIRUSTOTAL_API_KEY "VirusTotal API key (blank to skip)"
+  prompt_secret ABUSEIPDB_API_KEY "Check IP addresses against AbuseIPDB? (optional: needs a free API key)" \
+    "AbuseIPDB is a public list of IP addresses that people have reported for attacks.
+With a key, the agent looks up each IP address in an alert and shows whether it is
+known to be malicious. Get a free key: sign up at https://www.abuseipdb.com, then
+open Account > API and create a key. Paste it here." \
+    "press Enter to skip"
+  prompt_secret VIRUSTOTAL_API_KEY "Check files, domains and IPs against VirusTotal? (optional: needs a free API key)" \
+    "VirusTotal checks a file (by its hash), a domain or an IP address against dozens of
+antivirus and security vendors. With a key, the agent shows how many of them flag
+it. Get a free key: sign up at https://www.virustotal.com, then open your profile
+menu > API key. Paste it here." \
+    "press Enter to skip"
 
   if (( DRY_RUN )); then
     printf '  [DRY ] write %s\n' "${TRIAGE_ENV_FILE#"$REPO_ROOT"/}"
@@ -939,7 +1336,7 @@ greenbone_es_host() {
 }
 
 configure_greenbone() {
-  step "Greenbone add-on configuration (addons/greenbone/.env)"
+  step "Settings (saved in addons/greenbone/.env)"
   local ca
   ca="$(greenbone_ca_value)"
   if [[ -f "$GREENBONE_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
@@ -955,14 +1352,28 @@ configure_greenbone() {
     return
   fi
 
-  echo "  Elasticsearch settings are reused from the detection pipeline. Scan results go"
-  echo "  to the gvm-vulnerabilities index, so that account needs write access to it."
-  prompt GVM_SOCKET "Path to Greenbone's gvmd socket" "${GVM_SOCKET:-$GVM_DEFAULT_SOCKET}"
-  if (( ! DRY_RUN )) && [[ ! -S "$GVM_SOCKET" ]] && ! sudo test -S "$GVM_SOCKET" 2>/dev/null; then
-    warn "No socket at $GVM_SOCKET. Find it with: sudo find / -name gvmd.sock 2>/dev/null"
-  fi
-  prompt GVM_USERNAME "Greenbone username" "admin"
-  prompt_secret GVM_PASSWORD "Greenbone password"
+  echo "  It uses the same Elasticsearch address and login as the detection engine, and writes"
+  echo "  scan results to the gvm-vulnerabilities index."
+  local socket_help="The suggestion is the standard location for Greenbone's Docker install. Not sure?
+Run: sudo find / -name gvmd.sock 2>/dev/null"
+  [[ -n "${GVM_FOUND_SOCKET:-}" ]] && socket_help="The suggestion is where this script found it on this server."
+  prompt GVM_SOCKET "Where Greenbone's gvmd socket is" "${GVM_SOCKET:-${GVM_FOUND_SOCKET:-$GVM_DEFAULT_SOCKET}}" \
+    "$socket_help"
+  # The push cannot work without the socket, so do not accept a path without one.
+  while (( ! DRY_RUN )) && ! gvm_socket_at "$GVM_SOCKET"; do
+    (( NON_INTERACTIVE )) && die "There is no Greenbone socket at $GVM_SOCKET; set GVM_SOCKET to its path"
+    printf '  %sThere is no Greenbone socket at %s. Type the right path%s\n' "$C_WARN" "$GVM_SOCKET" "$C_OFF"
+    printf '  %s(find it with: sudo find / -name gvmd.sock 2>/dev/null), or press Ctrl+C to stop.%s\n' "$C_WARN" "$C_OFF"
+    GVM_SOCKET=""
+    prompt GVM_SOCKET "Where Greenbone's gvmd socket is" "${GVM_FOUND_SOCKET:-}"
+  done
+  prompt GVM_USERNAME "Greenbone username" "" "The account you use to log in to Greenbone's web interface."
+  while [[ -z "$GVM_USERNAME" ]] && (( ! NON_INTERACTIVE )); do
+    printf '  %sA username is needed: type the one you log in to Greenbone with.%s\n' "$C_WARN" "$C_OFF"
+    prompt GVM_USERNAME "Greenbone username" ""
+  done
+  require_value GVM_USERNAME
+  prompt_secret GVM_PASSWORD "Greenbone password" "The password for that account."
   require_value GVM_PASSWORD
 
   if (( DRY_RUN )); then
@@ -1007,7 +1418,7 @@ make_venv() {
 }
 
 install_detection_venv() {
-  step "Installing detection pipeline (venv)"
+  step "Install the Python packages (.venv)"
   make_venv "$VENV_DIR"
   local spec="."
   [[ -n "$EXTRAS" ]] && spec=".[${EXTRAS}]"
@@ -1018,11 +1429,15 @@ install_detection_venv() {
 }
 
 install_maintenance_venv() {
-  step "Installing SIEM Maintenance Agent (venv)"
+  step "Install the Python packages (addons/siem-maintenance/.venv)"
   make_venv "$ADDON_VENV_DIR"
   run "$ADDON_VENV_DIR/bin/python" -m pip install --quiet -r "$ADDON_DIR/requirements.txt"
   run mkdir -p "$ADDON_AGENT_DIR/results" "$ADDON_DIR/logs"
   ok "Installed add-on dependencies"
+}
+
+check_maintenance_setup() {
+  step "Check the settings work (verify_setup.py)"
   if (( DRY_RUN )); then
     run "$ADDON_VENV_DIR/bin/python" "$ADDON_DIR/verify_setup.py"
     return
@@ -1030,7 +1445,8 @@ install_maintenance_venv() {
   # verify_setup.py logs full tracebacks on connection errors; show only its check lines.
   local out rc=0
   out="$(cd "$ADDON_DIR" && "$ADDON_VENV_DIR/bin/python" verify_setup.py 2>&1)" || rc=$?
-  grep -E '^\s*\[(OK|FAIL|WARN|SKIP) *\]' <<<"$out" | sed 's/^ */    /' || true
+  grep -E '^\s*\[(OK|FAIL|WARN|SKIP) *\]' <<<"$out" | sed -e 's/^ */    /' \
+    -e 's/\[FAIL\] GC_ALERT_WEBHOOK - empty - Chat cards will not send/[SKIP] GC_ALERT_WEBHOOK - not set, so no Chat messages/' || true
   if (( rc == 0 )); then
     ok "Add-on verify_setup.py passed"
   else
@@ -1039,12 +1455,19 @@ install_maintenance_venv() {
 }
 
 install_triage_venv() {
-  step "Installing Alert Triage Agent (venv)"
+  step "Install the Python packages (addons/alert-triage/.venv)"
   make_venv "$TRIAGE_VENV_DIR"
   run "$TRIAGE_VENV_DIR/bin/python" -m pip install --quiet -r "$TRIAGE_DIR/requirements.txt" \
     -c "$TRIAGE_CONSTRAINTS"
   ok "Installed triage dependencies"
-  (( DRY_RUN )) && return
+}
+
+check_triage_loads() {
+  step "Check the agent loads with these settings"
+  if (( DRY_RUN )); then
+    info "Skipped in a dry run"
+    return
+  fi
   # Importing server builds the app, MCP tools, and AI provider from .env without serving.
   local out
   if out="$(cd "$TRIAGE_DIR" && "$TRIAGE_VENV_DIR/bin/python" -c 'import server' 2>&1)"; then
@@ -1060,15 +1483,30 @@ greenbone_push_cmd() {
 }
 
 install_greenbone_venv() {
-  step "Installing Greenbone add-on (venv)"
+  step "Install the Python packages (addons/greenbone/.venv)"
   make_venv "$GREENBONE_VENV_DIR"
   run "$GREENBONE_VENV_DIR/bin/python" -m pip install --quiet -r "$GREENBONE_DIR/requirements.txt"
   run mkdir -p "$GREENBONE_DIR/state" "$REPO_ROOT/logs"
   ok "Installed Greenbone add-on dependencies"
-  (( DRY_RUN )) && return
+}
+
+check_greenbone_connection() {
+  step "Test the connection to Greenbone (a dry run; sends nothing)"
+  if (( DRY_RUN )); then
+    info "Skipped in a dry run"
+    return
+  fi
   # A dry run logs in to Greenbone and reads every task's latest report, sending nothing.
-  info "Checking the Greenbone connection with a dry run (needs sudo; sends nothing)"
-  local out
+  info "This needs sudo: Greenbone's socket belongs to root"
+  local out socket
+  socket="$(env_get "$GREENBONE_ENV_FILE" GVM_SOCKET)"
+  if [[ ! -S "$socket" ]] && ! sudo test -S "$socket" 2>/dev/null; then
+    warn "Greenbone is not reachable: there is no gvmd socket at $socket"
+    info "Is Greenbone installed and running on this server? This add-on does not install it."
+    info "If it runs here, find the socket (sudo find / -name gvmd.sock 2>/dev/null), set"
+    info "GVM_SOCKET in addons/greenbone/.env, and run ./deploy.sh again."
+    return
+  fi
   if out="$(sudo "$GREENBONE_VENV_DIR/bin/python" "$GREENBONE_DIR/gvm_siem_push.py" \
       --env-file "$GREENBONE_ENV_FILE" --dry-run 2>&1)"; then
     ok "Greenbone dry run passed"
@@ -1078,9 +1516,48 @@ install_greenbone_venv() {
   fi
 }
 
+# deploy.sh is meant to run as your normal user (it calls sudo itself). Run with
+# sudo, everything it creates belongs to root, including the .env files it locks
+# to their owner, and services running as SERVICE_USER cannot read them.
+fix_ownership() {
+  (( DRY_RUN )) && return 0
+  [[ "$(id -u)" -eq 0 && "$SERVICE_USER" != "root" ]] || return 0
+  local group path
+  group="$(id -gn "$SERVICE_USER")"
+  for path in "$@"; do
+    [[ -e "$path" ]] && chown -R "$SERVICE_USER:$group" "$path"
+  done
+  ok "Gave the installed files to $SERVICE_USER, the user the service runs as"
+}
+
 # ── systemd ──────────────────────────────────────────────────────────────────
 have_systemd() {
   [[ "$(uname -s)" == "Linux" ]] && command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]
+}
+
+# "systemctl start" returns before the program has read its settings, so wait a
+# moment and check the service is still running; show its last log lines if not.
+verify_unit_running() {
+  local unit="$1"
+  (( DRY_RUN )) && return 0
+  sleep 3
+  if sudo systemctl is-active --quiet "$unit"; then
+    ok "$unit is running (logs: journalctl -u $unit -f)"
+    return 0
+  fi
+  fail "$unit did not stay running. Its last log lines:"
+  sudo journalctl -u "$unit" -n 8 --no-pager 2>/dev/null | sed 's/^/         /' || true
+  return 1
+}
+
+# Record how a systemd unit ended up, for the summary.
+unit_status() {
+  local key="$1" unit="$2"
+  if verify_unit_running "$unit"; then
+    set_status "$key" ok "running as a system service ($unit, starts at boot)"
+  else
+    set_status "$key" fail "installed, but $unit did not stay running (journalctl -u $unit)"
+  fi
 }
 
 # Returns 0 when it is fine to (re)write the unit: absent, already ours, or --replace-units.
@@ -1091,16 +1568,17 @@ unit_owned_or_absent() {
   [[ "$current" == *"$marker"* ]] && return 0
   warn "$unit already exists and points somewhere else:"
   sed 's/^/         /' <<<"$current"
-  if (( REPLACE_UNITS )) || confirm "Replace it with this checkout's version?" N; then
+  if (( REPLACE_UNITS )) || confirm "Replace it with this copy's version?" N \
+      "Only say yes if the service listed above is an old install you no longer use."; then
     return 0
   fi
   return 1
 }
 
 install_detection_unit() {
-  step "systemd: $DETECTION_UNIT"
   if ! unit_owned_or_absent "$DETECTION_UNIT" "$REPO_ROOT/"; then
     warn "Left $DETECTION_UNIT unchanged"
+    set_status detection warn "installed; the existing $DETECTION_UNIT was left unchanged"
     return
   fi
   local unit
@@ -1136,19 +1614,19 @@ EOF
   run sudo systemctl daemon-reload
   run sudo systemctl enable "$DETECTION_UNIT"
   run sudo systemctl restart "$DETECTION_UNIT"
-  ok "$DETECTION_UNIT enabled and started (logs: journalctl -u $DETECTION_UNIT -f)"
+  unit_status detection "$DETECTION_UNIT"
 }
 
 install_maintenance_unit() {
-  step "systemd: $MAINTENANCE_UNIT"
   if ! unit_owned_or_absent "$MAINTENANCE_UNIT" "$ADDON_AGENT_DIR"; then
     warn "Left $MAINTENANCE_UNIT unchanged"
+    set_status maintenance warn "installed; the existing $MAINTENANCE_UNIT was left unchanged"
     return
   fi
   # The add-on ships its own unit installer; it runs the service as SUDO_USER.
   run sudo env SUDO_USER="$SERVICE_USER" bash "$ADDON_DIR/deploy/install-systemd-service.sh" \
     "$ADDON_DIR" "$ADDON_VENV_DIR/bin/python"
-  ok "$MAINTENANCE_UNIT enabled and started (logs: journalctl -u $MAINTENANCE_UNIT -f)"
+  unit_status maintenance "$MAINTENANCE_UNIT"
 }
 
 # Host to probe /health on: the bind address, or loopback when bound to all interfaces.
@@ -1161,23 +1639,24 @@ triage_probe_host() {
 }
 
 wait_for_triage() {
-  (( DRY_RUN )) && return
+  (( DRY_RUN )) && return 0
   local url i
   url="http://$(triage_probe_host):$TRIAGE_PORT/health"
   for i in $(seq 1 15); do
     if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
       ok "Triage agent answering at $url"
-      return
+      return 0
     fi
     sleep 1
   done
   warn "No answer from $url yet; check the service logs"
+  set_status triage warn "started, but not answering at $url yet"
 }
 
 install_triage_unit() {
-  step "systemd: $TRIAGE_UNIT"
   if ! unit_owned_or_absent "$TRIAGE_UNIT" "$TRIAGE_DIR"; then
     warn "Left $TRIAGE_UNIT unchanged"
+    set_status triage warn "installed; the existing $TRIAGE_UNIT was left unchanged"
     return
   fi
   local unit
@@ -1215,15 +1694,16 @@ EOF
   run sudo systemctl daemon-reload
   run sudo systemctl enable "$TRIAGE_UNIT"
   run sudo systemctl restart "$TRIAGE_UNIT"
-  ok "$TRIAGE_UNIT enabled and started (logs: journalctl -u $TRIAGE_UNIT -f)"
-  wait_for_triage
+  unit_status triage "$TRIAGE_UNIT"
+  [[ "${STATUS[triage]}" == "ok" ]] && wait_for_triage
+  return 0
 }
 
-# A oneshot service plus a timer: the push runs once a day, not as a daemon.
+# A oneshot service plus a timer: the push runs once a week, not as a daemon.
 install_greenbone_timer() {
-  step "systemd: $GREENBONE_TIMER"
   if ! unit_owned_or_absent "$GREENBONE_SERVICE" "$GREENBONE_DIR"; then
     warn "Left $GREENBONE_SERVICE unchanged"
+    set_status greenbone warn "installed; the existing $GREENBONE_SERVICE was left unchanged"
     return
   fi
   local service timer
@@ -1246,7 +1726,7 @@ EOF
 )"
   timer="$(cat <<EOF
 [Unit]
-Description=Daily Greenbone results push (SOC-in-a-Box add-on)
+Description=Weekly Greenbone results push (SOC-in-a-Box add-on)
 
 [Timer]
 OnCalendar=$GREENBONE_SCHEDULE
@@ -1269,128 +1749,600 @@ EOF
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "$GREENBONE_TIMER"
   ok "$GREENBONE_TIMER enabled ($GREENBONE_SCHEDULE; logs: journalctl -u $GREENBONE_SERVICE)"
+  set_status greenbone ok "push runs every $GREENBONE_DAY at $GREENBONE_TIME ($GREENBONE_TIMER)"
+}
+
+# ── Without systemd ──────────────────────────────────────────────────────────
+# Some machines have no systemd, e.g. most containers. There the services run as
+# detached background processes, logging to logs/NAME.log with their PID in
+# logs/NAME.pid; the Greenbone push runs from addons/greenbone/push_weekly.sh the
+# same way. They do not come back after a restart; running deploy.sh again
+# starts them.
+NO_SYSTEMD_NOTED=0
+note_no_systemd() {
+  if (( NO_SYSTEMD_NOTED )); then
+    info "No systemd here, so this runs as a background process"
+    return
+  fi
+  NO_SYSTEMD_NOTED=1
+  info "systemd is not available on this machine (normal inside a container), so the"
+  info "services run as background processes instead. They stop if the machine or"
+  info "container restarts; run ./deploy.sh again to start them."
+}
+
+# Running and not a zombie. Works for root-owned processes too, unlike kill -0.
+proc_alive() {
+  local state
+  state="$(ps -o stat= -p "$1" 2>/dev/null || true)"
+  [[ -n "$state" && "$state" != Z* ]]
+}
+
+# Send a signal to a PID or process group (-PID), with sudo when it runs as root.
+signal_proc() {
+  local sig="$1" target="$2" owner
+  owner="$(ps -o uid= -p "${target#-}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "$owner" && "$owner" != "$(id -u)" && "$(id -u)" -ne 0 ]]; then
+    sudo -n kill "-$sig" -- "$target" 2>/dev/null || true
+  else
+    kill "-$sig" -- "$target" 2>/dev/null || true
+  fi
+}
+
+# Stop the copy an earlier run started, if that PID is still running our script.
+# setsid made it a process group leader, so the whole group is stopped: the
+# detection engine starts trainer and detection child processes that would
+# otherwise keep running (and the trainer ignores SIGTERM).
+stop_background() {
+  local name="$1" match="$2" pidfile="$REPO_ROOT/logs/$1.pid" pid cmd target i
+  [[ -f "$pidfile" ]] || return 0
+  pid="$(cat "$pidfile")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && proc_alive "$pid"; then
+    cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    if [[ "$cmd" == *"$match"* ]]; then
+      target="$pid"
+      [[ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)" == "$pid" ]] && target="-$pid"
+      signal_proc TERM "$target"
+      for i in $(seq 1 10); do
+        proc_alive "$pid" || break
+        sleep 1
+      done
+      signal_proc KILL "$target"
+      info "Stopped the copy an earlier run started (PID $pid)"
+    fi
+  fi
+  rm -f "$pidfile"
+}
+
+# start_background NAME DIR COMMAND... — the last argument identifies the
+# process, so a later run can recognise it and restart it. With RUN_AS_ROOT=1
+# it runs as root (via sudo); otherwise as SERVICE_USER.
+start_background() {
+  local name="$1" dir="$2"
+  shift 2
+  local log="$REPO_ROOT/logs/$name.log" pidfile="$REPO_ROOT/logs/$name.pid" pid
+  local detach=(nohup) as_user=()
+  if (( DRY_RUN )); then
+    printf '  [DRY ] start in the background: %s (log: %s)\n' "$*" "${log#"$REPO_ROOT"/}"
+    return 0
+  fi
+  mkdir -p "$REPO_ROOT/logs"
+  stop_background "$name" "${*: -1}"
+  command -v setsid >/dev/null && detach=(setsid nohup)
+  if (( ${RUN_AS_ROOT:-0} )); then
+    [[ "$(id -u)" -eq 0 ]] || as_user=(sudo)
+  elif [[ "$(id -u)" -eq 0 && "$SERVICE_USER" != "root" ]]; then
+    as_user=(sudo -u "$SERVICE_USER")
+  fi
+  (cd "$dir" && exec "${detach[@]}" "${as_user[@]}" "$@" >>"$log" 2>&1 </dev/null) &
+  pid=$!
+  printf '%s\n' "$pid" >"$pidfile"
+  sleep 3
+  if proc_alive "$pid"; then
+    ok "Started in the background (PID $pid, log: ${log#"$REPO_ROOT"/})"
+    return 0
+  fi
+  fail "$name stopped right after starting. Its last log lines:"
+  tail -n 8 "$log" 2>/dev/null | sed 's/^/         /' || true
+  rm -f "$pidfile"
+  return 1
+}
+
+# Record how a background process ended up, for the summary.
+background_status() {
+  local key="$1" name="$2"
+  shift 2
+  if start_background "$name" "$@"; then
+    set_status "$key" ok "running in the background (log: logs/$name.log)"
+  else
+    set_status "$key" fail "stopped right after starting (see logs/$name.log)"
+  fi
+}
+
+# Without systemd there is usually no cron either (containers), so a small
+# scheduler loop runs the push weekly, as root because gvmd's socket is root-owned.
+start_greenbone_scheduler() {
+  info "systemd is not available here, so a small scheduler (addons/greenbone/push_weekly.sh)"
+  info "runs in the background and starts the push every $GREENBONE_DAY at $GREENBONE_TIME."
+  if RUN_AS_ROOT=1 start_background greenbone-scheduler "$GREENBONE_DIR" \
+      bash "$GREENBONE_DIR/push_weekly.sh" "$GREENBONE_DAY" "$GREENBONE_TIME" $(greenbone_push_cmd); then
+    set_status greenbone ok "push runs every $GREENBONE_DAY at $GREENBONE_TIME (background scheduler; log: logs/greenbone-scheduler.log)"
+  else
+    set_status greenbone fail "the weekly scheduler stopped right after starting (see logs/greenbone-scheduler.log)"
+  fi
+}
+
+# ── Starting each component ──────────────────────────────────────────────────
+start_detection() {
+  step "Start the detection engine (it keeps running in the background)"
+  if have_systemd; then
+    install_detection_unit
+  else
+    note_no_systemd
+    background_status detection realtime_service "$REPO_ROOT" \
+      env PYTHONUNBUFFERED=1 "$VENV_DIR/bin/python" -u "$REPO_ROOT/engine/realtime_service.py"
+  fi
+}
+
+start_maintenance() {
+  step "Start the agent (it keeps running in the background)"
+  if have_systemd; then
+    install_maintenance_unit
+  else
+    note_no_systemd
+    background_status maintenance siem-maintenance "$ADDON_AGENT_DIR" \
+      "$ADDON_VENV_DIR/bin/python" "$ADDON_AGENT_DIR/maintenance_service.py"
+  fi
+}
+
+start_triage() {
+  step "Start the agent (it keeps running in the background)"
+  if have_systemd; then
+    install_triage_unit
+  else
+    note_no_systemd
+    background_status triage alert-triage "$TRIAGE_DIR" \
+      "$TRIAGE_VENV_DIR/bin/python" "$TRIAGE_DIR/server.py"
+    [[ "${STATUS[triage]}" == "ok" ]] && wait_for_triage
+  fi
+  return 0
+}
+
+schedule_greenbone() {
+  step "Schedule the weekly push"
+  if have_systemd; then
+    install_greenbone_timer
+  else
+    start_greenbone_scheduler
+  fi
 }
 
 # ── Docker ───────────────────────────────────────────────────────────────────
-deploy_docker() {
-  step "Docker Compose"
-  local args=(--env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-  local services=()
-  if (( LOCAL_ES )); then
-    info "Starting bundled Elasticsearch + Kibana"
-  else
-    args+=(-f "$COMPOSE_EXTERNAL_ES")
-    services=(detection)
-  fi
-  if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
-    args+=(--profile maintenance)
-    (( LOCAL_ES )) || services+=(siem-maintenance)
-  fi
-  if [[ "$WITH_TRIAGE" == "yes" ]]; then
-    args+=(--profile triage)
-    (( LOCAL_ES )) || services+=(alert-triage)
-    run mkdir -p "$TRIAGE_CERT_DIR"
-  fi
+COMPOSE_ARGS=()
+compose_setup() {
+  COMPOSE_ARGS=(--env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+  (( LOCAL_ES )) || COMPOSE_ARGS+=(-f "$COMPOSE_EXTERNAL_ES")
+  [[ "$WITH_MAINTENANCE" == "yes" ]] && COMPOSE_ARGS+=(--profile maintenance)
+  [[ "$WITH_TRIAGE" == "yes" ]] && COMPOSE_ARGS+=(--profile triage)
+  return 0
+}
+
+# start_container KEY SERVICE — build and start one service, then check it stayed up.
+start_container() {
+  local key="$1" service="$2" up=(up -d --build) services=("$2") running=""
   # The triage port mapping is interpolated from these; compose defaults to 127.0.0.1:8000.
   local compose_env=(env TRIAGE_BIND="$TRIAGE_LISTEN" TRIAGE_PORT="$TRIAGE_PORT")
-  if (( LOCAL_ES )); then
-    run "${compose_env[@]}" docker compose "${args[@]}" up -d --build
+  if (( ! LOCAL_ES )); then
+    up+=(--no-deps)
+  elif [[ "$service" == "detection" ]]; then
+    info "Starting the bundled Elasticsearch + Kibana too"
+    services=(elasticsearch kibana detection)
+  fi
+  [[ "$service" == "alert-triage" ]] && run mkdir -p "$TRIAGE_CERT_DIR"
+  run "${compose_env[@]}" docker compose "${COMPOSE_ARGS[@]}" "${up[@]}" "${services[@]}"
+  if (( DRY_RUN )); then
+    set_status "$key" ok "running in Docker (container: $service)"
+    return
+  fi
+  sleep 3
+  running="$("${compose_env[@]}" docker compose "${COMPOSE_ARGS[@]}" ps --status running --services 2>/dev/null || true)"
+  if grep -qx "$service" <<<"$running"; then
+    ok "Container $service is running"
+    set_status "$key" ok "running in Docker (container: $service)"
   else
-    run "${compose_env[@]}" docker compose "${args[@]}" up -d --build --no-deps "${services[@]}"
+    fail "Container $service is not running. See: docker compose ${COMPOSE_ARGS[*]} logs $service"
+    set_status "$key" fail "container $service is not running (docker compose ... logs $service)"
   fi
-  ok "Containers started"
-  if [[ "$WITH_TRIAGE" == "yes" ]]; then
-    wait_for_triage
+}
+
+# ── Parts ────────────────────────────────────────────────────────────────────
+# Each part runs one component from settings to running. Their step counts must
+# match the step calls inside them.
+part_detection() {
+  local steps=4
+  [[ "$MODE" == "venv" ]] && (( INSTALL_SYSTEMD )) && steps=5
+  begin_part "Detection engine (the core)" "$steps"
+  echo "  Always installed: it turns your endpoint data into ATT&CK-mapped alerts in"
+  echo "  Kibana, and the add-ons build on it."
+  configure_detection
+  test_connection
+  check_data_sources
+  if [[ "$MODE" == "docker" ]]; then
+    step "Build and start the container"
+    start_container detection detection
+  else
+    install_detection_venv
+    fix_ownership "$ENV_FILE" "$VENV_DIR" "$REPO_ROOT/results" "$REPO_ROOT/logs" "$REPO_ROOT/config/certs"
+    if (( INSTALL_SYSTEMD )); then
+      start_detection
+    else
+      set_status detection warn "installed, not started (--no-systemd)"
+    fi
   fi
-  info "Status: docker compose ${args[*]} ps"
-  info "Logs:   docker compose ${args[*]} logs -f"
+  # Running is not the same as working: say so when it cannot reach its data.
+  if (( ! DRY_RUN && ! LOCAL_ES && ! ES_CONNECTED )) && [[ "${STATUS[detection]:-}" == "ok" ]]; then
+    set_status detection warn "${STATUS_NOTE[detection]}, but it cannot reach Elasticsearch at $ES_HOST: fix .env, then restart it"
+  fi
+  end_part
+}
+
+part_maintenance() {
+  if (( MAINTENANCE_WIZARD )); then
+    begin_part "SIEM Maintenance Agent (add-on)" 1
+    step "Run the add-on's own full installer (addons/siem-maintenance/install.sh)"
+    (cd "$ADDON_DIR" && run bash ./install.sh)
+    set_status maintenance ok "set up by the add-on's own installer"
+    end_part
+    return
+  fi
+  if [[ "$MODE" == "docker" ]]; then
+    begin_part "SIEM Maintenance Agent (add-on)" 2
+    configure_maintenance
+    step "Build and start the container"
+    start_container maintenance siem-maintenance
+    end_part
+    return
+  fi
+  local steps=3
+  (( INSTALL_SYSTEMD )) && steps=4
+  begin_part "SIEM Maintenance Agent (add-on)" "$steps"
+  configure_maintenance
+  install_maintenance_venv
+  check_maintenance_setup
+  fix_ownership "$ADDON_ENV_FILE" "$ADDON_VENV_DIR" "$ADDON_AGENT_DIR/.env" \
+    "$ADDON_AGENT_DIR/results" "$ADDON_DIR/logs"
+  if (( INSTALL_SYSTEMD )); then
+    start_maintenance
+  else
+    set_status maintenance warn "installed, not started (--no-systemd)"
+  fi
+  end_part
+}
+
+part_triage() {
+  if [[ "$MODE" == "docker" ]]; then
+    begin_part "Alert Triage Agent (add-on)" 2
+    configure_triage
+    step "Build and start the container"
+    start_container triage alert-triage
+    [[ "${STATUS[triage]}" == "ok" ]] && wait_for_triage
+    end_part
+    return
+  fi
+  local steps=3
+  (( INSTALL_SYSTEMD )) && steps=4
+  begin_part "Alert Triage Agent (add-on)" "$steps"
+  configure_triage
+  install_triage_venv
+  check_triage_loads
+  fix_ownership "$TRIAGE_ENV_FILE" "$TRIAGE_VENV_DIR" "$TRIAGE_CERT_DIR"
+  if (( INSTALL_SYSTEMD )); then
+    start_triage
+  else
+    set_status triage warn "installed, not started (--no-systemd)"
+  fi
+  end_part
+}
+
+# The push reads gvmd's socket on this host, so it always runs from a host venv,
+# even when everything else runs in Docker.
+part_greenbone() {
+  local steps=3
+  (( INSTALL_SYSTEMD )) && steps=4
+  begin_part "Greenbone vulnerability results (add-on)" "$steps"
+  configure_greenbone
+  install_greenbone_venv
+  check_greenbone_connection
+  if (( INSTALL_SYSTEMD )); then
+    schedule_greenbone
+  else
+    set_status greenbone warn "installed; the weekly push is not scheduled (--no-systemd)"
+  fi
+  end_part
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────────
-# The index patterns are not asked for during install; list them here so the
-# user can check them against the cluster and edit .env if they differ.
+# The command that repeats this install without asking the add-on questions again.
+rerun_cmd() {
+  local cmd="./deploy.sh" arg
+  for arg in "${DEPLOY_ARGS[@]}"; do
+    case "$arg" in
+      --reconfigure|--dry-run|--with-*|--no-maintenance|--no-triage|--no-greenbone) ;;
+      *) cmd+=" $(printf '%q' "$arg")" ;;
+    esac
+  done
+  if [[ -n "$ONLY" ]]; then
+    printf '%s' "$cmd"
+    return
+  fi
+  (( MAINTENANCE_WIZARD )) || cmd+=" --$([[ "$WITH_MAINTENANCE" == "yes" ]] && echo with || echo no)-maintenance"
+  cmd+=" --$([[ "$WITH_TRIAGE" == "yes" ]] && echo with || echo no)-triage"
+  cmd+=" --$([[ "$WITH_GREENBONE" == "yes" ]] && echo with || echo no)-greenbone"
+  printf '%s' "$cmd"
+}
+
+# How to restart the detection engine after editing .env.
+detection_restart_cmd() {
+  if [[ "$MODE" == "venv" ]] && (( INSTALL_SYSTEMD )) && have_systemd; then
+    printf 'sudo systemctl restart %s' "$DETECTION_UNIT"
+  elif [[ "$MODE" == "venv" ]] && (( ! INSTALL_SYSTEMD )); then
+    printf 'stop .venv/bin/python engine/realtime_service.py (Ctrl+C) and start it again'
+  else
+    # Docker recreates the container with the new .env; background mode restarts the process.
+    printf '%s' "$(rerun_cmd)"
+  fi
+}
+
+heading() { printf '\n  %s%s%s\n' "$C_BOLD" "$1" "$C_OFF"; }
+detail()  { printf '      %s%-18s%s %s\n' "$C_DIM" "$1" "$C_OFF" "$2"; }
+
+# mark_line STATE LABEL WIDTH TEXT — a coloured ✔ / ! / ✘ / – line.
+mark_line() {
+  local mark color
+  case "$1" in
+    ok)          mark="$S_OK";   color="$C_OK" ;;
+    warn|missing) mark="$S_WARN"; color="$C_WARN" ;;
+    fail)        mark="$S_FAIL"; color="$C_FAIL" ;;
+    *)           mark="$S_SKIP"; color="$C_DIM" ;;
+  esac
+  printf "  %s%s %-${3}s%s %s\n" "$color" "$mark" "$2" "$C_OFF" "$4"
+}
+
+component_line() {
+  # With --only, components this run did not touch have no status and no line.
+  [[ -n "${STATUS[$1]:-}" ]] || return 0
+  mark_line "${STATUS[$1]:-skip}" "$2" 24 "${STATUS_NOTE[$1]:-}"
+}
+
+summary_components() {
+  heading "What was installed"
+  component_line detection "Detection engine"
+  component_line maintenance "SIEM Maintenance Agent"
+  if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
+    if [[ "${AUTO_REMEDIATION_DRY_RUN:-$(env_get "$ADDON_ENV_FILE" AUTO_REMEDIATION_DRY_RUN)}" == "false" ]]; then
+      detail "Problems found" "fixed automatically"
+    else
+      detail "Problems found" "only reported (AUTO_REMEDIATION_DRY_RUN=true)"
+    fi
+  fi
+  component_line triage "Alert Triage Agent"
+  if [[ "$WITH_TRIAGE" == "yes" ]]; then
+    detail "Web page / API" "http://$(triage_probe_host):$TRIAGE_PORT/"
+    detail "MCP endpoint" "http://$(triage_probe_host):$TRIAGE_PORT/mcp/mcp"
+    if is_loopback "$TRIAGE_LISTEN"; then
+      detail "From another PC" "ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>, then open the address above"
+    fi
+  fi
+  component_line greenbone "Greenbone push"
+  if [[ "$WITH_GREENBONE" == "yes" ]]; then
+    detail "Results go to" "the gvm-vulnerabilities index (add it as a data view in Kibana)"
+    if (( INSTALL_SYSTEMD )) && have_systemd; then
+      detail "Push now" "sudo systemctl start $GREENBONE_SERVICE"
+    else
+      detail "Push now" "sudo $(greenbone_push_cmd)"
+    fi
+    if (( ! INSTALL_SYSTEMD )); then
+      detail "Run it weekly" "sudo addons/greenbone/push_weekly.sh $GREENBONE_DAY $GREENBONE_TIME $(greenbone_push_cmd)"
+    fi
+  fi
+}
+
 summary_data_sources() {
-  local key value auth_flag=""
-  echo
-  echo "  Data sources the engine reads (index patterns in .env):"
+  local key value missing=0 unchecked=0 cert_flag=""
+  heading "Data the engine reads (Elasticsearch index patterns, set in .env)"
   for key in "${INDEX_KEYS[@]}"; do
     value="$(env_get "$ENV_FILE" "$key")"
-    printf '    %-20s %s\n' "$key" "${value:-${!key:-}}"
+    value="${value:-${!key:-}}"
+    case "${SOURCE_STATE[$key]:-unchecked}" in
+      missing)   missing=$((missing + 1)) ;;
+      unchecked) unchecked=$((unchecked + 1)) ;;
+    esac
+    mark_line "${SOURCE_STATE[$key]:-unchecked}" "$key" 19 "$value  ${C_DIM}(${SOURCE_NOTE[$key]:-not checked})${C_OFF}"
   done
+  (( missing + unchecked == 0 )) && return 0
+
   if [[ "$ES_VERIFY_CERTS" == "false" ]]; then
-    auth_flag="-k "
+    cert_flag="-k "
   elif [[ -n "${ES_CA_CERT:-}" ]]; then
-    auth_flag="--cacert $ES_CA_CERT "
+    cert_flag="--cacert $ES_CA_CERT "
   fi
-  echo "  These are the standard Elastic Agent names. Check each one matches an index on"
-  echo "  your cluster (list them with the command below). If one differs, edit .env and"
-  echo "  restart the detection service."
-  echo "    curl ${auth_flag}-u ${ES_USERNAME:-USER} \"$ES_HOST/_cat/indices/*endpoint*,*system*?h=index&expand_wildcards=all\""
+  echo
+  if (( missing )); then
+    echo "  Nothing on your cluster matches the patterns marked $S_WARN. Either no data has"
+    echo "  arrived yet, or your cluster names it differently."
+  fi
+  echo "  The defaults are the data streams that Elastic Defend (an Elastic Agent"
+  echo "  integration) creates. To see the names on your cluster, list its indices:"
+  echo "    curl ${cert_flag}-u ${ES_USERNAME:-USER} \"$ES_HOST/_cat/indices/*endpoint*,*alerts*?h=index&expand_wildcards=all\""
+  if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
+    echo "  Then fix the pattern in .env (and the same line in addons/siem-maintenance/.env),"
+  else
+    echo "  Then fix the pattern in .env,"
+  fi
+  echo "  and restart the detection engine so it reads the change:"
+  echo "    $(detection_restart_cmd)"
+}
+
+# The commands for just the add-on a --only run set up.
+summary_commands_only() {
+  local unit log service
+  case "$ONLY" in
+    maintenance) unit="$MAINTENANCE_UNIT"; log="siem-maintenance"; service="siem-maintenance" ;;
+    triage)      unit="$TRIAGE_UNIT"; log="alert-triage"; service="alert-triage" ;;
+    greenbone)   unit="$GREENBONE_SERVICE"; log="greenbone-scheduler"; service="" ;;
+  esac
+  heading "Useful commands"
+  if [[ "$MODE" == "docker" && -n "$service" ]]; then
+    detail "Logs" "docker compose ${COMPOSE_ARGS[*]} logs -f $service"
+  elif (( ! INSTALL_SYSTEMD )); then
+    detail "Note" "nothing was started (--no-systemd)"
+  elif have_systemd; then
+    detail "Logs" "journalctl -u $unit -f"
+  else
+    detail "Logs" "tail -f logs/$log.log"
+    detail "Start / restart" "$(rerun_cmd)"
+  fi
+  [[ "$ONLY" == "greenbone" ]] && detail "Push log" "logs/greenbone-push.log"
+  return 0
+}
+
+addon_label() {
+  case "$1" in
+    maintenance) printf 'SIEM Maintenance Agent' ;;
+    triage)      printf 'Alert Triage Agent' ;;
+    greenbone)   printf 'Greenbone scan results' ;;
+  esac
+}
+
+summary_commands() {
+  if [[ -n "$ONLY" ]]; then
+    summary_commands_only
+    return
+  fi
+  heading "Useful commands"
+  if [[ "$MODE" == "docker" ]]; then
+    detail "Status" "docker compose ${COMPOSE_ARGS[*]} ps"
+    detail "Logs" "docker compose ${COMPOSE_ARGS[*]} logs -f"
+    return
+  fi
+  local units="$DETECTION_UNIT"
+  [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]] && units+=" $MAINTENANCE_UNIT"
+  [[ "$WITH_TRIAGE" == "yes" ]] && units+=" $TRIAGE_UNIT"
+  if (( ! INSTALL_SYSTEMD )); then
+    echo "    Nothing was started (--no-systemd). Start each one yourself:"
+    echo "      .venv/bin/python engine/realtime_service.py"
+    if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
+      echo "      addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py"
+    fi
+    if [[ "$WITH_TRIAGE" == "yes" ]]; then
+      echo "      (cd addons/alert-triage && .venv/bin/python server.py)"
+    fi
+  elif have_systemd; then
+    detail "Status" "systemctl status $units"
+    detail "Logs" "journalctl -u $DETECTION_UNIT -f   (same for the others)"
+    detail "Restart" "sudo systemctl restart $units"
+  else
+    detail "Logs" "tail -f logs/realtime_service.log   (one log per service in logs/)"
+    detail "Stop" "kill -- -\$(cat logs/realtime_service.pid)   (one .pid file per service in logs/)"
+    detail "Start / restart" "$(rerun_cmd)"
+  fi
+  detail "Quick checks" ".venv/bin/python engine/main.py --list-jobs"
+  detail "" ".venv/bin/python engine/push_all_anomalies.py --dry-run"
+  if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
+    detail "" "addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py --once-poll"
+  fi
 }
 
 summary() {
-  step "Done"
-  (( DRY_RUN )) && echo "  Dry run: nothing was changed."
-  echo "  Detection pipeline:   $MODE"
-  echo "  Maintenance add-on:   $WITH_MAINTENANCE"
-  echo "  Triage add-on:        $WITH_TRIAGE"
-  if [[ "$WITH_TRIAGE" == "yes" ]]; then
-    echo "    Web UI / API:       http://$(triage_probe_host):$TRIAGE_PORT/"
-    echo "    MCP endpoint:       http://$(triage_probe_host):$TRIAGE_PORT/mcp/mcp"
-    if is_loopback "$TRIAGE_LISTEN"; then
-      echo "    From another machine: ssh -L $TRIAGE_PORT:127.0.0.1:$TRIAGE_PORT <this host>"
-    fi
+  local key failed=0 attention=0 issue
+  [[ "$ES_VERIFY_CERTS" == "false" ]] \
+    && ISSUES+=("TLS verification is off (ES_VERIFY_CERTS=false): the connection is encrypted, but the certificate is not checked. Lab use only.")
+  for key in "${!STATUS[@]}"; do
+    [[ "${STATUS[$key]}" == "fail" ]] && failed=1
+    [[ "${STATUS[$key]}" == "warn" ]] && attention=1
+  done
+  (( ${#ISSUES[@]} )) && attention=1
+  local done_msg="Installation complete"
+  [[ -n "$ONLY" ]] && done_msg="$(addon_label "$ONLY") add-on set up"
+
+  if (( DRY_RUN )); then
+    banner "Dry run finished: nothing was changed" "$C_BOLD$C_INFO"
+  elif (( failed )); then
+    banner "$S_FAIL Installation finished, but something is not running (see below)" "$C_BOLD$C_FAIL"
+  elif (( attention )); then
+    banner "$S_OK $done_msg, with some things to check (see below)" "$C_BOLD$C_WARN"
+  else
+    banner "$S_OK $done_msg: everything is set up and running" "$C_BOLD$C_OK"
   fi
-  echo "  Greenbone add-on:     $WITH_GREENBONE"
-  if [[ "$WITH_GREENBONE" == "yes" ]]; then
-    echo "    Results index:      gvm-vulnerabilities (add it as a data view in Kibana)"
-    if (( INSTALL_SYSTEMD )) && have_systemd; then
-      echo "    Schedule:           daily ($GREENBONE_SCHEDULE); see: systemctl list-timers $GREENBONE_TIMER"
-      echo "    Push now:           sudo systemctl start $GREENBONE_SERVICE"
-    else
-      echo "    No timer installed. Add to root's crontab (sudo crontab -e):"
-      echo "      0 6 * * * $(greenbone_push_cmd)"
-    fi
+
+  summary_components
+  [[ -n "$ONLY" ]] || summary_data_sources
+  summary_commands
+
+  if (( ${#ISSUES[@]} )); then
+    heading "Warnings from the install (${#ISSUES[@]})"
+    for issue in "${ISSUES[@]}"; do
+      printf '  %s%s%s %s\n' "$C_WARN" "$S_WARN" "$C_OFF" "$issue"
+    done
   fi
-  summary_data_sources
-  if [[ "$MODE" == "venv" ]]; then
+
+  if [[ -n "$ONLY" ]]; then
     echo
-    echo "  Sanity checks (see docs/installation.md, Step 3):"
-    echo "    .venv/bin/python engine/main.py --list-jobs"
-    echo "    .venv/bin/python engine/push_all_anomalies.py --dry-run"
-    if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
-      echo "    addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py --once-poll"
-    fi
-    if (( ! INSTALL_SYSTEMD )) || ! have_systemd; then
-      echo
-      echo "  No systemd units installed. Start manually:"
-      echo "    .venv/bin/python engine/realtime_service.py"
-      if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
-        echo "    addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py"
-      fi
-      if [[ "$WITH_TRIAGE" == "yes" ]]; then
-        echo "    (cd addons/alert-triage && .venv/bin/python server.py)"
-      fi
-    fi
+    return
   fi
+  heading "Next"
+  echo "    Models train on the engine's first cycle; detections start once that finishes."
+  echo "    In Kibana, add ml-anomalies-custom-* as a data view to see them."
+  echo "    To confirm alerts arrive, see docs/installation.md, Step 3."
+  echo
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 intro() {
+  printf '%sSOC-in-a-Box installer%s (%s)\n' "$C_BOLD" "$C_OFF" "$REPO_ROOT"
+  if [[ -n "$ONLY" ]]; then
+    cat <<EOF
+
+Adding one add-on to your existing SOC-in-a-Box install: $(addon_label "$ONLY").
+It reuses the Elasticsearch settings already saved in .env, and does not touch
+the detection engine or the other add-ons. Steps are numbered as before.
+EOF
+    (( DRY_RUN )) && echo "DRY RUN: no changes will be made"
+    return 0
+  fi
   cat <<EOF
-SOC-in-a-Box installer ($REPO_ROOT)
 
-This script sets up SOC-in-a-Box on this machine. It will:
-  1. Check that this machine has what it needs (Python 3.10+ or Docker, and curl).
-  2. Ask which optional add-ons you want.
-  3. Ask for your Elasticsearch address and login, save them in .env, and test the
-     connection.
-  4. Install the detection engine and the add-ons you chose.
-  5. Start them as background services that keep running after you log out.
-At the end it lists the data sources the engine will read, for you to check.
+${C_BOLD}What this installs${C_OFF}
+SOC-in-a-Box adds detection and automation on top of your Elastic Stack. It is
+one core, the detection engine, plus three optional add-ons that build on it.
 
-It only talks to your own Elasticsearch. It is safe to run again, and
-./deploy.sh --dry-run shows every step without changing anything.
+  ${C_BOLD}Detection engine  (the core: always installed)${C_OFF}
+     Reads the endpoint data your Elastic Agents send to Elasticsearch, learns
+     what is normal for each host, user and process, and writes what does not
+     fit back as filtered alerts, mapped to MITRE ATT&CK, for you to review in
+     Kibana. The add-ons below need it, so it is installed even if you answer
+     no to all of them.
+
+  ${C_BOLD}Optional add-ons${C_OFF}  (you are asked about each one next)
+     ${C_BOLD}SIEM Maintenance Agent${C_OFF}   keeps an eye on Elasticsearch itself: cluster
+                              health, logs still arriving, a daily report.
+     ${C_BOLD}Alert Triage Agent${C_OFF}       investigates Elastic Security alerts and says
+                              whether each looks like a real attack or a false
+                              alarm, and why.
+     ${C_BOLD}Greenbone scan results${C_OFF}   sends Greenbone (OpenVAS) vulnerability scans to
+                              Elasticsearch weekly. Needs Greenbone installed.
+     Any add-on can be added later on its own: ./deploy.sh --only ADD-ON
+
+${C_BOLD}How the install runs${C_OFF}
+  Getting started    checks this machine and asks which add-ons you want.
+  Detection engine   asks for your Elasticsearch address and login, tests them,
+                     installs the engine and starts it.
+  One part per add-on you chose: its settings, install, a check, and start.
+Each part numbers its steps (Step 1/4, Step 2/4, ...) and says when it is
+complete. A summary at the end shows what is running and anything to check.
+
+Most questions come with a suggested answer: press Enter to accept it, or type
+your own. It is safe to run again, and ./deploy.sh --dry-run shows every step
+without changing anything.
 EOF
   (( DRY_RUN )) && echo "DRY RUN: no changes will be made"
   return 0
@@ -1398,54 +2350,42 @@ EOF
 
 main() {
   intro
+  begin_part "Getting started" 2 0
   preflight
-  configure_detection
+  end_part
 
-  if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
-    if (( MAINTENANCE_WIZARD )); then
-      (( NON_INTERACTIVE )) && die "--maintenance-wizard is interactive; drop --non-interactive"
-      [[ "$MODE" == "venv" ]] || die "--maintenance-wizard only supports --mode venv"
-      step "Handing off to the add-on's full installer"
-      (cd "$ADDON_DIR" && run bash ./install.sh)
-    else
-      configure_maintenance
-    fi
-  fi
-  [[ "$WITH_TRIAGE" == "yes" ]] && configure_triage
-  [[ "$WITH_GREENBONE" == "yes" ]] && configure_greenbone
-
-  if [[ "$MODE" == "docker" ]]; then
-    deploy_docker
-    # Greenbone's push reads gvmd's socket on this host, so it runs from a host venv and timer.
-    if [[ "$WITH_GREENBONE" == "yes" ]]; then
-      install_greenbone_venv
-      if (( INSTALL_SYSTEMD )) && have_systemd; then
-        install_greenbone_timer
+  PART_TOTAL=1
+  [[ -n "$ONLY" ]] && PART_TOTAL=0
+  local addon
+  for addon in "$WITH_MAINTENANCE" "$WITH_TRIAGE" "$WITH_GREENBONE"; do
+    [[ "$addon" == "yes" ]] && PART_TOTAL=$((PART_TOTAL + 1))
+  done
+  [[ "$MODE" == "docker" ]] && compose_setup
+  if [[ -n "$ONLY" ]]; then
+    # Nothing else is touched, so the summary only reports this add-on.
+    if [[ "$WITH_MAINTENANCE$WITH_TRIAGE$WITH_GREENBONE" != *yes* ]]; then
+      echo
+      if (( GREENBONE_MISSING )); then
+        info "Stopped: nothing was changed. Install Greenbone (steps above), then run ./deploy.sh --only greenbone"
+      else
+        info "Stopped: nothing was changed."
       fi
+      exit 1
     fi
   else
-    install_detection_venv
-    if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
-      install_maintenance_venv
-    fi
-    [[ "$WITH_TRIAGE" == "yes" ]] && install_triage_venv
-    [[ "$WITH_GREENBONE" == "yes" ]] && install_greenbone_venv
-    if (( INSTALL_SYSTEMD )) && have_systemd; then
-      install_detection_unit
-      if [[ "$WITH_MAINTENANCE" == "yes" && $MAINTENANCE_WIZARD -eq 0 ]]; then
-        install_maintenance_unit
-      fi
-      if [[ "$WITH_TRIAGE" == "yes" ]]; then
-        install_triage_unit
-      fi
-      if [[ "$WITH_GREENBONE" == "yes" ]]; then
-        install_greenbone_timer
-      fi
-    elif (( INSTALL_SYSTEMD )); then
-      warn "systemd not available; skipping service units"
-    fi
+    local greenbone_skip="not installed (add it later: ./deploy.sh --only greenbone)"
+    (( GREENBONE_MISSING )) && greenbone_skip="not installed: Greenbone is not on this server yet (then: ./deploy.sh --only greenbone)"
+    [[ "$WITH_MAINTENANCE" == "yes" ]] || set_status maintenance skip "not installed (add it later: ./deploy.sh --only maintenance)"
+    [[ "$WITH_TRIAGE" == "yes" ]] || set_status triage skip "not installed (add it later: ./deploy.sh --only triage)"
+    [[ "$WITH_GREENBONE" == "yes" ]] || set_status greenbone skip "$greenbone_skip"
+    part_detection
   fi
+  [[ "$WITH_MAINTENANCE" == "yes" ]] && part_maintenance
+  [[ "$WITH_TRIAGE" == "yes" ]] && part_triage
+  [[ "$WITH_GREENBONE" == "yes" ]] && part_greenbone
   summary
 }
 
-main
+# exit on the same line: bash reads a script as it runs, so this stops it reading
+# on if the file is edited (e.g. by git pull) while an install is in progress.
+main; exit

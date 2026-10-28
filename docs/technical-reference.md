@@ -2197,7 +2197,7 @@ Linux-security-anomaly-detection/
 ├── .env.example                    # Environment template (70+ vars)
 ├── .gitignore                      # Comprehensive exclusion list
 ├── .github/workflows/ci.yml       # CI: lint + test + secret scan
-├── LICENSE                         # Apache 2.0
+├── LICENSE                         # MIT
 ├── pyproject.toml                  # Package metadata, deps, CLI entry points
 ├── README.md                       # Project overview + quickstart
 ├── CONTRIBUTING.md                 # Contribution guidelines
@@ -3278,7 +3278,7 @@ Linux-security-anomaly-detection/
 |-- Dockerfile                   # Multi-stage container build
 |-- docker-compose.yml           # Full stack composition
 |-- .env.example                 # Environment variable template
-|-- LICENSE                      # Apache 2.0
+|-- LICENSE                      # MIT
 |-- README.md                    # User-facing overview
 |-- documentation.md             # This file
 |
