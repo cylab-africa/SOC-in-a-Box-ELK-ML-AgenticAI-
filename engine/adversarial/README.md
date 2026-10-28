@@ -1,5 +1,7 @@
 # Adversarial Hardening Package
 
+> **Experimental:** the running detection engine does not use these yet.
+
 Defenses against model evasion, input manipulation, and concept drift
 for the Linux anomaly detection pipeline.
 

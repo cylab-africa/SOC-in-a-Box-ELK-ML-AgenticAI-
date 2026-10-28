@@ -1,5 +1,7 @@
 # Deep Learning Anomaly Detection Models
 
+> **Experimental:** the running detection engine does not use these yet.
+
 CPU-only deep learning models for Linux endpoint anomaly detection.
 All models implement the `DLAnomalyModel` interface and produce scores
 normalized to [0.0, 1.0].

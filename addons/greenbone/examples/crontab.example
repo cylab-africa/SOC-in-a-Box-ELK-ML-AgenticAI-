@@ -2,6 +2,9 @@
 # Fields: minute hour day-of-month month day-of-week (0 or 7 = Sunday), server local time.
 # Schedule each push a few hours after the scan it follows normally finishes.
 
+# Weekly push, Sunday 06:00 (the same schedule deploy.sh sets up)
+0 6 * * 0 /opt/gvm-siem/venv/bin/python /opt/gvm-siem/gvm_siem_push.py --env-file /etc/gvm-siem/gvm-siem.env >> /var/log/gvm-siem/cron.log 2>&1
+
 # Push after a weekly scan that starts Saturday 00:00
 0 3 * * 6 /opt/gvm-siem/venv/bin/python /opt/gvm-siem/gvm_siem_push.py --env-file /etc/gvm-siem/gvm-siem.env >> /var/log/gvm-siem/cron.log 2>&1
 

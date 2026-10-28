@@ -42,7 +42,7 @@ from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
-from gvm.transforms import EtreeTransform
+from gvm.transforms import EtreeCheckCommandTransform
 
 __version__ = "1.0.0"
 
@@ -577,7 +577,7 @@ def build_documents(gmp, cfg, task_id, task_name, report_id, scan_end):
 def open_gmp(cfg):
     """Open a new GMP session to gvmd."""
     connection = UnixSocketConnection(path=cfg["gvm_socket"], timeout=cfg["gvm_timeout"])
-    return Gmp(connection=connection, transform=EtreeTransform())
+    return Gmp(connection=connection, transform= EtreeCheckCommandTransform())
 
 
 def main():

@@ -1,136 +1,141 @@
 # Add-ons
 
-Two optional agents ship with SOC-in-a-Box. Each runs as its own process, with
-its own venv, `.env`, and service, and shares nothing with the detection engine
-except the Elasticsearch cluster. They can be added, upgraded, or removed
-without touching detection.
+Three optional add-ons build on the detection engine. Each has its own `.env`
+and service, and shares only the Elasticsearch cluster with the engine, so you
+can add or remove one without touching detection.
 
-| Add-on | What it does | Install |
+| Add-on | What it does | Add it with |
 |---|---|---|
-| [SIEM Maintenance Agent](#siem-maintenance-agent) | Watches the SOC itself: cluster health, ingestion freshness, a daily Google Chat report, guarded auto-remediation | `./deploy.sh --with-maintenance` |
-| [Alert Triage Agent](#alert-triage-agent) | AI-assisted investigation of Elastic Security alerts, with a TP/FP verdict; web UI, REST API, and MCP server | `./deploy.sh --with-triage` |
-| [Greenbone results push](#greenbone-results-push) | Sends Greenbone / OpenVAS vulnerability scan results to Elasticsearch daily, labelled new, fixed or unchanged | `./deploy.sh --with-greenbone` |
+| [SIEM Maintenance Agent](#siem-maintenance-agent) | Watches Elasticsearch itself: cluster health, logs still arriving, a daily Google Chat report, optional automatic fixes | `./deploy.sh --only maintenance` |
+| [Alert Triage Agent](#alert-triage-agent) | Investigates Elastic Security alerts and says whether each looks like a real attack or a false alarm, and why | `./deploy.sh --only triage` |
+| [Greenbone scan results](#greenbone-scan-results) | Sends Greenbone (OpenVAS) vulnerability scans to Elasticsearch weekly, labelled new, fixed or unchanged | `./deploy.sh --only greenbone` |
+
+`./deploy.sh` asks about each add-on during the main install. `--only` adds
+one later: it reuses the Elasticsearch settings in `.env` and leaves everything
+else as it is.
 
 ## SIEM Maintenance Agent
 
-[`addons/siem-maintenance/`](../addons/siem-maintenance/) watches the health of
-the cluster the detection engine depends on (node heap/disk/CPU, thread-pool
-rejections, ingestion freshness on the same endpoint indices), sends a daily
-Google Chat report, and can run guarded auto-remediation. It is off unless you
-choose it:
+Watches the cluster the detection engine depends on: node heap, disk and CPU,
+rejected requests, and whether endpoint data is still arriving. It sends a
+daily report and alerts to Google Chat, and can fix common problems itself.
 
 ```bash
-./deploy.sh --with-maintenance            # reuses the ES settings from .env
-./deploy.sh --maintenance-wizard          # the add-on's full installer (feedback loop, Chat app, LLM presets)
+./deploy.sh --only maintenance
 ```
 
-**Worked if:** `systemctl status siem-maintenance` shows `active (running)`,
-and a one-off poll completes:
+You need a Google Chat webhook URL
+([how to get one](../addons/siem-maintenance/README.md#get-a-google-chat-webhook)).
+An AI model for the report text is optional.
+
+**Check it works:**
 
 ```bash
+systemctl status siem-maintenance     # active (running)
 addons/siem-maintenance/.venv/bin/python addons/siem-maintenance/Agent-SIEM-maintenance/maintenance_service.py --once-poll
 ```
 
-- **Configure:** `addons/siem-maintenance/.env`. The agent also reads
-  `addons/siem-maintenance/Agent-SIEM-maintenance/.env`; `deploy.sh` keeps the
-  two identical, so after editing by hand copy the root one over the other.
-  Full variable list: [addons/siem-maintenance/README.md](../addons/siem-maintenance/README.md).
-- **Auto-remediation:** clears caches, restarts stopped ML jobs, and removes
-  old snapshots / empty non-essential indices. `deploy.sh` starts it in
-  **dry-run** mode (`AUTO_REMEDIATION_DRY_RUN=true`); review the dry-run entries
-  in `Agent-SIEM-maintenance/results/auto_remediation_log.jsonl` before setting
-  it to `false`.
-- **Docker + Ollama:** inside a container `localhost` is the container itself;
-  point `OLLAMA_URL` at `http://host.docker.internal:11434` or the host IP.
-- **Disable:** `sudo systemctl disable --now siem-maintenance.service`, or run
-  compose without `--profile maintenance`.
+| | |
+|---|---|
+| Settings | `addons/siem-maintenance/.env` (`deploy.sh` copies it to `Agent-SIEM-maintenance/.env`; copy it again after editing by hand) |
+| Automatic fixes | Off unless you choose them. With "only report" (the default), it logs what it would do in `Agent-SIEM-maintenance/results/auto_remediation_log.jsonl` |
+| Ollama in Docker | `localhost` is the container itself: set `OLLAMA_URL=http://host.docker.internal:11434` or the host's IP |
+| Full installer | `./deploy.sh --maintenance-wizard` also sets up the Chat feedback buttons and LLM presets |
+| Stop | `sudo systemctl disable --now siem-maintenance` |
+
+More: [addons/siem-maintenance/README.md](../addons/siem-maintenance/README.md).
 
 ## Alert Triage Agent
 
-[`addons/alert-triage/`](../addons/alert-triage/) investigates Elastic Security
-alerts. Give it an alert ID and it pulls the alert, the related process and
-network events around it, AbuseIPDB / VirusTotal reputation for its indicators,
-and your asset inventory, then asks an LLM (local Ollama, Claude, or any
-OpenAI-compatible API) for a true-positive / false-positive verdict with its
-reasoning. You use it through a web UI, a REST API (`/api/triage`,
-`/api/investigate/<alert_id>`), or as an MCP server, so an AI client such as
-Claude Desktop can run the investigation tools itself.
+Give it an Elastic Security alert and it gathers the related events, IP
+reputation (AbuseIPDB, VirusTotal) and your host inventory, then asks an AI
+model whether the alert looks like a real attack or a false alarm, with its
+reasons. Use it from a web page, a REST API, or as an MCP server for AI
+clients such as Claude.
 
 ```bash
-./deploy.sh --with-triage                        # reuses the ES settings from .env
-./deploy.sh --with-triage --triage-port 8080     # different port
+./deploy.sh --only triage
+./deploy.sh --only triage --triage-port 8080    # another port
 ```
 
-`deploy.sh` writes `addons/alert-triage/.env` from the engine's ES settings,
-asks for an AI backend (`none`, `ollama`, `claude`, `openai_compat`) and
-optional AbuseIPDB / VirusTotal keys, installs it, and starts
-`alert-triage.service`.
+The script asks which AI model to use (`ollama`, `claude`, `openai_compat`, or
+`none`) and for optional AbuseIPDB and VirusTotal keys.
 
-**Worked if:** `http://127.0.0.1:8000/` opens the web UI (MCP endpoint:
-`http://127.0.0.1:8000/mcp/mcp`).
+**Check it works:** open `http://127.0.0.1:8000/`. The MCP endpoint is
+`http://127.0.0.1:8000/mcp/mcp`.
 
-> **It has no login.** Anyone who can reach its port can read every open alert,
-> run investigations with its Elasticsearch credentials, and spend your LLM API
-> quota. `deploy.sh` therefore binds it to `127.0.0.1` only. Reach it from
-> another machine with an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 <host>`), or
-> put it behind a reverse proxy that does authentication. Only use
-> `--triage-listen 0.0.0.0` on a network you trust.
+> **It has no login.** Anyone who can reach its port can read your alerts and
+> use its Elasticsearch login and AI quota. It therefore listens on
+> `127.0.0.1` only. From another computer, use an SSH tunnel:
+>
+> ```bash
+> ssh -L 8000:127.0.0.1:8000 YOUR_SERVER
+> ```
+>
+> or put it behind a reverse proxy with authentication. Use
+> `--triage-listen 0.0.0.0` only on a network you trust.
 
-- **Least privilege:** it only calls `_search` on the alerts index and event
-  indices. Create a read-only role for those indices and enter that user when
-  `deploy.sh` asks for the triage agent's credentials.
-- **TLS:** it follows the engine's setting (`ELASTIC_VERIFY_SSL` mirrors
-  `ES_VERIFY_CERTS`). With `ES_CA_CERT`, `deploy.sh` builds
-  `addons/alert-triage/certs/ca-bundle.pem` (system CAs plus your cluster CA)
-  and points `SSL_CERT_FILE` at it.
-- **Asset inventory:** for better verdicts, copy `assets.example.yml` to
-  `assets.yml` in the add-on directory and describe your hosts (criticality,
-  role, owner). That file stays out of git. In Docker it is baked into the image
-  at build time, so rebuild after editing it.
-- **Kibana integration:** `deploy/create_investigate_dashboard.py` and
-  `deploy/create_canvas.py` in the add-on add an "Investigate with Agent"
-  drilldown to Kibana. Those links open the agent in the analyst's browser, so
-  they need the reverse-proxy setup above.
-- **Dependency pin:** `addons/alert-triage.constraints.txt` pins `mcp<2`; MCP
-  SDK 2.x renamed `FastMCP` and the agent fails to start with it.
-- **Disable:** `sudo systemctl disable --now alert-triage.service`, or run
-  compose without `--profile triage`.
+| | |
+|---|---|
+| Settings | `addons/alert-triage/.env` |
+| Least privilege | It only searches the alerts and event indices: give it a read-only Elasticsearch user |
+| Better verdicts | Copy `addons/alert-triage/assets.example.yml` to `assets.yml` and describe your hosts (criticality, role, owner). In Docker, rebuild after editing it |
+| Kibana links | `addons/alert-triage/deploy/create_investigate_dashboard.py` adds an "Investigate with Agent" link to Kibana (needs the reverse proxy above) |
+| Stop | `sudo systemctl disable --now alert-triage` |
 
-## Greenbone results push
+More: [addons/alert-triage/README.md](../addons/alert-triage/README.md).
 
-[`addons/greenbone/`](../addons/greenbone/) sends finished
-[Greenbone / OpenVAS](https://www.greenbone.net/) vulnerability scans to
-Elasticsearch, so analysts can search them in Kibana next to the detection
-alerts. For each scan task it takes the latest finished report, compares it
-with the previous one, and labels every finding `new`, `same`, `changed` or
-`fixed`.
+## Greenbone scan results
 
-SOC-in-a-Box runs on one server, and Greenbone must be installed on that same
-server: the push reads Greenbone's local `gvmd` socket. It works with both
-install modes; with `--mode docker` it runs on the host next to the containers.
+Sends finished [Greenbone (OpenVAS)](https://www.greenbone.net/) vulnerability
+scans to Elasticsearch, so you can search them in Kibana next to the alerts.
+Each finding is labelled `new`, `same`, `changed` or `fixed` compared with the
+previous scan.
+
+### Install Greenbone first
+
+This add-on does not install Greenbone. It reads the results of a Greenbone
+that already runs **on the same server**. If you choose the add-on and
+Greenbone is not found, `deploy.sh` skips it and shows these commands. They
+are Greenbone's own setup script and need Docker:
 
 ```bash
-./deploy.sh --with-greenbone
+curl -f -O -L https://greenbone.github.io/docs/latest/_static/setup-and-start-greenbone-community-edition.sh
+chmod u+x setup-and-start-greenbone-community-edition.sh
+./setup-and-start-greenbone-community-edition.sh
 ```
 
-It reuses the Elasticsearch settings, asks for the path to the `gvmd` socket
-(the Greenbone Community Docker Compose default is offered) and the Greenbone
-login, checks the connection with a dry run, and installs a systemd timer that
-pushes once a day at 06:00. The push runs as root, because the socket is
-root-owned in the Docker Compose install.
+Guide: [Greenbone Community Containers](https://greenbone.github.io/docs/latest/22.4/container/).
+The vulnerability feed takes from minutes to a few hours to download.
 
-**Worked if:** the dry run during install passes, and after the first push the
-`gvm-vulnerabilities` index has documents. Add it as a data view in Kibana.
+### Add the add-on
 
 ```bash
-systemctl list-timers gvm-siem-push.timer        # next scheduled push
-sudo systemctl start gvm-siem-push.service       # push now
-journalctl -u gvm-siem-push.service              # what the last push did
+./deploy.sh --only greenbone
 ```
 
-- **Configure:** `addons/greenbone/.env`. Full settings, the Kibana queries for
-  new and fixed findings, and troubleshooting are in
-  [addons/greenbone/README.md](../addons/greenbone/README.md).
-- **Schedule:** set `GREENBONE_SCHEDULE` (a systemd `OnCalendar` value, e.g.
-  `"Sat *-*-* 03:00:00"`) when running `deploy.sh` to change it.
-- **Disable:** `sudo systemctl disable --now gvm-siem-push.timer`.
+The script finds Greenbone's socket, asks for your Greenbone username and
+password, tests the connection, and schedules a push **every Sunday at 06:00**.
+The push runs as root, because Greenbone's socket belongs to root.
+
+To choose another day or time:
+
+```bash
+GREENBONE_DAY=Sat GREENBONE_TIME=03:00 ./deploy.sh --only greenbone
+```
+
+**Check it works:**
+
+```bash
+systemctl list-timers gvm-siem-push.timer      # next push
+sudo systemctl start gvm-siem-push.service     # push now
+journalctl -u gvm-siem-push.service            # what the last push did
+```
+
+After the first push, add `gvm-vulnerabilities` as a data view in Kibana.
+
+| | |
+|---|---|
+| Settings | `addons/greenbone/.env` |
+| Kibana queries, settings, errors | [addons/greenbone/README.md](../addons/greenbone/README.md) |
+| Stop | `sudo systemctl disable --now gvm-siem-push.timer` |
