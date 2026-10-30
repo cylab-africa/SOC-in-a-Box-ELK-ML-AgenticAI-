@@ -17,6 +17,8 @@ config/certs/
 .venv/
 .env
 .env.*
+# Editor/Finder duplicates such as ".env 2"
+.env *
 !.env.example
 
 # Environment-specific FP lists (see docs/configuration.md)

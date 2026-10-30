@@ -8,6 +8,7 @@ For contributors. To install and use SOC-in-a-Box, see the
 ```
 soc-in-a-box/
 ├── deploy.sh               # Automated deployment (venv/systemd or Docker)
+├── install-elastic-stack.sh  # Optional single-server Elastic Stack installer (Ubuntu)
 ├── requirements.txt        # Runtime dependencies (read by pyproject.toml)
 ├── .env.example            # Every setting, with defaults (copy to .env)
 ├── config/                 # False-positive lists (overrides in config/local/) and SIEM rules

@@ -4,7 +4,8 @@
 
 - A Linux server with Python 3.10 or newer
 - An Elastic Stack 8.x (Elasticsearch, Kibana, Fleet) and its address,
-  username and password. No stack yet? See [Install the Elastic Stack](elastic-stack.md).
+  username and password. No stack yet? See [Install the Elastic Stack](elastic-stack.md)
+  (single-server script, or Elastic's own guides).
 - Elastic Agent on the Linux hosts you want to monitor, with the
   **Elastic Defend** and **System** integrations
 - About 7 days of their data, for the models to learn from
