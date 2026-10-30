@@ -12,9 +12,6 @@ on Google Chat when something goes wrong, and can fix common problems itself.
 - **Automatic fixes** for common problems (optional; off by default in
   SOC-in-a-Box).
 
-Designed by Noah Shumba ([nshumba@andrew.cmu.edu](mailto:nshumba@andrew.cmu.edu)),
-CMU-Africa Upanzi Network.
-
 ## Before you install
 
 | You need | Notes |

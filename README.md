@@ -34,8 +34,9 @@ flowchart LR
 ## Prerequisites
 
 - A Linux server with Python 3.10 or newer
-- An Elastic Stack 8.x (Elasticsearch, Kibana, Fleet). No stack yet? See
-  [Install the Elastic Stack](docs/elastic-stack.md).
+- An Elastic Stack 8.x (Elasticsearch, Kibana, Fleet). No stack yet?
+  `sudo bash install-elastic-stack.sh` sets one up on a single Ubuntu server,
+  or install it yourself: see [Install the Elastic Stack](docs/elastic-stack.md).
 - Elastic Agent on the Linux hosts you want to monitor, with the
   **Elastic Defend** and **System** integrations, and about 7 days of their data
 
@@ -62,6 +63,7 @@ see [Add-ons](docs/add-ons.md).
 
 | Guide | What's in it |
 |---|---|
+| [Install the Elastic Stack](docs/elastic-stack.md) | Setting up Elasticsearch, Kibana and Fleet, with the script or by hand, and adding hosts |
 | [Installation](docs/installation.md) | Install with `deploy.sh`, options, checking it works |
 | [Manual installation](docs/manual-installation.md) | Installing the detection engine by hand |
 | [Add-ons](docs/add-ons.md) | Installing and running the three add-ons |
