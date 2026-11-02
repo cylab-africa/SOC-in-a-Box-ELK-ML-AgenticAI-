@@ -3,17 +3,26 @@ name: VAPT Scan
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
+# Queue runs one at a time, so a PR run and the push after its merge
+# cannot both start before the first scan finishes.
+concurrency:
+  group: vapt-${{ github.repository }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
   actions: read
 
 jobs:
-  call-vapt:
-    uses: cylab-africa/vapt-workflows/.github/workflows/vapt.yml@main
+  vapt:
+    uses: cylab-africa/vapt-workflows/.github/workflows/vapt-throttled.yml@main
     secrets: inherit
     with:
+      min-days-between-scans: '14'
       codeql-languages: '"python"'
       run-codeql: 'true'
       run-semgrep: 'true'
