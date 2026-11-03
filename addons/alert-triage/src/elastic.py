@@ -1,4 +1,4 @@
-"""Async Elasticsearch client — basic auth, supports v2 investigation ops."""
+"""Async Elasticsearch client — API key or basic auth, supports v2 investigation ops."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ class ElasticClient:
         url: str,
         username: str = "",
         password: str = "",
+        api_key: str = "",
         verify_ssl: bool = False,
         index: str = ".alerts-security.alerts-default",
         event_indices: str = "logs-*,filebeat-*,winlogbeat-*,auditbeat-*",
@@ -24,16 +25,23 @@ class ElasticClient:
     ) -> None:
         if not url:
             raise ValueError("ELASTIC_URL is required")
-        if not username or not password:
-            raise ValueError("ELASTIC_USERNAME and ELASTIC_PASSWORD are required")
+        # An API key wins: it can be scoped to read-only and revoked on its own.
+        headers = {"Content-Type": "application/json"}
+        auth: tuple[str, str] | None = None
+        if api_key:
+            headers["Authorization"] = f"ApiKey {api_key}"
+        elif username and password:
+            auth = (username, password)
+        else:
+            raise ValueError("Set ELASTIC_API_KEY, or ELASTIC_USERNAME and ELASTIC_PASSWORD")
 
         self._url = url.rstrip("/")
         self._index = index
         self._event_indices = event_indices
         self._client = httpx.AsyncClient(
             base_url=self._url,
-            auth=(username, password),
-            headers={"Content-Type": "application/json"},
+            auth=auth,
+            headers=headers,
             verify=verify_ssl,
             timeout=timeout,
         )

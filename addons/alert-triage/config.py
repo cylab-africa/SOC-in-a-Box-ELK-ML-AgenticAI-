@@ -15,6 +15,8 @@ class Config:
     elastic_url: str = os.getenv("ELASTIC_URL", "")
     elastic_username: str = os.getenv("ELASTIC_USERNAME", "")
     elastic_password: str = os.getenv("ELASTIC_PASSWORD", "")
+    # Base64-encoded API key; used instead of username/password when set.
+    elastic_api_key: str = os.getenv("ELASTIC_API_KEY", "").strip()
     elastic_verify_ssl: bool = os.getenv("ELASTIC_VERIFY_SSL", "false").lower() == "true"
     elastic_index: str = os.getenv("ELASTIC_INDEX", ".alerts-security.alerts-default")
     elastic_event_indices: str = os.getenv("ELASTIC_EVENT_INDICES", "logs-*,filebeat-*,winlogbeat-*,auditbeat-*")

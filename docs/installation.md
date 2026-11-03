@@ -3,8 +3,10 @@
 ## Prerequisites
 
 - A Linux server with Python 3.10 or newer
-- An Elastic Stack 8.x (Elasticsearch, Kibana, Fleet) and its address,
-  username and password. No stack yet? See [Install the Elastic Stack](elastic-stack.md)
+- An Elastic Stack 8.x (Elasticsearch, Kibana, Fleet) and its address, plus
+  an admin login such as `elastic`. `deploy.sh` uses it once to create a limited
+  API key for each part and does not save it ([Elasticsearch API keys](configuration.md#elasticsearch-api-keys)).
+  A ready-made API key or a username and password also work. No stack yet? See [Install the Elastic Stack](elastic-stack.md)
   (single-server script, or Elastic's own guides).
 - Elastic Agent on the Linux hosts you want to monitor, with the
   **Elastic Defend** and **System** integrations

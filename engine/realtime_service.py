@@ -73,7 +73,7 @@ except ImportError:
 
 load_dotenv()
 
-if not os.environ.get("ES_USERNAME") or not os.environ.get("ES_PASSWORD"):
+if not os.environ.get("ES_API_KEY") and not (os.environ.get("ES_USERNAME") and os.environ.get("ES_PASSWORD")):
     print(
         f"WARNING: ES credentials not loaded from {_ENV_PATH} "
         f"(exists={os.path.exists(_ENV_PATH)}). "

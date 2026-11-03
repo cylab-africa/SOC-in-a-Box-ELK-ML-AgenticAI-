@@ -141,13 +141,16 @@ def main() -> int:
                 except Exception:
                     pass
 
+                api_key = os.getenv("ES_API_KEY", "").strip()
                 user = os.getenv("ES_USERNAME") or os.getenv("ES_USER")
                 pwd = os.getenv("ES_PASSWORD") or os.getenv("ES_PASS")
-                es = Elasticsearch(
-                    hosts=[es_host],
-                    basic_auth=(user, pwd) if user and pwd else None,
-                    verify_certs=False,
-                )
+                if api_key:
+                    auth: dict = {"api_key": api_key}
+                elif user and pwd:
+                    auth = {"basic_auth": (user, pwd)}
+                else:
+                    auth = {}
+                es = Elasticsearch(hosts=[es_host], verify_certs=False, **auth)
                 info = es.options(request_timeout=10).info()
             ver = info.get("version", {}).get("number", "?")
             all_ok &= _step("Elasticsearch reachable", True, f"cluster version {ver}")

@@ -13,7 +13,7 @@ import os
 from typing import Any
 
 from backends.base import SIEMBackend
-from es_tls import diagnose_connection_failure, es_tls_kwargs
+from es_tls import diagnose_connection_failure, es_auth_kwargs, es_tls_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class ElasticsearchBackend(SIEMBackend):
         host: str | None = None,
         username: str | None = None,
         password: str | None = None,
+        api_key: str | None = None,
         verify_certs: bool | None = None,
         ca_certs: str | None = None,
         timeout: int = 60,
@@ -36,6 +37,8 @@ class ElasticsearchBackend(SIEMBackend):
             host: ES URL (falls back to ``ES_HOST`` env var).
             username: ES username (falls back to ``ES_USERNAME``).
             password: ES password (falls back to ``ES_PASSWORD``).
+            api_key: Base64-encoded ES API key (falls back to ``ES_API_KEY``);
+                used instead of the username and password when set.
             verify_certs: Whether to verify TLS certificates (falls back to
                 ``ES_VERIFY_CERTS``, default true).
             ca_certs: CA bundle path (falls back to ``ES_CA_CERT``).
@@ -44,6 +47,7 @@ class ElasticsearchBackend(SIEMBackend):
         self._host = host or os.getenv("ES_HOST", "")
         self._username = username or os.getenv("ES_USERNAME", "")
         self._password = password or os.getenv("ES_PASSWORD", "")
+        self._api_key = api_key or os.getenv("ES_API_KEY", "")
         self._verify_certs = verify_certs
         self._ca_certs = ca_certs
         self._timeout = timeout
@@ -69,7 +73,7 @@ class ElasticsearchBackend(SIEMBackend):
 
         self._client = Elasticsearch(
             self._host,
-            basic_auth=(self._username, self._password) if self._username else None,
+            **es_auth_kwargs(self._api_key, self._username, self._password),
             request_timeout=self._timeout,
             **es_tls_kwargs(self._verify_certs, self._ca_certs),
         )

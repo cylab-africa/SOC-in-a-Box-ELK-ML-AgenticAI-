@@ -33,16 +33,20 @@ KIBANA_URL  = os.environ.get("KIBANA_URL") or os.environ.get("ELASTIC_URL", "").
 TRIAGE_URL  = (os.environ.get("PUBLIC_URL") or f"http://{KIBANA_URL.split('//')[1].split(':')[0]}:8000").rstrip("/")
 USERNAME    = os.environ.get("ELASTIC_USERNAME", "")
 PASSWORD    = os.environ.get("ELASTIC_PASSWORD", "")
+API_KEY     = os.environ.get("ELASTIC_API_KEY", "").strip()
 ALERT_INDEX = os.environ.get("ELASTIC_INDEX", ".alerts-security.alerts-default")
 
-if not KIBANA_URL or not USERNAME or not PASSWORD:
+if not KIBANA_URL or not (API_KEY or (USERNAME and PASSWORD)):
     sys.exit(
-        "ERROR: Set KIBANA_URL (or ELASTIC_URL), ELASTIC_USERNAME, and "
-        "ELASTIC_PASSWORD in your .env file before running this script."
+        "ERROR: Set KIBANA_URL (or ELASTIC_URL) and a login (ELASTIC_API_KEY, or "
+        "ELASTIC_USERNAME and ELASTIC_PASSWORD) in your .env file before running this script."
     )
 
-_token  = base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
-HEADERS = {"Authorization": f"Basic {_token}", "kbn-xsrf": "true", "Content-Type": "application/json"}
+if API_KEY:
+    _auth_header = f"ApiKey {API_KEY}"
+else:
+    _auth_header = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
+HEADERS = {"Authorization": _auth_header, "kbn-xsrf": "true", "Content-Type": "application/json"}
 _SSL = ssl.create_default_context()
 _SSL.check_hostname = False
 _SSL.verify_mode    = ssl.CERT_NONE

@@ -1,4 +1,4 @@
-"""Tests for es_tls: Elasticsearch TLS verification defaults and overrides."""
+"""Tests for es_tls: Elasticsearch TLS verification and login settings."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import es_tls
-from es_tls import diagnose_connection_failure, es_tls_kwargs, tls_failure_hint
+from es_tls import diagnose_connection_failure, es_auth_kwargs, es_tls_kwargs, tls_failure_hint
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +15,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test with no TLS environment overrides."""
     monkeypatch.delenv("ES_VERIFY_CERTS", raising=False)
     monkeypatch.delenv("ES_CA_CERT", raising=False)
+    for name in ("ES_API_KEY", "ES_USERNAME", "ES_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(es_tls, "_insecure_warning_logged", False)
 
 
@@ -99,3 +101,60 @@ def test_elasticsearch_config_defaults_to_verification() -> None:
 
     assert ElasticsearchConfig().verify_certs is True
     assert ElasticsearchConfig().ca_certs == ""
+
+
+def test_auth_api_key_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ES_API_KEY is passed through as api_key."""
+    monkeypatch.setenv("ES_API_KEY", " test-api-key ")
+    assert es_auth_kwargs() == {"api_key": "test-api-key"}
+
+
+def test_auth_username_password_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without an API key, ES_USERNAME and ES_PASSWORD become basic_auth."""
+    monkeypatch.setenv("ES_USERNAME", "analyst")
+    monkeypatch.setenv("ES_PASSWORD", "secret")
+    assert es_auth_kwargs() == {"basic_auth": ("analyst", "secret")}
+
+
+def test_auth_api_key_wins_over_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both are configured, the scoped API key is used."""
+    monkeypatch.setenv("ES_API_KEY", "test-api-key")
+    monkeypatch.setenv("ES_USERNAME", "elastic")
+    monkeypatch.setenv("ES_PASSWORD", "secret")
+    assert es_auth_kwargs() == {"api_key": "test-api-key"}
+
+
+def test_auth_explicit_arguments_win(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit arguments override the environment; an empty string means unset."""
+    monkeypatch.setenv("ES_API_KEY", "from-env")
+    assert es_auth_kwargs("", "analyst", "secret") == {"basic_auth": ("analyst", "secret")}
+
+
+def test_auth_nothing_configured() -> None:
+    """No login, or a username without a password, gives no auth arguments."""
+    assert es_auth_kwargs() == {}
+    assert es_auth_kwargs(username="analyst") == {}
+
+
+def test_engine_client_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The detection engine's client logs in with the API key from its config."""
+    import datamanager
+
+    captured: dict = {}
+
+    class FakeElasticsearch:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def ping(self) -> bool:
+            return True
+
+        def info(self) -> dict[str, dict[str, str]]:
+            return {"version": {"number": "8.15.0"}}
+
+    monkeypatch.setattr(datamanager, "Elasticsearch", FakeElasticsearch)
+    config = {"elasticsearch": {"host": "https://es:9200", "api_key": "test-api-key",
+                                "username": "elastic", "password": "secret"}}
+    datamanager.connect_to_elasticsearch(config)
+    assert captured["api_key"] == "test-api-key"
+    assert "basic_auth" not in captured and "http_auth" not in captured

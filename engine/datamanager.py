@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from elasticsearch import Elasticsearch
 
-from es_tls import diagnose_connection_failure, es_tls_kwargs
+from es_tls import diagnose_connection_failure, es_auth_kwargs, es_tls_kwargs
 
 
 def validate_and_add_missing_fields(df: "pd.DataFrame", data_type: str = "process") -> "pd.DataFrame":
@@ -676,8 +676,9 @@ def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
 
         # Extract connection parameters
         host = es_config.get("host", "localhost:9200")
-        username = es_config.get("username")
-        password = es_config.get("password")
+        username = es_config.get("username") or ""
+        password = es_config.get("password") or ""
+        api_key = es_config.get("api_key") or ""
         timeout = es_config.get("timeout", 60)
 
         # Build Elasticsearch client configuration
@@ -688,8 +689,8 @@ def connect_to_elasticsearch(config: dict) -> "Elasticsearch | None":
             "retry_on_timeout": True
         }
 
-        if username and password:
-            es_client_config["http_auth"] = (username, password)
+        # ES_API_KEY wins over ES_USERNAME / ES_PASSWORD when both are set.
+        es_client_config.update(es_auth_kwargs(api_key, username, password))
 
         # Verification is on unless ES_VERIFY_CERTS=false; ES_CA_CERT supplies a private CA.
         es_client_config.update(

@@ -68,6 +68,7 @@ def _elastic() -> ElasticClient:
         url=config.elastic_url,
         username=config.elastic_username,
         password=config.elastic_password,
+        api_key=config.elastic_api_key,
         verify_ssl=config.elastic_verify_ssl,
         index=config.elastic_index,
         event_indices=config.elastic_event_indices,
@@ -1371,8 +1372,9 @@ app.mount("/mcp", mcp.streamable_http_app())
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if not config.elastic_url or not config.elastic_username or not config.elastic_password:
-        logger.error("ELASTIC_URL, ELASTIC_USERNAME, ELASTIC_PASSWORD must be set in .env")
+    has_login = config.elastic_api_key or (config.elastic_username and config.elastic_password)
+    if not config.elastic_url or not has_login:
+        logger.error("Set ELASTIC_URL and a login in .env: ELASTIC_API_KEY, or ELASTIC_USERNAME and ELASTIC_PASSWORD")
         sys.exit(1)
 
     uvicorn.run(

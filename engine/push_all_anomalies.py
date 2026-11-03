@@ -34,7 +34,7 @@ from typing import Any
 
 from benign_lists import AllowlistManager
 from config import AdaptiveThreshold
-from es_tls import diagnose_connection_failure, es_tls_kwargs
+from es_tls import diagnose_connection_failure, es_auth_kwargs, es_tls_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -2111,8 +2111,6 @@ def _connect_es(force: bool = False) -> Any:
         return None
 
     host = os.environ.get("ES_HOST", "https://localhost:9200")
-    username = os.environ.get("ES_USERNAME", "")
-    password = os.environ.get("ES_PASSWORD", "")
     timeout = int(os.environ.get("ES_TIMEOUT", "60"))
 
     kwargs: dict[str, Any] = {
@@ -2121,9 +2119,8 @@ def _connect_es(force: bool = False) -> Any:
         "max_retries": 3,
         "retry_on_timeout": True,
         **es_tls_kwargs(),
+        **es_auth_kwargs(),
     }
-    if username and password:
-        kwargs["basic_auth"] = (username, password)
 
     es = Elasticsearch(**kwargs)
     try:
