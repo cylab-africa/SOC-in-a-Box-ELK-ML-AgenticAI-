@@ -26,9 +26,9 @@ flowchart LR
 
 | Component | What it does | |
 |---|---|---|
-| **Detection engine** | Learns normal behaviour per host, user and process, and writes what does not fit to Kibana as filtered alerts mapped to MITRE ATT&CK | Core, always installed |
+| **Detection engine** | Learns normal behaviour per host, user and process, and writes what does not fit to Kibana as filtered alerts mapped to MITRE ATT&CK. Needs at least 7 days of host data to learn from before it can start detecting | Core, always installed |
 | **SIEM Maintenance Agent** | Watches Elasticsearch itself: cluster health, logs still arriving, a daily Google Chat report, optional automatic fixes | Optional add-on |
-| **Alert Triage Agent** | Investigates Elastic Security alerts and says whether each looks like a real attack or a false alarm, and why. Web page, API and MCP server | Optional add-on |
+| **Alert Triage Agent** | Investigates Elastic Security alerts and says whether each looks like a real attack or a false alarm, and why. Web page, API and MCP server: [find out more](addons/alert-triage/README.md) | Optional add-on |
 | **Greenbone scan results** | Sends Greenbone (OpenVAS) vulnerability scans to Elasticsearch weekly, labelled new, fixed or unchanged | Optional add-on (needs Greenbone) |
 
 ## Prerequisites
