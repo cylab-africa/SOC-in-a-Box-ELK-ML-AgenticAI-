@@ -131,7 +131,9 @@ Configuration:
                            (ES_HOST, ES_API_KEY or ES_USERNAME + ES_PASSWORD,
                            GC_ALERT_WEBHOOK, ...). Add-ons can have their own
                            login: MAINTENANCE_ES_API_KEY, TRIAGE_ES_API_KEY,
-                           GREENBONE_ES_API_KEY (or *_ES_USERNAME + *_ES_PASSWORD)
+                           GREENBONE_ES_API_KEY (or *_ES_USERNAME + *_ES_PASSWORD).
+                           Or set ES_ADMIN_USERNAME + ES_ADMIN_PASSWORD to have
+                           every part's API key created (the admin login is not saved)
   --reconfigure            Re-ask settings even if .env files already exist
 
 Other:
@@ -648,6 +650,9 @@ es_curl_auth() {
     printf 'header = "Authorization: ApiKey %s"\n' "${ES_API_KEY//\"/\\\"}"
   elif [[ -n "${ES_USERNAME:-}" ]]; then
     printf 'user = "%s:%s"\n' "${ES_USERNAME//\"/\\\"}" "${ES_PASSWORD//\"/\\\"}"
+  elif [[ -n "${ES_ADMIN_USERNAME:-}" ]]; then
+    # Only while API keys are being created: the admin login is never saved.
+    printf 'user = "%s:%s"\n' "${ES_ADMIN_USERNAME//\"/\\\"}" "${ES_ADMIN_PASSWORD//\"/\\\"}"
   fi
 }
 
@@ -906,57 +911,264 @@ apply_tls_settings() {
 ES_KEY_HELP="The encoded value Elasticsearch shows once, when the key is created (one long
 base64 string). Create one in Kibana: Stack Management > Security > API keys."
 
-# Sets ES_API_KEY, or ES_USERNAME and ES_PASSWORD, for the detection engine.
-ask_es_login() {
-  local method=1 reply
-  [[ -z "${ES_API_KEY:-}" && -n "${ES_PASSWORD:-}" ]] && method=2
-  if (( NON_INTERACTIVE )); then
-    if [[ -n "${ES_API_KEY:-}" ]]; then method=1; else method=2; fi
-  else
-    ask_header "How should the detection engine log in to Elasticsearch?" \
-      "1  With an API key (recommended): it can only read the logs and write its own
-   alerts, and you can revoke it without changing any password
-2  With a username and password"
-    read -r -p "  Press Enter for ${C_VALUE}${method}${C_OFF}, or type 1 or 2: " reply
-    method="${reply:-$method}"
+# An admin login, asked for only to create API keys. It lives in memory for this
+# run and is never written to any file.
+ES_ADMIN_USERNAME="${ES_ADMIN_USERNAME:-}"
+ES_ADMIN_PASSWORD="${ES_ADMIN_PASSWORD:-}"
+CREATE_KEYS=0
+
+ask_admin_login() {
+  [[ -n "$ES_ADMIN_USERNAME" && -n "$ES_ADMIN_PASSWORD" ]] && return 0
+  if (( ! NON_INTERACTIVE )); then
+    ask_header "Admin privileges are needed to create the API keys" \
+      "Creating API keys needs an Elasticsearch user with admin privileges: the
+manage_api_key privilege, plus every privilege the keys grant. The elastic
+superuser has both. This login is used only now, to create the keys. It is not
+saved anywhere: each part then logs in with its own key, limited to the SOC
+analyst work it does."
   fi
-  if [[ "$method" == "1" ]]; then
-    prompt_secret ES_API_KEY "Elasticsearch API key for the detection engine" "$ES_KEY_HELP"
-    require_value ES_API_KEY
-    ES_USERNAME=""; ES_PASSWORD=""
-  else
-    prompt ES_USERNAME "Elasticsearch username" "${ES_USERNAME:-elastic}" \
-      "The account the engine uses to read logs and write its alerts."
-    prompt_secret ES_PASSWORD "Elasticsearch password" \
-      "The password for that account."
-    require_value ES_PASSWORD
-    ES_API_KEY=""
-  fi
+  prompt ES_ADMIN_USERNAME "Admin username" "elastic"
+  prompt_secret ES_ADMIN_PASSWORD "Admin password" "The password for that admin user."
+  require_value ES_ADMIN_USERNAME
+  require_value ES_ADMIN_PASSWORD
 }
 
-# ask_component_login PREFIX "who" sets PREFIX_ES_API_KEY, PREFIX_ES_USERNAME and
-# PREFIX_ES_PASSWORD for an add-on: its own API key, its own username and password,
-# or the detection engine's login.
+# Sets ES_API_KEY, or ES_USERNAME and ES_PASSWORD, for the detection engine.
+# With CREATE_KEYS=1 both stay empty until create_engine_key runs after the
+# connection test, which uses the admin login.
+ask_es_login() {
+  local method=1 reply
+  if [[ -n "${ES_API_KEY:-}" ]]; then
+    method=2
+  elif [[ -n "${ES_PASSWORD:-}" ]]; then
+    method=3
+  fi
+  if (( NON_INTERACTIVE )); then
+    if [[ -n "${ES_API_KEY:-}" ]]; then method=2
+    elif [[ -n "$ES_ADMIN_USERNAME" && -n "$ES_ADMIN_PASSWORD" ]]; then method=1
+    else method=3
+    fi
+  else
+    ask_header "How should SOC-in-a-Box log in to Elasticsearch?" \
+      "1  Create API keys for me (recommended). You type an admin username and
+   password once; each part gets its own key with only the privileges it needs,
+   and the admin password is not saved
+2  Use an API key I already created
+3  Use a username and password (saved in .env)"
+    read -r -p "  Press Enter for ${C_VALUE}${method}${C_OFF}, or type 1, 2 or 3: " reply
+    method="${reply:-$method}"
+  fi
+  CREATE_KEYS=0
+  case "$method" in
+    1)
+      # Asked again on a retry, in case the admin password was the problem.
+      (( NON_INTERACTIVE )) || ES_ADMIN_PASSWORD=""
+      ask_admin_login
+      CREATE_KEYS=1
+      ES_API_KEY=""; ES_USERNAME=""; ES_PASSWORD="" ;;
+    2)
+      prompt_secret ES_API_KEY "Elasticsearch API key for the detection engine" "$ES_KEY_HELP"
+      require_value ES_API_KEY
+      ES_USERNAME=""; ES_PASSWORD="" ;;
+    *)
+      prompt ES_USERNAME "Elasticsearch username" "${ES_USERNAME:-elastic}" \
+        "The account the engine uses to read logs and write its alerts."
+      prompt_secret ES_PASSWORD "Elasticsearch password" \
+        "The password for that account."
+      require_value ES_PASSWORD
+      ES_API_KEY="" ;;
+  esac
+}
+
+# The body of a create API key request for one part: its name, and a role that
+# grants only what that part does. Index patterns for the engine come from .env.
+api_key_body() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+part, name, *extra = sys.argv[1:]
+alerts = [".alerts-security.alerts-*", ".internal.alerts-security.alerts-*"]
+
+
+def patterns(values):
+    seen = []
+    for value in values:
+        for pattern in value.split(","):
+            pattern = pattern.strip()
+            if pattern and pattern not in seen:
+                seen.append(pattern)
+    return seen
+
+
+if part == "engine":
+    sources = ["logs-endpoint.events.*", ".ds-logs-endpoint.events.*",
+               "logs-system.auth-*", ".ds-logs-system.auth-*", *alerts, *extra]
+    role = {
+        "cluster": ["monitor"],
+        "indices": [
+            {"names": patterns(sources), "privileges": ["read", "view_index_metadata"]},
+            {"names": ["ml-anomalies-custom*", "ml-anomalies-correlated*", ".ml-anomalies-custom-*"],
+             "privileges": ["read", "view_index_metadata", "create_index", "index"]},
+        ],
+    }
+elif part == "triage":
+    role = {
+        "indices": [
+            {"names": [*alerts, "logs-*", "filebeat-*", "winlogbeat-*", "auditbeat-*"],
+             "privileges": ["read", "view_index_metadata"]},
+        ],
+    }
+elif part == "maintenance":
+    role = {
+        "cluster": ["monitor", "monitor_ml", "monitor_transform", "monitor_watcher",
+                    "monitor_snapshot", "read_ilm", "read_slm"],
+        "indices": [
+            {"names": ["*"], "privileges": ["monitor", "view_index_metadata"]},
+            {"names": ["logs-*", ".ds-logs-*", ".ds-elastic-cloud-logs-*", ".monitoring-es-*",
+                       ".ml-anomalies-*", "ml-anomalies-*"],
+             "privileges": ["read"]},
+        ],
+    }
+    if "fix" in extra:
+        role["cluster"] += ["manage", "manage_ml", "manage_transform", "manage_watcher",
+                            "manage_ilm", "manage_slm"]
+        role["indices"].append({"names": ["*"], "privileges": ["manage", "delete_index"]})
+elif part == "greenbone":
+    role = {
+        "cluster": ["monitor"],
+        "indices": [
+            {"names": ["gvm-vulnerabilities*"],
+             "privileges": ["create_index", "index", "read", "view_index_metadata", "manage"]},
+        ],
+    }
+else:
+    sys.exit(f"unknown part: {part}")
+
+print(json.dumps({
+    "name": name,
+    "metadata": {"created_by": "SOC-in-a-Box deploy.sh", "part": part},
+    "role_descriptors": {f"soc_analyst_{part}": role},
+}))
+PY
+}
+
+# es_admin_request METHOD PATH BODY_FILE: call Elasticsearch with the admin login.
+# Prints the body, then the HTTP status on its own last line.
+es_admin_request() {
+  local flags=(-sS -g --max-time 30 -X "$1" -w '\n%{http_code}' -H 'Content-Type: application/json'
+               --data-binary "@$3")
+  if [[ "$ES_VERIFY_CERTS" == "false" ]]; then
+    flags+=(-k)
+  elif [[ -n "${ES_CA_CERT:-}" ]]; then
+    flags+=(--cacert "$(ca_cert_path)")
+  fi
+  printf 'user = "%s:%s"\n' "${ES_ADMIN_USERNAME//\"/\\\"}" "${ES_ADMIN_PASSWORD//\"/\\\"}" \
+    | curl "${flags[@]}" -K - "$ES_HOST$2" 2>&1
+}
+
+# create_api_key PART VAR [fix]: create PART's API key with the admin login and
+# store its encoded value in VAR. A key this script made earlier on this server
+# for the same part is revoked first, so re-runs replace keys instead of adding.
+create_api_key() {
+  local part="$1" var="$2" name tmp out code key
+  name="soc-in-a-box-$part-$(hostname -s 2>/dev/null || echo server)"
+  if (( DRY_RUN )); then
+    printf '  [DRY ] create API key %s\n' "$name"
+    printf -v "$var" '%s' "dry-run-api-key"
+    return 0
+  fi
+  tmp="$(mktemp)"
+  printf '{"name": "%s"}' "$name" >"$tmp"
+  es_admin_request DELETE /_security/api_key "$tmp" >/dev/null || true
+  if [[ "$part" == "engine" ]]; then
+    api_key_body engine "$name" "${ES_PROCESS_INDEX:-}" "${ES_NETWORK_INDEX:-}" \
+      "${ES_DISCOVERY_INDEX:-}" "${ES_METADATA_INDEX:-}" "${ES_ALERTS_INDEX:-}" >"$tmp"
+  else
+    api_key_body "$part" "$name" "${3:-}" >"$tmp"
+  fi
+  out="$(es_admin_request POST /_security/api_key "$tmp")" || true
+  rm -f "$tmp"
+  code="${out##*$'\n'}"
+  out="${out%$'\n'*}"
+  if [[ "$code" == "200" ]]; then
+    key="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["encoded"])' <<<"$out" 2>/dev/null || true)"
+    if [[ -n "$key" ]]; then
+      printf -v "$var" '%s' "$key"
+      ok "Created API key $name (SOC analyst privileges for the $part only)"
+      return 0
+    fi
+  fi
+  case "$code" in
+    401) fail "Could not create the $part API key: Elasticsearch rejected the admin username or password" ;;
+    403) fail "Could not create the $part API key: the admin login is not allowed to create it (it needs manage_api_key and every privilege the key grants; the elastic superuser has them)" ;;
+    *)   fail "Could not create the $part API key: ${out:0:200}" ;;
+  esac
+  return 1
+}
+
+# After the connection test with the admin login: create the engine's key, save
+# it to .env, and check that the engine can connect with it.
+create_engine_key() {
+  (( CREATE_KEYS && ES_CONNECTED )) || return 0
+  if create_api_key engine ES_API_KEY; then
+    env_set "$ENV_FILE" ES_API_KEY "$ES_API_KEY"
+    ok "Saved the engine's API key to .env (the admin password is not saved)"
+    local rc=0
+    es_check "$ES_HOST" || rc=$?
+    (( rc == 0 )) || warn "The new API key did not connect; check docs/configuration.md#elasticsearch-api-keys"
+    return 0
+  fi
+  (( NON_INTERACTIVE )) && die "Set ES_API_KEY, or ES_USERNAME and ES_PASSWORD, and run ./deploy.sh again"
+  info "Choose another way for the engine to log in"
+  CREATE_KEYS=0
+  ES_ADMIN_USERNAME=""; ES_ADMIN_PASSWORD=""
+  ask_es_login
+  local key
+  for key in ES_API_KEY ES_USERNAME ES_PASSWORD; do
+    env_set "$ENV_FILE" "$key" "${!key}"
+  done
+  ES_CONNECTED=0
+  connect_es
+  create_engine_key
+}
+
+# ask_component_login PREFIX "who" PART [fix] sets PREFIX_ES_API_KEY,
+# PREFIX_ES_USERNAME and PREFIX_ES_PASSWORD for an add-on: a key created now
+# from the admin login, a key it already has, its own username and password, or
+# the detection engine's login.
 ask_component_login() {
   local key_var="${1}_ES_API_KEY" user_var="${1}_ES_USERNAME" pass_var="${1}_ES_PASSWORD"
-  local who="$2" choice=3 reply
-  [[ -n "${!user_var:-}" ]] && choice=2
-  [[ -n "${!key_var:-}" ]] && choice=1
+  local who="$2" part="$3" fix="${4:-}" choice=4 reply
+  [[ -n "$ES_ADMIN_USERNAME" && -n "$ES_ADMIN_PASSWORD" ]] && choice=1
+  [[ -n "${!user_var:-}" ]] && choice=3
+  [[ -n "${!key_var:-}" ]] && choice=2
   if (( ! NON_INTERACTIVE )); then
     ask_header "How should the $who log in to Elasticsearch?" \
-      "1  With its own API key (recommended): limited to what it needs, and revoked
-   without affecting anything else
-2  With its own username and password
-3  With the same login as the detection engine"
-    read -r -p "  Press Enter for ${C_VALUE}${choice}${C_OFF}, or type 1, 2 or 3: " reply
+      "1  Create its own API key (recommended): limited to what it needs, revoked
+   without affecting anything else. Needs an admin login, used once, not saved
+2  Use an API key I already created for it
+3  Use its own username and password
+4  Use the same login as the detection engine"
+    read -r -p "  Press Enter for ${C_VALUE}${choice}${C_OFF}, or type 1, 2, 3 or 4: " reply
     choice="${reply:-$choice}"
   fi
   case "$choice" in
     1)
+      ask_admin_login
+      printf -v "$user_var" '%s' ""; printf -v "$pass_var" '%s' ""
+      if ! create_api_key "$part" "$key_var" "$fix"; then
+        (( NON_INTERACTIVE )) && die "Could not create the $part API key"
+        warn "The $who will use the detection engine's login instead"
+        printf -v "$key_var" '%s' "${ES_API_KEY:-}"
+        printf -v "$user_var" '%s' "${ES_USERNAME:-}"
+        printf -v "$pass_var" '%s' "${ES_PASSWORD:-}"
+      fi ;;
+    2)
       prompt_secret "$key_var" "Elasticsearch API key for the $who" "$ES_KEY_HELP"
       require_value "$key_var"
       printf -v "$user_var" '%s' ""; printf -v "$pass_var" '%s' "" ;;
-    2)
+    3)
       prompt "$user_var" "Elasticsearch username for the $who" "${!user_var:-}"
       prompt_secret "$pass_var" "Elasticsearch password for the $who"
       # Older --non-interactive installs set only the username and reused ES_PASSWORD.
@@ -1022,6 +1234,7 @@ test_connection() {
     info "Bundled Elasticsearch is not running yet; skipping connectivity check"
   else
     connect_es
+    create_engine_key
   fi
 }
 
@@ -1104,7 +1317,6 @@ configure_maintenance() {
   (( LOCAL_ES )) && KIBANA_HOST="http://kibana:5601"
 
   echo "  It uses the same Elasticsearch address as the detection engine (.env)."
-  ask_component_login MAINTENANCE "SIEM Maintenance Agent"
   prompt KIBANA_HOST "Kibana address" "$KIBANA_HOST" \
     "Where Kibana is reached. The suggestion is your Elasticsearch server on Kibana's
 usual port, 5601."
@@ -1173,6 +1385,10 @@ You can switch later: AUTO_REMEDIATION_DRY_RUN in addons/siem-maintenance/.env
       *) AUTO_REMEDIATION_DRY_RUN="true" ;;
     esac
   fi
+  # Automatic fixes change the cluster, so only then does its key get manage privileges.
+  local maint_fix=""
+  [[ "$AUTO_REMEDIATION_DRY_RUN" == "false" ]] && maint_fix="fix"
+  ask_component_login MAINTENANCE "SIEM Maintenance Agent" maintenance "$maint_fix"
 
   if (( DRY_RUN )); then
     printf '  [DRY ] write %s\n' "${ADDON_ENV_FILE#"$REPO_ROOT"/}"
@@ -1306,7 +1522,7 @@ configure_triage() {
   fi
 
   echo "  The triage agent only reads from Elasticsearch, so a read-only login is safest."
-  ask_component_login TRIAGE "Alert Triage Agent"
+  ask_component_login TRIAGE "Alert Triage Agent" triage
   prompt ELASTIC_INDEX "Where Elastic Security stores its alerts" ".alerts-security.alerts-default" \
     "The suggestion is correct for a standard Elastic Security install."
 
@@ -1437,7 +1653,7 @@ configure_greenbone() {
 
   echo "  It uses the same Elasticsearch address as the detection engine, and writes"
   echo "  scan results to the gvm-vulnerabilities index."
-  ask_component_login GREENBONE "Greenbone results push"
+  ask_component_login GREENBONE "Greenbone results push" greenbone
   local socket_help="The suggestion is the standard location for Greenbone's Docker install. Not sure?
 Run: sudo find / -name gvmd.sock 2>/dev/null"
   [[ -n "${GVM_FOUND_SOCKET:-}" ]] && socket_help="The suggestion is where this script found it on this server."

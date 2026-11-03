@@ -9,6 +9,7 @@ The first one that fails tells you where to look.
 |---|---|
 | `Could not reach Elasticsearch at https://localhost:9200` | The address is wrong: `localhost` only works when Elasticsearch runs on the same server. Choose 1 and type the right address, e.g. `https://10.0.0.5:9200` |
 | `rejected the username or password` or `rejected the API key` | Choose 1 and type the login again, or later run `./deploy.sh --reconfigure`. A deleted or expired API key needs a new one: [Elasticsearch API keys](configuration.md#elasticsearch-api-keys) |
+| `Could not create the ... API key` | The admin login needs the `manage_api_key` privilege and every privilege the key grants: use the `elastic` superuser, or choose to paste a key or use a username and password instead |
 | `lacks the monitor cluster privilege` | The login works but cannot read cluster info. Add `"cluster": ["monitor"]` to the key or user's role: [Elasticsearch API keys](configuration.md#elasticsearch-api-keys) |
 | A certificate fingerprint and a 1/2/3 question | Normal for a self-managed cluster. Choose 1 to trust the certificate, or 2 on a lab cluster |
 | `Greenbone is not installed on this server` | Install Greenbone first ([commands](add-ons.md#install-greenbone-first)), then run `./deploy.sh --only greenbone` |

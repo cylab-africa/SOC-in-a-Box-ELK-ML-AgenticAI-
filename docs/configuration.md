@@ -37,8 +37,20 @@ Every part of SOC-in-a-Box can log in to Elasticsearch in either of two ways:
 - **A username and password.** Simpler for a lab. Avoid the `elastic`
   superuser: a leaked superuser password exposes the whole cluster.
 
-`./deploy.sh` asks which one each part should use. Press Enter at an add-on's
-question to reuse the detection engine's login.
+`./deploy.sh` asks which one each part should use. The recommended choice is
+**Create API keys for me**:
+
+1. It explains that creating API keys needs admin privileges, then asks for an
+   admin username and password (for example the `elastic` superuser).
+2. It tests the connection with that login, then creates one API key per part,
+   named `soc-in-a-box-<part>-<server name>`. Each key has only the SOC analyst
+   privileges that part needs (listed below).
+3. It writes each key to that part's `.env`. The admin username and password
+   are used only during the install and are **not saved** anywhere.
+
+Running `./deploy.sh --reconfigure` later replaces the keys it created on that
+server: the old key with the same name is revoked first. You can also paste a
+key you created yourself, or use a username and password.
 
 | Part | Setting | File |
 |---|---|---|
@@ -47,14 +59,15 @@ question to reuse the detection engine's login.
 | Alert Triage Agent | `ELASTIC_API_KEY`, or `ELASTIC_USERNAME` + `ELASTIC_PASSWORD` | `addons/alert-triage/.env` |
 | Greenbone results push | `ES_API_KEY`, or `ES_USERNAME` + `ES_PASSWORD` | `addons/greenbone/.env` |
 
-For `./deploy.sh --non-interactive`, set `ES_API_KEY` for the engine and
+For `./deploy.sh --non-interactive`, set `ES_ADMIN_USERNAME` and
+`ES_ADMIN_PASSWORD` to have every key created, or set `ES_API_KEY` for the engine and
 `MAINTENANCE_ES_API_KEY`, `TRIAGE_ES_API_KEY` or `GREENBONE_ES_API_KEY` for the
 add-ons. Use `*_ES_USERNAME` and `*_ES_PASSWORD` for a username and password instead.
 
-### Create the keys
+### Create the keys yourself
 
-Open Kibana, go to **Dev Tools**, and run the request for each part you
-install. Copy the `encoded` value from the response: it is shown only once,
+`deploy.sh` makes these keys for you. To make them yourself instead, open
+Kibana, go to **Dev Tools**, and run the request for each part you install. Copy the `encoded` value from the response: it is shown only once,
 and it is what `deploy.sh` asks for. Run the requests as a user that holds
 these privileges itself, because a key can never do more than its creator.
 
