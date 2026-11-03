@@ -1031,10 +1031,34 @@ check_data_sources() {
 # ── Maintenance add-on configuration ─────────────────────────────────────────
 configure_maintenance() {
   step "Settings (saved in addons/siem-maintenance/.env)"
+  # An .env from an earlier run is kept, but say what AI setting it holds and
+  # offer to redo it: keeping it silently hid the provider and model chosen now.
+  local prev_provider="" prev_model=""
+  if [[ -f "$ADDON_ENV_FILE" ]]; then
+    prev_model="$(env_get "$ADDON_ENV_FILE" LLM_MODEL)"
+    if [[ "$(env_get "$ADDON_ENV_FILE" LLM_ENABLED)" == "true" ]]; then
+      case "$prev_model" in
+        gpt-*)    prev_provider="openai" ;;
+        claude-*) prev_provider="anthropic" ;;
+        *)        prev_provider="ollama" ;;
+      esac
+    else
+      prev_provider="none"
+    fi
+  fi
   if [[ -f "$ADDON_ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
-    ok "Using existing add-on .env (pass --reconfigure to change it)"
-    sync_addon_env_copy
-    return
+    if [[ "$prev_provider" == "none" ]]; then
+      info "Existing add-on .env: AI summary off"
+    else
+      info "Existing add-on .env: AI summary on ($prev_provider, model $prev_model)"
+    fi
+    if (( NON_INTERACTIVE )) || confirm "Keep the existing SIEM Maintenance settings?" Y \
+      "addons/siem-maintenance/.env is from an earlier run. Type n to answer the
+questions again, for example to turn the AI summary on or change its model."; then
+      ok "Using existing add-on .env (pass --reconfigure to change it)"
+      sync_addon_env_copy
+      return
+    fi
   fi
 
   local sys_tz
@@ -1060,27 +1084,32 @@ server's time zone. Write it as Region/City, e.g. Africa/Kigali or Africa/Accra.
     "7200 seconds = every 2 hours. Use 3600 for every hour."
 
   # LLM narrative is optional; provider is chosen from the model-name prefix.
-  LLM_PROVIDER="${LLM_PROVIDER:-none}"
+  LLM_PROVIDER="${LLM_PROVIDER:-${prev_provider:-none}}"
   prompt LLM_PROVIDER "AI-written summary in the daily report" "$LLM_PROVIDER" \
     "Type one of:
   none       no AI summary (the report still has all the numbers)
   ollama     a local model on this server or your network
   openai     OpenAI's API (needs an API key)
   anthropic  Anthropic's Claude API (needs an API key)"
+  LLM_PROVIDER="${LLM_PROVIDER,,}"
+  [[ "$LLM_PROVIDER" == "claude" ]] && LLM_PROVIDER="anthropic"
+  # Suggest the model already in .env when the provider is unchanged.
+  model_def() { if [[ "$prev_provider" == "$1" && -n "$prev_model" ]]; then echo "$prev_model"; else echo "$2"; fi; }
   LLM_ENABLED="true"
   OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
   case "$LLM_PROVIDER" in
     ollama)
       prompt OLLAMA_URL "Ollama address" "$OLLAMA_URL" "Where Ollama is running."
-      prompt LLM_MODEL "Ollama model" "llama3.2" "A model already pulled into Ollama (see: ollama list)." ;;
+      prompt LLM_MODEL "Ollama model" "$(model_def ollama llama3.2)" \
+        "A model already pulled into Ollama (see: ollama list), e.g. llama3.2 or gemma4:e2b." ;;
     openai)
       prompt_secret OPENAI_API_KEY "OpenAI API key" "From platform.openai.com > API keys."
       require_value OPENAI_API_KEY
-      prompt LLM_MODEL "OpenAI model" "gpt-4o-mini" ;;
+      prompt LLM_MODEL "OpenAI model" "$(model_def openai gpt-4o-mini)" ;;
     anthropic)
       prompt_secret ANTHROPIC_API_KEY "Anthropic API key" "From console.anthropic.com > API keys."
       require_value ANTHROPIC_API_KEY
-      prompt LLM_MODEL "Claude model" "claude-sonnet-4-6" ;;
+      prompt LLM_MODEL "Claude model" "$(model_def anthropic claude-sonnet-4-6)" ;;
     none)
       LLM_ENABLED="false"; LLM_MODEL="${LLM_MODEL:-llama3.2}" ;;
     *) die "Unknown LLM provider: $LLM_PROVIDER" ;;
@@ -1255,6 +1284,15 @@ configure_triage() {
   prompt ELASTIC_INDEX "Where Elastic Security stores its alerts" ".alerts-security.alerts-default" \
     "The suggestion is correct for a standard Elastic Security install."
 
+  # Suggest the model just chosen for the SIEM Maintenance Agent, so the two
+  # add-ons do not end up on different models by accident. Interactive only:
+  # --non-interactive installs keep their documented defaults.
+  if (( ! NON_INTERACTIVE )); then
+    case "${LLM_PROVIDER:-}" in
+      ollama)    AI_PROVIDER="${AI_PROVIDER:-ollama}"; OLLAMA_MODEL="${OLLAMA_MODEL:-$LLM_MODEL}" ;;
+      anthropic) AI_PROVIDER="${AI_PROVIDER:-claude}"; CLAUDE_MODEL="${CLAUDE_MODEL:-$LLM_MODEL}" ;;
+    esac
+  fi
   AI_PROVIDER="${AI_PROVIDER:-none}"
   prompt AI_PROVIDER "Which AI model should judge each alert: real attack or false alarm?" "$AI_PROVIDER" \
     "After collecting the evidence for an alert, the agent can ask an AI model to decide

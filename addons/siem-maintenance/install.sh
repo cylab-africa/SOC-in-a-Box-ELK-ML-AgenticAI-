@@ -179,15 +179,18 @@ pick_anthropic_model() {
 pick_ollama_model() {
   echo "Ollama model preset (default = 1):" >&2
   echo "  1 = llama3.2   2 = llama3.1   3 = mistral   4 = gemma2:2b   5 = phi3   6 = custom" >&2
+  echo "  (or type a model tag directly, e.g. gemma4:e2b)" >&2
   read -r -p "Choice [default: 1]: " _c
   _c="${_c:-1}"
   case "$_c" in
+    1) printf '%s' "llama3.2" ;;
     2) printf '%s' "llama3.1" ;;
     3) printf '%s' "mistral" ;;
     4) printf '%s' "gemma2:2b" ;;
     5) printf '%s' "phi3" ;;
     6) prompt "Custom Ollama model tag" "llama3.2" ;;
-    *) printf '%s' "llama3.2" ;;
+    # Anything else is a model tag typed directly; it used to fall back to llama3.2.
+    *) printf '%s' "$_c" ;;
   esac
 }
 
