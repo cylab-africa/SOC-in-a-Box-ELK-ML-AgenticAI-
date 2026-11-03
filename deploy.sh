@@ -405,6 +405,37 @@ is_placeholder() {
   [[ -z "$1" || "$1" == your-* || "$1" == *your-elasticsearch-host* ]]
 }
 
+# Can python3 create a working venv? Debian and Ubuntu ship the venv module but
+# split ensurepip into python3-venv, so importing venv is not enough: build one.
+python_venv_works() {
+  local probe rc=0
+  probe="$(mktemp -d)"
+  python3 -m venv "$probe/venv" >/dev/null 2>&1 || rc=$?
+  rm -rf "$probe"
+  return "$rc"
+}
+
+# Make sure python3 can create venvs, installing python3-venv with apt if not.
+ensure_python_venv() {
+  python_venv_works && { ok "venv module available"; return; }
+  local ver pkgs
+  ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  pkgs=(python3-venv "python$ver-venv")
+  if ! command -v apt-get >/dev/null; then
+    die "python3 cannot create a venv. Install your distribution's venv package for Python $ver, then re-run"
+  fi
+  info "python3 cannot create a venv yet; installing ${pkgs[*]} with apt"
+  if (( DRY_RUN )); then
+    run sudo apt-get install -y "${pkgs[@]}"
+    return
+  fi
+  sudo apt-get update -qq \
+    && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" \
+    || die "Could not install ${pkgs[*]}. Run: sudo apt install -y ${pkgs[*]}, then re-run"
+  python_venv_works || die "python3 still cannot create a venv after installing ${pkgs[*]}"
+  ok "Installed ${pkgs[*]}; venv module available"
+}
+
 # ── Preflight ────────────────────────────────────────────────────────────────
 # Print the path of a running Greenbone's gvmd socket, or nothing. The Docker
 # install's socket is under a root-only directory, so look with sudo when that
@@ -436,10 +467,7 @@ preflight() {
     minor="$(python3 -c 'import sys; print(sys.version_info.minor if sys.version_info.major == 3 else 0)')"
     (( minor >= MIN_PY_MINOR )) || die "Python 3.$MIN_PY_MINOR+ required (found 3.$minor)"
     ok "Python $(python3 -c 'import platform; print(platform.python_version())')"
-    if ! python3 -c 'import ensurepip, venv' 2>/dev/null; then
-      die "python3 venv support missing. On Debian/Ubuntu: sudo apt install -y python3-venv"
-    fi
-    ok "venv module available"
+    ensure_python_venv
   else
     if docker compose version >/dev/null 2>&1; then
       ok "$(docker compose version | head -1)"
@@ -551,8 +579,7 @@ checks that it is."; then
     # even when the detection engine runs in Docker.
     if [[ "$MODE" == "docker" ]]; then
       command -v python3 >/dev/null || die "The Greenbone add-on needs python3 on this host (with venv support)"
-      python3 -c 'import ensurepip, venv' 2>/dev/null \
-        || die "python3 venv support missing. On Debian/Ubuntu: sudo apt install -y python3-venv"
+      ensure_python_venv
     fi
     if [[ -n "$GVM_FOUND_SOCKET" ]]; then
       ok "Greenbone add-on: enabled (Greenbone found: $GVM_FOUND_SOCKET)"

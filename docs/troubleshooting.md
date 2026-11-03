@@ -11,7 +11,7 @@ The first one that fails tells you where to look.
 | `rejected the username or password` | Choose 1 and type the login again, or later run `./deploy.sh --reconfigure` |
 | A certificate fingerprint and a 1/2/3 question | Normal for a self-managed cluster. Choose 1 to trust the certificate, or 2 on a lab cluster |
 | `Greenbone is not installed on this server` | Install Greenbone first ([commands](add-ons.md#install-greenbone-first)), then run `./deploy.sh --only greenbone` |
-| `python3 venv support missing` | `sudo apt install -y python3-venv`, then run `./deploy.sh` again |
+| `Could not install python3-venv` or `python3 cannot create a venv` | `deploy.sh` installs `python3-venv` itself with apt. If that fails (no sudo, no network), run `sudo apt install -y python3-venv python3.12-venv` (use your Python version), then run `./deploy.sh` again |
 | Any other `[FAIL]` line | It says what went wrong. Fix it and run `./deploy.sh` again; it is safe to repeat |
 
 ## After the install
