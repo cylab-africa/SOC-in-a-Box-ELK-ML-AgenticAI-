@@ -83,7 +83,8 @@ All in `.env`. Copy `.env.example` to start, or run `python3 install.py`.
 | Setting | Default | What it is |
 |---|---|---|
 | `ELASTIC_URL` | | Address with `https://` and port |
-| `ELASTIC_USERNAME`, `ELASTIC_PASSWORD` | | Login |
+| `ELASTIC_API_KEY` | | Login with an API key (recommended; read-only is enough). Wins over the username and password |
+| `ELASTIC_USERNAME`, `ELASTIC_PASSWORD` | | Login with a username and password instead |
 | `ELASTIC_VERIFY_SSL` | `false` | Check the certificate. Set `true` in production, with the CA installed |
 | `ELASTIC_INDEX` | `.alerts-security.alerts-default` | Alerts index |
 | `ELASTIC_EVENT_INDICES` | `logs-*,filebeat-*,winlogbeat-*,auditbeat-*` | Where related events are searched |

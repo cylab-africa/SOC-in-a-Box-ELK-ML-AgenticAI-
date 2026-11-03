@@ -789,6 +789,8 @@ class ElasticsearchConfig:
     host: str = "https://localhost:9200"
     username: str = ""
     password: str = ""
+    # Base64-encoded API key; used instead of username/password when set.
+    api_key: str = ""
 
     # Index patterns
     process_index: str = ".ds-logs-endpoint.events.process-default-*"
@@ -1095,6 +1097,7 @@ class ConfigManager:
                 host=self._get_env('ES_HOST', ''),
                 username=self._get_env('ES_USERNAME', ''),
                 password=self._get_env('ES_PASSWORD', ''),
+                api_key=self._get_env('ES_API_KEY', ''),
                 process_index=self._get_env('ES_PROCESS_INDEX', '.ds-logs-endpoint.events.process-default-*'),
                 network_index=self._get_env('ES_NETWORK_INDEX', '.ds-logs-endpoint.events.network-default-*'),
                 discovery_index=self._get_env('ES_DISCOVERY_INDEX', 'logs-endpoint.events.process-*'),
@@ -1457,12 +1460,13 @@ def save_config(config_dict: dict[str, Any], config_file: str = "config.json"):
 
             # Validate Elasticsearch config
             es_config = config_dict.get('elasticsearch', {})
-            required_es_fields = ['host', 'username', 'password']
-
-            for field in required_es_fields:
-                if not es_config.get(field):
-                    print(f"Missing required Elasticsearch field: {field}")
-                    return False
+            if not es_config.get('host'):
+                print("Missing required Elasticsearch field: host")
+                return False
+            has_login = es_config.get('api_key') or (es_config.get('username') and es_config.get('password'))
+            if not has_login:
+                print("Missing Elasticsearch login: set api_key, or username and password")
+                return False
 
             return True
 
@@ -1478,6 +1482,7 @@ def get_elasticsearch_config() -> dict[str, Any]:
         "host": es_config.host,
         "username": es_config.username,
         "password": es_config.password,
+        "api_key": es_config.api_key,
         "scroll_size": es_config.scroll_size,
         "scroll_timeout": es_config.scroll_timeout,
         "timeout": es_config.timeout

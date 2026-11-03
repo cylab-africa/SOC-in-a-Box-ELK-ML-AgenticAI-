@@ -63,7 +63,8 @@ def main() -> None:
     """
     CLI entry point: connect to ES and install all templates.
 
-    Reads ES_HOST, ES_USER, ES_PASSWORD from environment variables.
+    Reads ES_HOST and a login from environment variables: ES_API_KEY, or
+    ES_USERNAME (ES_USER also accepted) and ES_PASSWORD.
     """
     try:
         from elasticsearch import Elasticsearch
@@ -72,18 +73,18 @@ def main() -> None:
         sys.exit(1)
 
     host = os.environ.get("ES_HOST", "https://localhost:9200")
-    user = os.environ.get("ES_USER", "")
-    password = os.environ.get("ES_PASSWORD", "")
-
-    if not user or not password:
-        print("ES_USER and ES_PASSWORD environment variables required", file=sys.stderr)
-        sys.exit(1)
+    user = os.environ.get("ES_USERNAME") or os.environ.get("ES_USER", "")
 
     # Run as a script from mappings/, so make the repo-root helper importable.
     sys.path.insert(0, str(MAPPINGS_DIR.parent))
-    from es_tls import es_tls_kwargs
+    from es_tls import es_auth_kwargs, es_tls_kwargs
 
-    es = Elasticsearch(host, basic_auth=(user, password), **es_tls_kwargs())
+    auth = es_auth_kwargs(username=user)
+    if not auth:
+        print("Set ES_API_KEY, or ES_USERNAME and ES_PASSWORD", file=sys.stderr)
+        sys.exit(1)
+
+    es = Elasticsearch(host, **auth, **es_tls_kwargs())
 
     logging.basicConfig(level=logging.INFO)
     ok = install_all_templates(es)

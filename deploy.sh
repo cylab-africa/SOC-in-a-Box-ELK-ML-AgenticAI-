@@ -11,7 +11,8 @@
 #   ./deploy.sh --with-greenbone         detection pipeline + Greenbone results push
 #   ./deploy.sh --only greenbone         add one add-on to an existing install
 #   ./deploy.sh --mode docker            run under Docker Compose instead of venv + systemd
-#   ES_HOST=... ES_USERNAME=... ES_PASSWORD=... ./deploy.sh --non-interactive --with-maintenance
+#   ES_HOST=... ES_API_KEY=... ./deploy.sh --non-interactive --with-maintenance
+#   (or ES_USERNAME=... ES_PASSWORD=... instead of ES_API_KEY)
 #   ./deploy.sh --dry-run                print what would happen, change nothing
 #
 # Run ./deploy.sh --help for every option. See docs/installation.md for details.
@@ -127,7 +128,10 @@ Configuration:
                            certificate is shown with its fingerprint and you choose
                            whether to trust it.
   --non-interactive        Never prompt; read values from the environment
-                           (ES_HOST, ES_USERNAME, ES_PASSWORD, GC_ALERT_WEBHOOK, ...)
+                           (ES_HOST, ES_API_KEY or ES_USERNAME + ES_PASSWORD,
+                           GC_ALERT_WEBHOOK, ...). Add-ons can have their own
+                           login: MAINTENANCE_ES_API_KEY, TRIAGE_ES_API_KEY,
+                           GREENBONE_ES_API_KEY (or *_ES_USERNAME + *_ES_PASSWORD)
   --reconfigure            Re-ask settings even if .env files already exist
 
 Other:
@@ -467,7 +471,7 @@ preflight() {
 # --only adds one add-on to an existing install, so the detection engine's
 # Elasticsearch settings must already be in .env. Load them and test them.
 check_base_install() {
-  load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
+  load_existing_env "$ENV_FILE" ES_HOST ES_API_KEY ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
   if [[ ! -f "$ENV_FILE" ]] || is_placeholder "${ES_HOST:-}"; then
     die "SOC-in-a-Box is not set up yet. Run ./deploy.sh first; then add the add-on with ./deploy.sh --only $ONLY"
   fi
@@ -637,10 +641,20 @@ plan_line() {
 # ── Elasticsearch connectivity ───────────────────────────────────────────────
 # Credentials go to curl on stdin so they never appear in the process list, and
 # are only sent over a verified TLS connection unless --insecure-tls is given.
+# The Elasticsearch login as a curl -K config line: the API key when one is set,
+# otherwise the username and password. Fed on stdin, so it never shows in ps.
+es_curl_auth() {
+  if [[ -n "${ES_API_KEY:-}" ]]; then
+    printf 'header = "Authorization: ApiKey %s"\n' "${ES_API_KEY//\"/\\\"}"
+  elif [[ -n "${ES_USERNAME:-}" ]]; then
+    printf 'user = "%s:%s"\n' "${ES_USERNAME//\"/\\\"}" "${ES_PASSWORD//\"/\\\"}"
+  fi
+}
+
 # Returns 0 when connected, 2 when the cluster answers but its certificate is
 # not trusted, and 1 for anything else.
 es_check() {
-  local host="$1" user="$2" pass="$3" out flags=(-sS --max-time 10)
+  local host="$1" out flags=(-sS --max-time 10)
   if (( DRY_RUN )); then
     printf '  [DRY ] check Elasticsearch at %s\n' "$host"
     return 0
@@ -651,8 +665,8 @@ es_check() {
     [[ -r "$ca" ]] || { fail "ES_CA_CERT not readable: $ca"; return 1; }
     flags+=(--cacert "$ca")
   fi
-  local cfg="" rc=0
-  [[ -n "$user" ]] && cfg="user = \"${user//\"/\\\"}:${pass//\"/\\\"}\""
+  local cfg rc=0
+  cfg="$(es_curl_auth)"
   out="$(printf '%s\n' "$cfg" | curl "${flags[@]}" -K - "$host" 2>&1)" || rc=$?
   if (( rc == 0 )); then
     es_response_ok "$host" "$out" "(TLS verified)"
@@ -697,8 +711,14 @@ es_response_ok() {
     fi
     return 0
   fi
-  if [[ "$out" == *security_exception* ]]; then
-    fail "Elasticsearch at $host rejected the username or password"
+  if [[ "$out" == *security_exception* && "$out" == *"is unauthorized"* ]]; then
+    fail "Elasticsearch at $host accepted the login, but it lacks the monitor cluster privilege (see docs/configuration.md#elasticsearch-api-keys)"
+  elif [[ "$out" == *security_exception* ]]; then
+    if [[ -n "${ES_API_KEY:-}" ]]; then
+      fail "Elasticsearch at $host rejected the API key (wrong, expired or revoked)"
+    else
+      fail "Elasticsearch at $host rejected the username or password"
+    fi
   else
     fail "Unexpected answer from Elasticsearch at $host: ${out:0:200}"
   fi
@@ -788,12 +808,12 @@ connect_es() {
   local rc attempts issues_before=${#ISSUES[@]}
   while true; do
     rc=0; attempts=0
-    es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+    es_check "$ES_HOST" || rc=$?
     while (( rc == 2 && attempts < 3 )) && resolve_untrusted_cert "$ES_HOST"; do
       attempts=$((attempts + 1))
       apply_tls_settings
       rc=0
-      es_check "$ES_HOST" "${ES_USERNAME:-}" "${ES_PASSWORD:-}" || rc=$?
+      es_check "$ES_HOST" || rc=$?
     done
     (( rc == 0 || NON_INTERACTIVE )) && break
     retry_es_login || break
@@ -803,7 +823,7 @@ connect_es() {
     # Failures settled by the questions above are not problems any more.
     ISSUES=("${ISSUES[@]:0:issues_before}")
   else
-    warn "Carrying on without a working connection: fix ES_HOST, ES_USERNAME and ES_PASSWORD in .env, then restart the engine"
+    warn "Carrying on without a working connection: fix ES_HOST and the login (ES_API_KEY, or ES_USERNAME and ES_PASSWORD) in .env, then restart the engine"
   fi
   return 0
 }
@@ -812,7 +832,7 @@ connect_es() {
 # 1 = carry on without a connection. Choosing to stop exits.
 retry_es_login() {
   local choice
-  ask_header "Could not connect to Elasticsearch at $ES_HOST. What would you like to do?" "1  Type the address, username and password again (recommended)
+  ask_header "Could not connect to Elasticsearch at $ES_HOST. What would you like to do?" "1  Type the address and login again (recommended)
 2  Carry on anyway: everything is installed, but the engine cannot work
    until .env has the right address and login
 3  Stop here (your settings so far are kept in .env)
@@ -824,11 +844,10 @@ Elasticsearch runs on this same server."
     1)
       prompt ES_HOST "Elasticsearch address" "" \
         "The full address, including https:// and the port, e.g. https://10.0.0.5:9200."
-      prompt ES_USERNAME "Elasticsearch username" "elastic"
-      prompt_secret ES_PASSWORD "Elasticsearch password"
       require_value ES_HOST
+      ask_es_login
       local key
-      for key in ES_HOST ES_USERNAME ES_PASSWORD; do
+      for key in ES_HOST ES_API_KEY ES_USERNAME ES_PASSWORD; do
         env_set "$ENV_FILE" "$key" "${!key}"
       done
       ok "Saved to .env; testing again"
@@ -879,11 +898,83 @@ apply_tls_settings() {
   fi
 }
 
+# ── Elasticsearch logins ─────────────────────────────────────────────────────
+# Each part can log in with an API key or a username and password. An API key is
+# recommended: it carries only the privileges that part needs, and revoking it
+# does not touch any user account. docs/configuration.md#elasticsearch-api-keys
+# has a ready-made key for each part.
+ES_KEY_HELP="The encoded value Elasticsearch shows once, when the key is created (one long
+base64 string). Create one in Kibana: Stack Management > Security > API keys."
+
+# Sets ES_API_KEY, or ES_USERNAME and ES_PASSWORD, for the detection engine.
+ask_es_login() {
+  local method=1 reply
+  [[ -z "${ES_API_KEY:-}" && -n "${ES_PASSWORD:-}" ]] && method=2
+  if (( NON_INTERACTIVE )); then
+    if [[ -n "${ES_API_KEY:-}" ]]; then method=1; else method=2; fi
+  else
+    ask_header "How should the detection engine log in to Elasticsearch?" \
+      "1  With an API key (recommended): it can only read the logs and write its own
+   alerts, and you can revoke it without changing any password
+2  With a username and password"
+    read -r -p "  Press Enter for ${C_VALUE}${method}${C_OFF}, or type 1 or 2: " reply
+    method="${reply:-$method}"
+  fi
+  if [[ "$method" == "1" ]]; then
+    prompt_secret ES_API_KEY "Elasticsearch API key for the detection engine" "$ES_KEY_HELP"
+    require_value ES_API_KEY
+    ES_USERNAME=""; ES_PASSWORD=""
+  else
+    prompt ES_USERNAME "Elasticsearch username" "${ES_USERNAME:-elastic}" \
+      "The account the engine uses to read logs and write its alerts."
+    prompt_secret ES_PASSWORD "Elasticsearch password" \
+      "The password for that account."
+    require_value ES_PASSWORD
+    ES_API_KEY=""
+  fi
+}
+
+# ask_component_login PREFIX "who" sets PREFIX_ES_API_KEY, PREFIX_ES_USERNAME and
+# PREFIX_ES_PASSWORD for an add-on: its own API key, its own username and password,
+# or the detection engine's login.
+ask_component_login() {
+  local key_var="${1}_ES_API_KEY" user_var="${1}_ES_USERNAME" pass_var="${1}_ES_PASSWORD"
+  local who="$2" choice=3 reply
+  [[ -n "${!user_var:-}" ]] && choice=2
+  [[ -n "${!key_var:-}" ]] && choice=1
+  if (( ! NON_INTERACTIVE )); then
+    ask_header "How should the $who log in to Elasticsearch?" \
+      "1  With its own API key (recommended): limited to what it needs, and revoked
+   without affecting anything else
+2  With its own username and password
+3  With the same login as the detection engine"
+    read -r -p "  Press Enter for ${C_VALUE}${choice}${C_OFF}, or type 1, 2 or 3: " reply
+    choice="${reply:-$choice}"
+  fi
+  case "$choice" in
+    1)
+      prompt_secret "$key_var" "Elasticsearch API key for the $who" "$ES_KEY_HELP"
+      require_value "$key_var"
+      printf -v "$user_var" '%s' ""; printf -v "$pass_var" '%s' "" ;;
+    2)
+      prompt "$user_var" "Elasticsearch username for the $who" "${!user_var:-}"
+      prompt_secret "$pass_var" "Elasticsearch password for the $who"
+      # Older --non-interactive installs set only the username and reused ES_PASSWORD.
+      [[ -n "${!pass_var:-}" ]] || printf -v "$pass_var" '%s' "${ES_PASSWORD:-}"
+      require_value "$user_var"; require_value "$pass_var"
+      printf -v "$key_var" '%s' "" ;;
+    *)
+      printf -v "$key_var" '%s' "${ES_API_KEY:-}"
+      printf -v "$user_var" '%s' "${ES_USERNAME:-}"
+      printf -v "$pass_var" '%s' "${ES_PASSWORD:-}" ;;
+  esac
+}
+
 # ── Detection pipeline configuration ─────────────────────────────────────────
 configure_detection() {
   step "Elasticsearch address and login (saved in .env)"
   if [[ -f "$ENV_FILE" && $RECONFIGURE -eq 0 ]]; then
-    load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
+    load_existing_env "$ENV_FILE" ES_HOST ES_API_KEY ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
     if ! is_placeholder "${ES_HOST:-}"; then
       ok "Using existing .env (pass --reconfigure to change it)"
       return
@@ -895,22 +986,19 @@ configure_detection() {
     run cp "$REPO_ROOT/.env.example" "$ENV_FILE"
     run chmod 600 "$ENV_FILE"
   fi
-  load_existing_env "$ENV_FILE" ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
+  load_existing_env "$ENV_FILE" ES_HOST ES_API_KEY ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"
   is_placeholder "${ES_HOST:-}" && ES_HOST=""
   is_placeholder "${ES_USERNAME:-}" && ES_USERNAME=""
   is_placeholder "${ES_PASSWORD:-}" && ES_PASSWORD=""
+  is_placeholder "${ES_API_KEY:-}" && ES_API_KEY=""
 
   local default_host="https://localhost:9200"
   (( LOCAL_ES )) && default_host="https://elasticsearch:9200"
   prompt ES_HOST "Elasticsearch address" "$default_host" \
     "The full address, including https:// and the port, e.g. https://10.0.0.5:9200.
 Use localhost if Elasticsearch runs on this server."
-  prompt ES_USERNAME "Elasticsearch username" "elastic" \
-    "The account the engine uses to read logs and write its alerts."
-  prompt_secret ES_PASSWORD "Elasticsearch password" \
-    "The password for that account."
   require_value ES_HOST
-  require_value ES_PASSWORD
+  ask_es_login
 
   # Index patterns are not asked for: the defaults match a standard Elastic Agent
   # install. The summary lists them so they can be checked and edited in .env.
@@ -921,7 +1009,7 @@ Use localhost if Elasticsearch runs on this server."
   : "${ES_ALERTS_INDEX:=.internal.alerts-security.alerts-default-*}"
 
   local key
-  for key in ES_HOST ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"; do
+  for key in ES_HOST ES_API_KEY ES_USERNAME ES_PASSWORD "${INDEX_KEYS[@]}"; do
     env_set "$ENV_FILE" "$key" "${!key}"
   done
   ok "Wrote .env"
@@ -946,7 +1034,7 @@ es_get() {
   elif [[ -n "${ES_CA_CERT:-}" ]]; then
     flags+=(--cacert "$(ca_cert_path)")
   fi
-  [[ -n "${ES_USERNAME:-}" ]] && cfg="user = \"${ES_USERNAME//\"/\\\"}:${ES_PASSWORD//\"/\\\"}\""
+  cfg="$(es_curl_auth)"
   printf '%s\n' "$cfg" | curl "${flags[@]}" -K - "$ES_HOST$path" 2>/dev/null
 }
 
@@ -1015,7 +1103,8 @@ configure_maintenance() {
   KIBANA_HOST="${KIBANA_HOST:-${ES_HOST/:9200/:5601}}"
   (( LOCAL_ES )) && KIBANA_HOST="http://kibana:5601"
 
-  echo "  It uses the same Elasticsearch address and login as the detection engine (.env)."
+  echo "  It uses the same Elasticsearch address as the detection engine (.env)."
+  ask_component_login MAINTENANCE "SIEM Maintenance Agent"
   prompt KIBANA_HOST "Kibana address" "$KIBANA_HOST" \
     "Where Kibana is reached. The suggestion is your Elasticsearch server on Kibana's
 usual port, 5601."
@@ -1096,10 +1185,10 @@ You can switch later: AUTO_REMEDIATION_DRY_RUN in addons/siem-maintenance/.env
       echo
       echo "ES_HOST=$(escape_env "$ES_HOST")"
       echo "KIBANA_HOST=$(escape_env "$KIBANA_HOST")"
-      echo "ES_AUTH_TYPE=userpass"
-      echo "ES_API_KEY="
-      echo "ES_USERNAME=$(escape_env "${ES_USERNAME:-}")"
-      echo "ES_PASSWORD=$(escape_env "${ES_PASSWORD:-}")"
+      if [[ -n "$MAINTENANCE_ES_API_KEY" ]]; then echo "ES_AUTH_TYPE=apikey"; else echo "ES_AUTH_TYPE=userpass"; fi
+      echo "ES_API_KEY=$(escape_env "$MAINTENANCE_ES_API_KEY")"
+      echo "ES_USERNAME=$(escape_env "$MAINTENANCE_ES_USERNAME")"
+      echo "ES_PASSWORD=$(escape_env "$MAINTENANCE_ES_PASSWORD")"
       echo "ES_PROCESS_INDEX=$(escape_env "$ES_PROCESS_INDEX")"
       echo "ES_NETWORK_INDEX=$(escape_env "$ES_NETWORK_INDEX")"
       echo "ES_DISCOVERY_INDEX=$(escape_env "$ES_DISCOVERY_INDEX")"
@@ -1216,15 +1305,8 @@ configure_triage() {
     return
   fi
 
-  echo "  The triage agent only reads from Elasticsearch, so it can use its own read-only"
-  echo "  account (safer). Or press Enter at the next two questions to reuse the account"
-  echo "  you entered above."
-  TRIAGE_ES_USERNAME="${TRIAGE_ES_USERNAME:-${ES_USERNAME:-}}"
-  TRIAGE_ES_PASSWORD="${TRIAGE_ES_PASSWORD:-${ES_PASSWORD:-}}"
-  prompt TRIAGE_ES_USERNAME "Elasticsearch username for the triage agent" "$TRIAGE_ES_USERNAME"
-  prompt_secret TRIAGE_ES_PASSWORD "Elasticsearch password for the triage agent" "" \
-    "press Enter to reuse the password you entered above"
-  require_value TRIAGE_ES_PASSWORD
+  echo "  The triage agent only reads from Elasticsearch, so a read-only login is safest."
+  ask_component_login TRIAGE "Alert Triage Agent"
   prompt ELASTIC_INDEX "Where Elastic Security stores its alerts" ".alerts-security.alerts-default" \
     "The suggestion is correct for a standard Elastic Security install."
 
@@ -1279,6 +1361,7 @@ menu > API key. Paste it here." \
       echo "# Full option list: addons/alert-triage/.env.example"
       echo
       echo "ELASTIC_URL=$(escape_env "$ES_HOST")"
+      echo "ELASTIC_API_KEY=$(escape_env "$TRIAGE_ES_API_KEY")"
       echo "ELASTIC_USERNAME=$(escape_env "$TRIAGE_ES_USERNAME")"
       echo "ELASTIC_PASSWORD=$(escape_env "$TRIAGE_ES_PASSWORD")"
       echo "ELASTIC_VERIFY_SSL=$ES_VERIFY_CERTS"
@@ -1352,8 +1435,9 @@ configure_greenbone() {
     return
   fi
 
-  echo "  It uses the same Elasticsearch address and login as the detection engine, and writes"
+  echo "  It uses the same Elasticsearch address as the detection engine, and writes"
   echo "  scan results to the gvm-vulnerabilities index."
+  ask_component_login GREENBONE "Greenbone results push"
   local socket_help="The suggestion is the standard location for Greenbone's Docker install. Not sure?
 Run: sudo find / -name gvmd.sock 2>/dev/null"
   [[ -n "${GVM_FOUND_SOCKET:-}" ]] && socket_help="The suggestion is where this script found it on this server."
@@ -1390,8 +1474,9 @@ Run: sudo find / -name gvmd.sock 2>/dev/null"
       echo "GVM_PASSWORD=$(escape_env "$GVM_PASSWORD")"
       echo
       echo "ES_HOST=$(escape_env "$(greenbone_es_host)")"
-      echo "ES_USERNAME=$(escape_env "${ES_USERNAME:-}")"
-      echo "ES_PASSWORD=$(escape_env "${ES_PASSWORD:-}")"
+      echo "ES_API_KEY=$(escape_env "$GREENBONE_ES_API_KEY")"
+      echo "ES_USERNAME=$(escape_env "$GREENBONE_ES_USERNAME")"
+      echo "ES_PASSWORD=$(escape_env "$GREENBONE_ES_PASSWORD")"
       echo "ES_INDEX=gvm-vulnerabilities"
       echo "ES_VERIFY_CERTS=$ES_VERIFY_CERTS"
       [[ -n "$ca" ]] && echo "ES_CA_CERTS=$(escape_env "$ca")"
@@ -2172,7 +2257,9 @@ summary_data_sources() {
   fi
   echo "  The defaults are the data streams that Elastic Defend (an Elastic Agent"
   echo "  integration) creates. To see the names on your cluster, list its indices:"
-  echo "    curl ${cert_flag}-u ${ES_USERNAME:-USER} \"$ES_HOST/_cat/indices/*endpoint*,*alerts*?h=index&expand_wildcards=all\""
+  local auth_flag="-u ${ES_USERNAME:-USER}"
+  [[ -n "${ES_API_KEY:-}" ]] && auth_flag='-H "Authorization: ApiKey $ES_API_KEY"'
+  echo "    curl ${cert_flag}${auth_flag} \"$ES_HOST/_cat/indices/*endpoint*,*alerts*?h=index&expand_wildcards=all\""
   if [[ "$WITH_MAINTENANCE" == "yes" ]]; then
     echo "  Then fix the pattern in .env (and the same line in addons/siem-maintenance/.env),"
   else

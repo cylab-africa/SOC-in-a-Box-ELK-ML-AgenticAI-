@@ -1,4 +1,4 @@
-"""TLS settings shared by every Elasticsearch client in the pipeline.
+"""TLS and login settings shared by every Elasticsearch client in the pipeline.
 
 Certificate verification is on by default. Two environment variables control it:
 
@@ -9,6 +9,11 @@ Certificate verification is on by default. Two environment variables control it:
   where ``config/`` is bind-mounted.
 - ``ES_VERIFY_CERTS``: set to ``false`` to disable verification. Lab use
   only: credentials are then sent to whoever answers on ``ES_HOST``.
+
+The login is an API key (``ES_API_KEY``, the base64 ``encoded`` value Elasticsearch
+returns when the key is created) or ``ES_USERNAME`` + ``ES_PASSWORD``. The API key
+wins when both are set: it can be scoped to what the pipeline needs and revoked
+without touching any user account.
 """
 
 from __future__ import annotations
@@ -21,6 +26,9 @@ from typing import Any
 logger = logging.getLogger("linux_anomaly_detection")
 
 VERIFY_CERTS_ENV = "ES_VERIFY_CERTS"
+API_KEY_ENV = "ES_API_KEY"
+USERNAME_ENV = "ES_USERNAME"
+PASSWORD_ENV = "ES_PASSWORD"  # noqa: S105 - an environment variable name, not a password
 CA_CERT_ENV = "ES_CA_CERT"
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _TLS_FAILURE_MARKERS = ("certificate_verify_failed", "certificate verify failed")
@@ -75,6 +83,44 @@ def es_tls_kwargs(
             raise FileNotFoundError(f"{CA_CERT_ENV} points to a missing file: {path}")
         kwargs["ca_certs"] = str(path)
     return kwargs
+
+
+def es_auth_kwargs(
+    api_key: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+) -> dict[str, Any]:
+    """Return login keyword arguments for ``elasticsearch.Elasticsearch``.
+
+    Each argument left as None is read from the environment (``ES_API_KEY``,
+    ``ES_USERNAME``, ``ES_PASSWORD``). An API key wins over a username and password.
+
+    Args:
+        api_key: Base64-encoded API key (the ``encoded`` value from the create API key call).
+        username: Username for basic authentication.
+        password: Password for basic authentication.
+
+    Returns:
+        ``{"api_key": ...}``, ``{"basic_auth": (username, password)}``, or an empty
+        dict when no login is configured.
+    """
+    if api_key is None:
+        api_key = os.getenv(API_KEY_ENV, "")
+    if username is None:
+        username = os.getenv(USERNAME_ENV, "")
+    if password is None:
+        password = os.getenv(PASSWORD_ENV, "")
+    api_key = api_key.strip()
+    if api_key:
+        return {"api_key": api_key}
+    if username and password:
+        return {"basic_auth": (username, password)}
+    return {}
+
+
+def es_auth_configured() -> bool:
+    """Return True when the environment holds an API key or a username and password."""
+    return bool(es_auth_kwargs())
 
 
 def tls_failure_hint(exc: BaseException) -> str | None:

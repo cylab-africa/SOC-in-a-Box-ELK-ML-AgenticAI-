@@ -78,7 +78,7 @@ The script asks which AI model to use (`ollama`, `claude`, `openai_compat`, or
 | | |
 |---|---|
 | Settings | `addons/alert-triage/.env` |
-| Least privilege | It only searches the alerts and event indices: give it a read-only Elasticsearch user |
+| Least privilege | It only searches the alerts and event indices: give it a read-only API key ([how](configuration.md#elasticsearch-api-keys)) or a read-only user |
 | Better verdicts | Copy `addons/alert-triage/assets.example.yml` to `assets.yml` and describe your hosts (criticality, role, owner). In Docker, rebuild after editing it |
 | Kibana links | `addons/alert-triage/deploy/create_investigate_dashboard.py` adds an "Investigate with Agent" link to Kibana (needs the reverse proxy above) |
 | Stop | `sudo systemctl disable --now alert-triage` |

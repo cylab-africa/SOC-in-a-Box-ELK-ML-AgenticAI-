@@ -171,6 +171,7 @@ def read_config():
         "es_host":           os.getenv("ES_HOST"),
         "es_username":       os.getenv("ES_USERNAME"),
         "es_password":       os.getenv("ES_PASSWORD"),
+        "es_api_key":        (os.getenv("ES_API_KEY") or "").strip(),
         "es_index":          os.getenv("ES_INDEX", "gvm-vulnerabilities"),
         "es_verify_certs":   _bool(os.getenv("ES_VERIFY_CERTS"), True),
         "es_ca_certs":       os.getenv("ES_CA_CERTS") or os.getenv("ES_CA_CERT"),
@@ -184,9 +185,10 @@ def read_config():
         "GVM_SOCKET":   "gvm_socket",
         "GVM_PASSWORD": "gvm_password",
         "ES_HOST":      "es_host",
-        "ES_USERNAME":  "es_username",
-        "ES_PASSWORD":  "es_password",
     }
+    # Without an API key, the username and password are required.
+    if not cfg["es_api_key"]:
+        required.update({"ES_USERNAME": "es_username", "ES_PASSWORD": "es_password"})
     missing = [name for name, key in required.items() if not cfg[key]]
     if missing:
         log.error(f"Missing required settings: {', '.join(missing)}")
@@ -233,10 +235,12 @@ def save_last_run(path, ts):
 # --- Elasticsearch ---------------------------------------------------------
 
 def connect_elasticsearch(cfg):
-    kwargs = {
-        "basic_auth":   (cfg["es_username"], cfg["es_password"]),
-        "verify_certs": cfg["es_verify_certs"],
-    }
+    kwargs = {"verify_certs": cfg["es_verify_certs"]}
+    # An API key wins: it can be limited to the results index and revoked on its own.
+    if cfg["es_api_key"]:
+        kwargs["api_key"] = cfg["es_api_key"]
+    else:
+        kwargs["basic_auth"] = (cfg["es_username"], cfg["es_password"])
     if not cfg["es_verify_certs"]:
         kwargs["ssl_show_warn"] = False
     if cfg["es_ca_certs"]:

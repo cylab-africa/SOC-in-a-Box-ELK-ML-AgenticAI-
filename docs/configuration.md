@@ -18,13 +18,172 @@ sudo systemctl restart realtime_service.service    # or run ./deploy.sh again wi
 | Setting | What to put |
 |---|---|
 | `ES_HOST` | Elasticsearch address with `https://` and port, e.g. `https://10.0.4.12:9200` |
-| `ES_USERNAME`, `ES_PASSWORD` | A user that can read your endpoint, network and auth indices, and write `ml-anomalies-custom-*` |
+| `ES_API_KEY` | An API key for the engine (recommended): see [Elasticsearch API keys](#elasticsearch-api-keys). Wins over the username and password when both are set |
+| `ES_USERNAME`, `ES_PASSWORD` | Or a user that can read your endpoint, network and auth indices, and write `ml-anomalies-custom-*` |
 | `ES_CA_CERT` | The certificate authority of a self-managed cluster, e.g. `config/certs/ca.pem` (`deploy.sh` saves it there when you choose to trust it). Not needed for a public certificate |
 | `ES_VERIFY_CERTS` | `true` by default. `false` turns off certificate checks: lab use only |
 | `ES_*_INDEX` | Index patterns: see [below](#index-names-and-field-names) |
 | `DAGSHUB_*` | Optional, for MLflow experiment tracking. Leave empty |
 
-`.env` holds passwords: it is never committed to git.
+`.env` holds passwords and keys: it is never committed to git.
+
+## Elasticsearch API keys
+
+Every part of SOC-in-a-Box can log in to Elasticsearch in either of two ways:
+
+- **An API key (recommended).** Give each part its own key with only the
+  privileges it needs. If a key leaks, revoke it in Kibana; no user account or
+  password changes, and the other parts keep working.
+- **A username and password.** Simpler for a lab. Avoid the `elastic`
+  superuser: a leaked superuser password exposes the whole cluster.
+
+`./deploy.sh` asks which one each part should use. Press Enter at an add-on's
+question to reuse the detection engine's login.
+
+| Part | Setting | File |
+|---|---|---|
+| Detection engine | `ES_API_KEY`, or `ES_USERNAME` + `ES_PASSWORD` | `.env` |
+| SIEM Maintenance Agent | `ES_API_KEY` (with `ES_AUTH_TYPE=apikey`), or `ES_USERNAME` + `ES_PASSWORD` | `addons/siem-maintenance/.env` |
+| Alert Triage Agent | `ELASTIC_API_KEY`, or `ELASTIC_USERNAME` + `ELASTIC_PASSWORD` | `addons/alert-triage/.env` |
+| Greenbone results push | `ES_API_KEY`, or `ES_USERNAME` + `ES_PASSWORD` | `addons/greenbone/.env` |
+
+For `./deploy.sh --non-interactive`, set `ES_API_KEY` for the engine and
+`MAINTENANCE_ES_API_KEY`, `TRIAGE_ES_API_KEY` or `GREENBONE_ES_API_KEY` for the
+add-ons. Use `*_ES_USERNAME` and `*_ES_PASSWORD` for a username and password instead.
+
+### Create the keys
+
+Open Kibana, go to **Dev Tools**, and run the request for each part you
+install. Copy the `encoded` value from the response: it is shown only once,
+and it is what `deploy.sh` asks for. Run the requests as a user that holds
+these privileges itself, because a key can never do more than its creator.
+
+**Detection engine.** Reads the endpoint, auth and alert data, and writes its own results.
+
+```
+POST /_security/api_key
+{
+  "name": "soc-in-a-box-engine",
+  "role_descriptors": {
+    "soc_engine": {
+      "cluster": ["monitor"],
+      "indices": [
+        {
+          "names": ["logs-endpoint.events.*", ".ds-logs-endpoint.events.*",
+                    "logs-system.auth-*", ".ds-logs-system.auth-*",
+                    ".alerts-security.alerts-*", ".internal.alerts-security.alerts-*"],
+          "privileges": ["read", "view_index_metadata"]
+        },
+        {
+          "names": ["ml-anomalies-custom*", "ml-anomalies-correlated*", ".ml-anomalies-custom-*"],
+          "privileges": ["read", "view_index_metadata", "create_index", "index"]
+        }
+      ]
+    }
+  }
+}
+```
+
+If you changed the `ES_*_INDEX` patterns in `.env`, put the same patterns in the first `names` list.
+
+**Alert Triage Agent.** Read-only: it searches alerts and related events.
+
+```
+POST /_security/api_key
+{
+  "name": "soc-in-a-box-triage",
+  "role_descriptors": {
+    "soc_triage": {
+      "indices": [
+        {
+          "names": [".alerts-security.alerts-*", ".internal.alerts-security.alerts-*",
+                    "logs-*", "filebeat-*", "winlogbeat-*", "auditbeat-*"],
+          "privileges": ["read", "view_index_metadata"]
+        }
+      ]
+    }
+  }
+}
+```
+
+**SIEM Maintenance Agent, report only** (the default, `AUTO_REMEDIATION_DRY_RUN=true`).
+Reads cluster health and checks that logs are still arriving.
+
+```
+POST /_security/api_key
+{
+  "name": "soc-in-a-box-maintenance",
+  "role_descriptors": {
+    "soc_maintenance": {
+      "cluster": ["monitor", "monitor_ml", "monitor_transform", "monitor_watcher",
+                  "monitor_snapshot", "read_ilm", "read_slm"],
+      "indices": [
+        {
+          "names": ["*"],
+          "privileges": ["monitor", "view_index_metadata"]
+        },
+        {
+          "names": ["logs-*", ".ds-logs-*", ".ds-elastic-cloud-logs-*", ".monitoring-es-*",
+                    ".ml-anomalies-*", "ml-anomalies-*"],
+          "privileges": ["read"]
+        }
+      ]
+    }
+  }
+}
+```
+
+**SIEM Maintenance Agent, with automatic fixes** (`AUTO_REMEDIATION_DRY_RUN=false`).
+The fixes change the cluster: they clear caches, reroute shards, restart ML jobs
+and transforms, and delete old snapshots and empty indices. In the request
+above, add these to `cluster`:
+
+```
+"manage", "manage_ml", "manage_transform", "manage_watcher", "manage_ilm", "manage_slm"
+```
+
+and add this entry to `indices`:
+
+```
+{ "names": ["*"], "privileges": ["manage", "delete_index"] }
+```
+
+**Greenbone results push.** Writes scan results to its own index.
+
+```
+POST /_security/api_key
+{
+  "name": "soc-in-a-box-greenbone",
+  "role_descriptors": {
+    "soc_greenbone": {
+      "cluster": ["monitor"],
+      "indices": [
+        {
+          "names": ["gvm-vulnerabilities*"],
+          "privileges": ["create_index", "index", "read", "view_index_metadata", "manage"]
+        }
+      ]
+    }
+  }
+}
+```
+
+You can also create keys in Kibana: **Stack Management > Security > API keys >
+Create API key**. Turn on **Control security privileges** and paste the
+`role_descriptors` object from the matching request above.
+
+### Revoke a key
+
+In Kibana, go to **Stack Management > Security > API keys**, select the key and
+choose **Delete**. Or in Dev Tools:
+
+```
+DELETE /_security/api_key
+{ "name": "soc-in-a-box-triage" }
+```
+
+Then create a new key, put it in that part's `.env` file and restart the part,
+for example `sudo systemctl restart alert-triage`.
 
 ## Index names and field names
 

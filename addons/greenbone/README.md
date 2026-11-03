@@ -103,7 +103,8 @@ From environment variables, or the file given with `--env-file` (default
 | `GVM_USERNAME` | No | `admin` | Greenbone user |
 | `GVM_PASSWORD` | Yes | | Greenbone password |
 | `ES_HOST` | Yes | | Elasticsearch address, e.g. `https://10.0.0.5:9200` |
-| `ES_USERNAME`, `ES_PASSWORD` | Yes | | Elasticsearch login |
+| `ES_API_KEY` | One login | | Elasticsearch API key (recommended). Wins over the username and password |
+| `ES_USERNAME`, `ES_PASSWORD` | One login | | Elasticsearch username and password, if no API key |
 | `ES_INDEX` | No | `gvm-vulnerabilities` | Target index |
 | `ES_CA_CERTS` | No | | Certificate authority for Elasticsearch (`ES_CA_CERT` also works) |
 | `ES_VERIFY_CERTS` | No | `true` | `false` only if you have no CA certificate |

@@ -67,8 +67,17 @@ def _auth() -> tuple[str, str]:
     return user, pw
 
 
+def _api_key() -> str:
+    """Kibana accepts Elasticsearch API keys; one wins over a username and password."""
+    return (os.environ.get("KIBANA_API_KEY") or os.environ.get("ES_API_KEY", "")).strip()
+
+
 def _headers() -> dict[str, str]:
-    return {"Content-Type": "application/json", "kbn-xsrf": "true"}
+    headers = {"Content-Type": "application/json", "kbn-xsrf": "true"}
+    api_key = _api_key()
+    if api_key:
+        headers["Authorization"] = f"ApiKey {api_key}"
+    return headers
 
 
 def _session() -> Any:
@@ -76,7 +85,8 @@ def _session() -> Any:
     import requests  # Imported lazily so the rest of the repo stays usable without it
 
     sess = requests.Session()
-    sess.auth = _auth()
+    if not _api_key():
+        sess.auth = _auth()
     sess.headers.update(_headers())
     sess.verify = os.environ.get("KIBANA_VERIFY_CERTS", "false").lower() == "true"
     if not sess.verify:
