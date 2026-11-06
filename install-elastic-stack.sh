@@ -17,10 +17,31 @@ KIBANA_PORT="${KIBANA_PORT:-5601}"
 # Set FLEET_SERVER_HOST to an IP/DNS name reachable by enrolling endpoints.
 # WSL defaults to localhost for local-only testing; regular Ubuntu uses its first host IP.
 FLEET_SERVER_HOST="${FLEET_SERVER_HOST:-}"
-WORKDIR="/var/tmp/elastic-soc-installer"
+# Root-only state (generated password, tokens, API key). Not under /var/tmp: that
+# is writable by every user, so another account could create the folder first and
+# then read or redirect the files written into it.
+WORKDIR="/var/lib/elastic-soc-installer"
+OLD_WORKDIR="/var/tmp/elastic-soc-installer"   # used by earlier versions of this script
 LOG_FILE="/var/log/elastic-soc-installer.log"
 
-mkdir -p "$WORKDIR"
+[[ $EUID -eq 0 ]] || { echo "Run with sudo: sudo bash $0" >&2; exit 1; }
+# Check before creating it: install -d would quietly take over a folder someone
+# else made, along with any links they left inside it.
+if [[ -L "$WORKDIR" ]] || { [[ -e "$WORKDIR" ]] && [[ "$(stat -c %u "$WORKDIR")" != "0" ]]; }; then
+  echo "$WORKDIR must be a root-owned directory, not a link; remove it and run again." >&2
+  exit 1
+fi
+install -d -m 0700 -o root -g root "$WORKDIR"
+# Resuming a run started by an earlier version: bring its saved credentials across,
+# but only from a root-owned folder that nobody else could have planted.
+if [[ "${RESUME_PARTIAL:-0}" == "1" && ! -s "$WORKDIR/elastic-password.txt" \
+      && -d "$OLD_WORKDIR" && ! -L "$OLD_WORKDIR" && "$(stat -c %u "$OLD_WORKDIR")" == "0" ]]; then
+  for f in elastic-password.txt installer-es-api-key.txt kibana-service-account-token.txt; do
+    if [[ -f "$OLD_WORKDIR/$f" && ! -L "$OLD_WORKDIR/$f" ]]; then
+      cp -p "$OLD_WORKDIR/$f" "$WORKDIR/$f"
+    fi
+  done
+fi
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -194,7 +215,9 @@ done
 [[ "$ES_HTTP_CODE" == "200" || "$ES_HTTP_CODE" == "401" ]] || die "Elasticsearch did not become ready (last HTTP status: ${ES_HTTP_CODE}). Check: journalctl -u elasticsearch"
 # Reuse saved credentials when resuming a partial installation.
 PASSWORD_FILE="$WORKDIR/elastic-password.txt"
+ES_API_KEY_FILE="$WORKDIR/installer-es-api-key.txt"
 ELASTIC_PASSWORD=""
+ES_API_KEY=""
 
 if [[ "$RESUME_PARTIAL" == "1" && -s "$PASSWORD_FILE" ]]; then
   ELASTIC_PASSWORD="$(cat "$PASSWORD_FILE")"
@@ -221,46 +244,139 @@ if [[ -z "$ELASTIC_PASSWORD" ]]; then
   chmod 600 "$PASSWORD_FILE"
 fi
 
+# Create/reuse a narrowly scoped Elasticsearch API key for the installer's
+# Elasticsearch-only operations. Kibana Fleet APIs still use the bootstrap
+# elastic account because they require Kibana application privileges.
+if [[ -s "$ES_API_KEY_FILE" ]]; then
+  ES_API_KEY="$(cat "$ES_API_KEY_FILE")"
+  if ! curl -kfsS --connect-timeout 5 --max-time 10 \
+      -H "Authorization: ApiKey ${ES_API_KEY}" \
+      "https://127.0.0.1:${ES_PORT}/_security/_authenticate" >/dev/null 2>&1; then
+    warn "Saved installer API key is invalid or expired; creating a replacement."
+    ES_API_KEY=""
+  else
+    log "Reusing the saved scoped Elasticsearch API key."
+  fi
+fi
+
+if [[ -z "$ES_API_KEY" ]]; then
+  log "Creating a 30-day scoped Elasticsearch API key for installer operations."
+  API_KEY_RESPONSE="$(curl -kfsS --connect-timeout 5 --max-time 30 \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    -H 'Content-Type: application/json' \
+    -X POST "https://127.0.0.1:${ES_PORT}/_security/api_key" \
+    --data '{"name":"soc-installer-es-operations","expiration":"30d","role_descriptors":{"soc_installer":{"cluster":["monitor","manage_service_account"],"indices":[],"applications":[],"run_as":[]}}}')" || die "Could not create the scoped Elasticsearch API key. Check Elasticsearch security privileges and logs."
+  ES_API_KEY="$(printf '%s' "$API_KEY_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("encoded", ""))')"
+  [[ -n "$ES_API_KEY" ]] || die "Elasticsearch created no encoded API key; cannot continue safely."
+  printf '%s\n' "$ES_API_KEY" > "$ES_API_KEY_FILE"
+  chmod 600 "$ES_API_KEY_FILE"
+  unset API_KEY_RESPONSE
+fi
+
+es_api() {
+  # Usage: es_api METHOD PATH [JSON_BODY]
+  # Keep argument parsing separate from array construction: with set -u,
+  # Bash expands all RHS expressions in one local declaration before the
+  # newly declared locals are reliably available to later assignments.
+  local method="$1" path="$2" body="${3:-}"
+  local -a args
+  args=(--silent --show-error --insecure --connect-timeout 5 --max-time 30 \
+    -H "Authorization: ApiKey ${ES_API_KEY}" -H 'Content-Type: application/json' \
+    -X "$method" "https://127.0.0.1:${ES_PORT}${path}")
+  if [[ -n "$body" ]]; then args+=(--data "$body"); fi
+  curl "${args[@]}"
+}
+
 ES_CA="/etc/elasticsearch/certs/http_ca.crt"
 [[ -r "$ES_CA" ]] || warn "Expected Elasticsearch CA not found at $ES_CA; local bootstrap requests will use -k."
 ok "Elasticsearch is responding over HTTPS (HTTP ${ES_HTTP_CODE}; 401 is expected before authentication). Generated credentials saved with root-only permissions."
 
-run_step "Enroll Kibana and start the web interface"
-# Enrollment token is short-lived and kept in memory only.
-KIBANA_TOKEN="$(/usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token --scope kibana --force)"
-# On a fresh package installation, Kibana can use this token to configure TLS and Elasticsearch connection.
-if ! grep -q '^elasticsearch.hosts:' /etc/kibana/kibana.yml; then
-  /usr/share/kibana/bin/kibana-keystore create >/dev/null 2>&1 || true
-fi
-# Use Kibana's supported enrollment flow. Show output as it happens and feed one
-# newline to satisfy a default-yes Enter prompt without requiring keyboard input.
-if ! systemctl is-active --quiet kibana; then
-  log "Running Kibana enrollment setup (90-second timeout; output shown live)."
-  if printf '\n' | timeout 90s stdbuf -oL -eL /usr/share/kibana/bin/kibana-setup --enrollment-token "$KIBANA_TOKEN" </dev/stdin; then
-    ok "Kibana enrollment setup command completed."
+run_step "Configure Kibana securely and start the web interface"
+# Do not invoke kibana-setup: it is an interactive enrollment wizard and does
+# not provide a supported non-interactive flag. Configure the equivalent
+# Elasticsearch connection using a Kibana service-account token instead.
+KIBANA_TOKEN_FILE="$WORKDIR/kibana-service-account-token.txt"
+KIBANA_CA="/etc/kibana/elasticsearch-ca.crt"
+
+# Keep a reusable token for partial reruns. Validate it before trusting it.
+KIBANA_SERVICE_TOKEN=""
+if [[ -s "$KIBANA_TOKEN_FILE" ]]; then
+  KIBANA_SERVICE_TOKEN="$(cat "$KIBANA_TOKEN_FILE")"
+  if ! curl -kfsS --connect-timeout 5 --max-time 10 \
+      -H "Authorization: Bearer ${KIBANA_SERVICE_TOKEN}" \
+      "https://127.0.0.1:${ES_PORT}/_security/_authenticate" >/dev/null 2>&1; then
+    warn "Saved Kibana service-account token is invalid; creating a replacement."
+    KIBANA_SERVICE_TOKEN=""
   else
-    setup_rc=$?
-    warn "Kibana setup exited with status ${setup_rc}; inspect /var/log/kibana/kibana.log and the installer log before continuing."
+    log "Reusing the saved Kibana service-account token."
   fi
 fi
-# Enrollment can create the CA file as root:group-kibana with mode 0600.
-# Kibana runs as the unprivileged `kibana` user, so it must own/read this CA.
-# Apply this on every run (including already-enrolled installations) before restart.
-fix_kibana_ca_permissions(){
-  local ca_file found=0
-  [[ -d /var/lib/kibana ]] || { warn "Kibana data directory /var/lib/kibana does not exist yet; skipping CA permission repair."; return 0; }
-  while IFS= read -r -d '' ca_file; do
-    [[ -f "$ca_file" ]] || continue
-    chown kibana:kibana "$ca_file"
-    chmod 640 "$ca_file"
-    log "Ensured Kibana can read its CA certificate: $ca_file (kibana:kibana, mode 0640)."
-    found=1
-  done < <(find /var/lib/kibana -maxdepth 1 -type f -name 'ca_*.crt' -print0)
-  if [[ "$found" -eq 0 ]]; then
-    log "No generated ca_*.crt files found in /var/lib/kibana; no CA permission changes needed."
-  fi
+
+if [[ -z "$KIBANA_SERVICE_TOKEN" ]]; then
+  log "Creating a Kibana service-account token (no interactive enrollment)."
+  KIBANA_TOKEN_RESPONSE="$(es_api POST "/_security/service/elastic/kibana/credential/token/soc-kibana-installer")" \
+    || die "Could not create the Kibana service-account token."
+  KIBANA_SERVICE_TOKEN="$(printf '%s' "$KIBANA_TOKEN_RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"]["value"])')"
+  [[ -n "$KIBANA_SERVICE_TOKEN" ]] || die "Elasticsearch returned an empty Kibana service-account token."
+  printf '%s\n' "$KIBANA_SERVICE_TOKEN" > "$KIBANA_TOKEN_FILE"
+  chmod 600 "$KIBANA_TOKEN_FILE"
+  unset KIBANA_TOKEN_RESPONSE
+fi
+
+# Copy the Elasticsearch HTTP CA to a path readable by the Kibana service.
+[[ -r "$ES_CA" ]] || die "Elasticsearch HTTP CA not found at $ES_CA; cannot configure trusted TLS."
+install -o kibana -g kibana -m 0640 "$ES_CA" "$KIBANA_CA"
+
+# Ensure the Kibana keystore exists and replace its service-account token.
+if [[ ! -f /etc/kibana/kibana.keystore ]]; then
+  /usr/share/kibana/bin/kibana-keystore create
+fi
+printf '%s' "$KIBANA_SERVICE_TOKEN" | \
+  /usr/share/kibana/bin/kibana-keystore add --stdin --force elasticsearch.serviceAccountToken
+unset KIBANA_SERVICE_TOKEN
+chown root:kibana /etc/kibana/kibana.keystore
+chmod 0660 /etc/kibana/kibana.keystore
+
+# Write non-secret connection settings. Secrets stay in kibana.keystore.
+cp -a /etc/kibana/kibana.yml "/etc/kibana/kibana.yml.backup.$(date +%Y%m%d%H%M%S)"
+python3 - <<'PYKIBANA'
+from pathlib import Path
+import re
+
+path = Path('/etc/kibana/kibana.yml')
+lines = path.read_text().splitlines()
+managed = {
+    'elasticsearch.hosts': 'elasticsearch.hosts: ["https://127.0.0.1:9200"]',
+    'elasticsearch.ssl.certificateAuthorities': 'elasticsearch.ssl.certificateAuthorities: ["/etc/kibana/elasticsearch-ca.crt"]',
 }
-fix_kibana_ca_permissions
+keys = set(managed) | {'elasticsearch.username', 'elasticsearch.password', 'elasticsearch.serviceAccountToken'}
+kept = []
+for line in lines:
+    match = re.match(r'^\s*#?\s*([A-Za-z0-9_.]+)\s*:', line)
+    if match and match.group(1) in keys:
+        continue
+    kept.append(line)
+kept.extend(managed.values())
+path.write_text('\n'.join(kept) + '\n')
+PYKIBANA
+
+# Make Kibana reachable from the host and other permitted machines on the VM
+# network (for example, a Windows host connecting to a Multipass VM IP).
+# Keep Elasticsearch bound to localhost; this change applies only to Kibana.
+log "Configuring Kibana to listen on all VM network interfaces (0.0.0.0)."
+cp -a /etc/kibana/kibana.yml "/etc/kibana/kibana.yml.backup.$(date +%Y%m%d%H%M%S)"
+python3 - <<'PYKIBANA'
+from pathlib import Path
+import re
+
+path = Path('/etc/kibana/kibana.yml')
+lines = path.read_text().splitlines()
+# Remove active or commented server.host declarations so the file has one
+# authoritative setting. Preserve unrelated Kibana configuration.
+lines = [line for line in lines if not re.match(r'^\s*#?\s*server\.host\s*:', line)]
+lines.append('server.host: "0.0.0.0"')
+path.write_text('\n'.join(lines) + '\n')
+PYKIBANA
 systemctl restart kibana
 # Kibana may be configured for HTTP or HTTPS depending on whether enrollment
 # completed. Probe both protocols rather than treating an HTTP/TLS mismatch as
@@ -304,11 +420,11 @@ FLEET_PKG_VERSION="$(curl -kfsS --connect-timeout 5 --max-time 30 -u "elastic:${
 [[ -n "$FLEET_PKG_VERSION" ]] || die "Could not determine Fleet Server integration package version."
 log "Ensuring Fleet Server integration package ${FLEET_PKG_VERSION} is installed."
 api POST "/api/fleet/epm/packages/fleet_server/${FLEET_PKG_VERSION}" '{"force":true,"ignore_constraints":true}'
-FLEET_PKG_BODY="$(python3 - "$FLEET_POLICY_ID" "$FLEET_PKG_VERSION" "$FLEET_PORT" <<'PYBODY'
+FLEET_PKG_BODY="$(python3 - "$FLEET_POLICY_ID" "$FLEET_PKG_VERSION" <<'PYBODY'
 import json
 import sys
 
-policy_id, version, port = sys.argv[1:]
+policy_id, version = sys.argv[1:]
 
 print(json.dumps({
     "name": "fleet_server",
@@ -324,16 +440,7 @@ print(json.dumps({
         "type": "fleet-server",
         "enabled": True,
         "streams": [],
-        "vars": {
-            "host": {
-                "type": "text",
-                "value": "0.0.0.0"
-            },
-            "port": {
-                "type": "integer",
-                "value": int(port)
-            }
-        }
+        "vars": {}
     }]
 }))
 PYBODY
@@ -390,16 +497,11 @@ fi
 SERVICE_TOKEN=""
 if [[ "$AGENT_ALREADY_ACTIVE" -eq 0 ]]; then
   # Remove an old token only when installing a new Fleet Server agent.
-  curl -ksS --connect-timeout 5 --max-time 30 -u "elastic:${ELASTIC_PASSWORD}" \
-    -X DELETE \
-    "https://127.0.0.1:${ES_PORT}/_security/service/elastic/fleet-server/credential/token/soc-fleet-server" \
+  es_api DELETE "/_security/service/elastic/fleet-server/credential/token/soc-fleet-server" \
     >/dev/null 2>&1 || true
 
   log "Requesting the Fleet Server service token (30-second timeout)."
-  SERVICE_TOKEN="$(curl -kfsS --connect-timeout 5 --max-time 30 -u "elastic:${ELASTIC_PASSWORD}" \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    "https://127.0.0.1:${ES_PORT}/_security/service/elastic/fleet-server/credential/token/soc-fleet-server" |
+  SERVICE_TOKEN="$(es_api POST "/_security/service/elastic/fleet-server/credential/token/soc-fleet-server" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["token"]["value"])')"
 fi
 # Elasticsearch CA fingerprint is used to bootstrap Fleet Server TLS trust.
@@ -443,7 +545,7 @@ run_step "Verify services and agent status"
 systemctl is-active --quiet elasticsearch || die "Elasticsearch service is not active."
 systemctl is-active --quiet kibana || die "Kibana service is not active."
 systemctl is-active --quiet elastic-agent || die "Elastic Agent service is not active."
-ES_HEALTH="$(curl -kfsS --connect-timeout 5 --max-time 30 -u "elastic:${ELASTIC_PASSWORD}" "https://127.0.0.1:${ES_PORT}/_cluster/health" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("status="+d["status"]+", nodes="+str(d["number_of_nodes"]))')"
+ES_HEALTH="$(es_api GET "/_cluster/health" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("status="+d["status"]+", nodes="+str(d["number_of_nodes"]))')"
 AGENT_STATUS=""
 for _ in $(seq 1 12); do
   AGENT_STATUS="$(/opt/Elastic/Agent/elastic-agent status 2>&1)" || true
@@ -487,11 +589,14 @@ Fleet Server policy ID: ${FLEET_POLICY_ID}
 Fleet Server package policy ID: ${FLEET_PACKAGE_POLICY_ID}
 Elastic username: elastic
 Password file: ${WORKDIR}/elastic-password.txt (root-only)
+Scoped Elasticsearch API key: ${ES_API_KEY_FILE} (root-only; 30-day expiry)
 Installer log: ${LOG_FILE}
 
 Security notes:
-- The generated elastic password is stored in a root-only file; retrieve it with sudo.
+- The generated elastic password is stored in a root-only file and is used for Kibana/Fleet bootstrap APIs that require Kibana application privileges.
+- Elasticsearch-only installer operations use a separate 30-day scoped API key stored in ${ES_API_KEY_FILE}; revoke it from Elasticsearch security settings if compromised. It has cluster monitor and manage_service_account privileges, with no index privileges.
 - This script uses local curl --insecure only for bootstrap API calls because the initial local TLS chain may not be trusted by curl. Do not use --insecure for remote production clients.
+- Kibana listens on 0.0.0.0 so it can be reached through the VM IP (including Multipass). Restrict port 5601 with host/network firewall rules to trusted management clients; do not expose it directly to the public internet.
 - Ensure firewall rules allow only trusted management networks to reach ports 5601, 8220, and (only where needed) 9200. On WSL, use this as a local test deployment; do not treat the WSL IP as a stable production address.
 - System and Elastic Defend integrations are not automatically created by this installer. Add them later from Kibana > Integrations if needed.
 - Review Elastic subscription requirements for any optional security features you enable.
