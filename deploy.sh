@@ -1365,6 +1365,13 @@ questions again, for example to turn the AI summary on or change its model."; th
   local sys_tz
   sys_tz="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
   KIBANA_HOST="${KIBANA_HOST:-${ES_HOST/:9200/:5601}}"
+  # Kibana often serves plain HTTP (install-elastic-stack.sh leaves it that way),
+  # so suggest http:// when only that answers. No credentials are sent here.
+  if (( ! DRY_RUN )) && [[ "$KIBANA_HOST" == https://* ]] \
+      && ! curl -ksS -o /dev/null --max-time 5 "$KIBANA_HOST/api/status" 2>/dev/null \
+      && curl -sS -o /dev/null --max-time 5 "http://${KIBANA_HOST#https://}/api/status" 2>/dev/null; then
+    KIBANA_HOST="http://${KIBANA_HOST#https://}"
+  fi
   (( LOCAL_ES )) && KIBANA_HOST="http://kibana:5601"
 
   echo "  It uses the same Elasticsearch address as the detection engine (.env)."

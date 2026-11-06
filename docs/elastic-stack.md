@@ -16,7 +16,8 @@ There are three ways to get a stack:
 
 `install-elastic-stack.sh` sets up a complete single-server stack on Ubuntu:
 
-- Elasticsearch 8.x and Kibana 8.x, with security and HTTPS turned on
+- Elasticsearch 8.x and Kibana 8.x, with security turned on and HTTPS for
+  Elasticsearch
 - Fleet, with a Fleet Server policy
 - Elastic Agent on the same server, acting as the Fleet Server
 
@@ -55,14 +56,15 @@ ends with a summary like this:
 Kibana:       http://10.0.0.5:5601
 Fleet Server: https://10.0.0.5:8220
 Username:     elastic
-Password:     sudo cat /var/tmp/elastic-soc-installer/elastic-password.txt
+Password:     sudo cat /var/lib/elastic-soc-installer/elastic-password.txt
 ```
 
 Open the Kibana address in a browser and sign in as `elastic` with that
 password. Keep the password private: don't paste it into tickets, chat or
 public logs.
 
-Kibana normally starts on plain `http://`, so the password crosses the
+Kibana listens on every network interface of the server, on plain `http://`,
+so you can reach it from your own computer, but the password crosses the
 network unencrypted. That's fine on the server itself or a trusted lab
 network. Anywhere else,
 [turn on HTTPS for Kibana](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/security-basic-setup-https.html#encrypt-kibana-browser).
@@ -96,7 +98,8 @@ The script stops at the failing step and prints the log location,
 sudo RESUME_PARTIAL=1 bash install-elastic-stack.sh
 ```
 
-This reuses the saved password and the Fleet setup from the first run. It
+This reuses the saved password, tokens and Fleet setup from the first run,
+including a run started with an earlier version of this script. It
 is only for continuing this script's own run, not for repairing some other
 Elastic installation. Don't start a second copy while the first is still
 running.
@@ -105,7 +108,9 @@ running.
 
 | Path | What it is |
 |---|---|
-| `/var/tmp/elastic-soc-installer/elastic-password.txt` | The `elastic` user's password (root only) |
+| `/var/lib/elastic-soc-installer/elastic-password.txt` | The `elastic` user's password (root only) |
+| `/var/lib/elastic-soc-installer/installer-es-api-key.txt` | A limited API key the script uses for its own setup calls; it expires after 30 days (root only) |
+| `/var/lib/elastic-soc-installer/kibana-service-account-token.txt` | The token Kibana uses to connect to Elasticsearch, also stored in Kibana's keystore (root only) |
 | `/root/elastic-soc-deployment-summary.txt` | Addresses, policy IDs and notes (root only) |
 | `/var/log/elastic-soc-installer.log` | Everything the script printed |
 | `/etc/elasticsearch/certs/http_ca.crt` | The certificate authority. `deploy.sh` offers to trust it |
@@ -176,7 +181,7 @@ sudo /opt/Elastic/Agent/elastic-agent status
 Check the cluster health:
 
 ```bash
-PASS="$(sudo cat /var/tmp/elastic-soc-installer/elastic-password.txt)"
+PASS="$(sudo cat /var/lib/elastic-soc-installer/elastic-password.txt)"
 curl --cacert /etc/elasticsearch/certs/http_ca.crt -u "elastic:${PASS}" \
   "https://127.0.0.1:9200/_cluster/health?pretty"
 unset PASS
@@ -190,7 +195,8 @@ means there is no second node to hold replica copies.
 | Problem | What to do |
 |---|---|
 | Stops with "already installed" | The server isn't fresh. If it's this script's own earlier run, use `RESUME_PARTIAL=1`. Otherwise use a clean server |
-| Seems stuck at step 6 (Kibana) | Kibana setup can take a few minutes; the enrollment step times out after 90 seconds. In a second terminal: `sudo journalctl -u kibana --since "15 minutes ago" --no-pager` |
+| Seems stuck at step 6 (Kibana) | Kibana can take a few minutes to start; the script waits up to 5 minutes. In a second terminal: `sudo journalctl -u kibana --since "15 minutes ago" --no-pager` |
+| Stops with "must be a root-owned directory" | Something other than this script created `/var/lib/elastic-soc-installer`. Check what is in it, remove it, and run the script again |
 | Seems stuck at step 7 (Fleet) | Each Kibana request times out after 30 seconds. Check `sudo tail -100 /var/log/elastic-soc-installer.log` |
 | Elasticsearch or Kibana is not active | `sudo journalctl -u elasticsearch --since "30 minutes ago" --no-pager` (or `-u kibana`). Check memory and disk with `free -h` and `df -h /` |
 | Other hosts can't enroll | They can't reach Fleet Server. Check **Fleet → Settings → Fleet Server hosts** shows an address they can reach (not `127.0.0.1`), and that port `8220` is open |
@@ -206,6 +212,10 @@ More SOC-in-a-Box problems: [Troubleshooting](troubleshooting.md).
   need it, and never to the internet.
 - Turn on [HTTPS for Kibana](https://www.elastic.co/guide/en/elasticsearch/reference/8.19/security-basic-setup-https.html#encrypt-kibana-browser)
   before anyone signs in over the network.
+- The script uses its own limited, 30-day API key for most setup calls, and
+  the `elastic` account only where Kibana requires it. You can revoke the key
+  in **Stack Management → API keys** (`soc-installer-es-operations`) once
+  the install is done.
 - The script uses `curl --insecure` only for its own setup calls on the
   server. Other clients should check the certificate, as `deploy.sh` does
   when you choose to trust it.
