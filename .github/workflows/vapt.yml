@@ -1,35 +1,60 @@
+
 name: VAPT Scan
 
 on:
   push:
     branches: [main]
+
   pull_request:
     branches: [main]
+
   workflow_dispatch:
 
-# Queue runs one at a time, so a PR run and the push after its merge
-# cannot both start before the first scan finishes.
+# Prevent overlapping VAPT runs
 concurrency:
   group: vapt-${{ github.repository }}
   cancel-in-progress: false
 
+# Permissions required by the reusable VAPT workflow
 permissions:
   contents: read
   actions: read
+  pull-requests: write
 
 jobs:
   vapt:
+    name: SOC-in-a-Box Security Assessment
+
     uses: cylab-africa/vapt-workflows/.github/workflows/vapt-throttled.yml@main
+
     secrets: inherit
+
     with:
+      # Automatic full scans every 14 days
+      # Manual scans bypass the throttle
       min-days-between-scans: '14'
+
+      # Python security analysis
       codeql-languages: '"python"'
+
+      # Static application security testing
       run-codeql: 'true'
       run-semgrep: 'true'
+
+      # Dependency vulnerability assessment
       run-dependency-audit: 'true'
+
+      # Container image vulnerability assessment
       run-trivy-image: 'true'
       dockerfile-path: 'docker/Dockerfile'
       docker-context: '.'
+
+      # Dockerfile security linting
       run-hadolint: 'true'
+
+      # Kubernetes scanning
       run-k8s-scans: 'false'
+
+      # Report findings without blocking deployment
+      # on Trivy critical findings
       fail-on-critical: 'false'
