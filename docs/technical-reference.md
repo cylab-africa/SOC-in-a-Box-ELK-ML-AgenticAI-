@@ -2152,8 +2152,8 @@ Runs all 7 agent checks and reports summary. Exit code 0 = all pass.
 ### Dockerfile (`docker/Dockerfile`)
 
 Multi-stage build:
-- **Stage 1 (builder):** Python 3.10-slim, installs all dependencies from `pyproject.toml`
-- **Stage 2 (runtime):** Python 3.10-slim, non-root user `anomaly:anomaly`, copies installed packages + app code
+- **Stage 1 (builder):** Python 3.12-slim, installs all dependencies from `pyproject.toml`
+- **Stage 2 (runtime):** Python 3.12-slim, non-root user `anomaly:anomaly`, copies installed packages + app code
 
 ```bash
 docker build -f docker/Dockerfile -t linux-anomaly-detection .
@@ -3180,7 +3180,7 @@ python -m benchmarks.ci_hook --fail-on-regression  # CI gate
 
 **Stage 1 — Builder:**
 ```dockerfile
-FROM python:3.10-slim AS builder
+FROM python:3.12-slim AS builder
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app
@@ -3188,9 +3188,9 @@ COPY . /app
 
 **Stage 2 — Runtime:**
 ```dockerfile
-FROM python:3.10-slim
+FROM python:3.12-slim
 RUN useradd --create-home appuser
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /app /app
 USER appuser
 WORKDIR /app

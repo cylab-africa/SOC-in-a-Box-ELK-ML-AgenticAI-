@@ -6,7 +6,7 @@
 # Source lives in addons/siem-maintenance (git subtree of
 # https://github.com/cylab-africa/Siem-Maintenance-Agent-Monitoring).
 
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 LABEL description="SIEM Maintenance Agent: Elasticsearch health, ingestion freshness, daily Chat report"
 
