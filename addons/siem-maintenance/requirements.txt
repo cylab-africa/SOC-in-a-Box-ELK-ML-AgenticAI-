@@ -13,3 +13,9 @@ uritemplate>=3.0.1,<5      # required by google-api-python-client (pinned explic
 google-api-python-client==2.196.0  # Chat API (app-mode cards), Sheets API (feedback poller)
 google-auth==2.53.0        # service-account auth for Chat / Sheets APIs
 google-auth-httplib2==0.4.0        # transport for google-api-python-client
+
+# Minimum versions for packages pulled in indirectly, so no install (or
+# dependency scanner) can resolve to a release with known CVEs.
+protobuf>=6.33.5
+certifi>=2026.10.18
+idna>=3.15

@@ -11,3 +11,8 @@ pyyaml>=6.0
 #   Ollama:         no extra package needed (uses httpx)
 #   OpenAI-compat:  no extra package needed (uses httpx)
 anthropic>=0.40.0
+
+# Minimum versions for packages pulled in indirectly, so no install (or
+# dependency scanner) can resolve to a release with known CVEs.
+python-multipart>=0.0.31
+certifi>=2026.10.18
