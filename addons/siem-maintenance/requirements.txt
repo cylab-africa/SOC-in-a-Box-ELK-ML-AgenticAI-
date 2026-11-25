@@ -6,9 +6,9 @@
 
 elasticsearch==8.13.0      # Agent-SIEM-maintenance cluster / health / remediation clients
 apscheduler==3.10.4        # maintenance_service.py scheduler
-requests==2.32.3           # Chat webhooks; OpenAI / Ollama via HTTP in enhanced_health_monitor
-python-dotenv==1.0.1       # load .env in ultra_siem_monitor / maintenance_service
-flask==3.1.0               # feedback_server.py — Google Chat feedback endpoint
+requests==2.34.2           # Chat webhooks; OpenAI / Ollama via HTTP in enhanced_health_monitor
+python-dotenv==1.2.4       # load .env in ultra_siem_monitor / maintenance_service
+flask==3.1.3               # feedback_server.py — Google Chat feedback endpoint
 uritemplate>=3.0.1,<5      # required by google-api-python-client (pinned explicitly for clean installs)
 google-api-python-client==2.196.0  # Chat API (app-mode cards), Sheets API (feedback poller)
 google-auth==2.53.0        # service-account auth for Chat / Sheets APIs
